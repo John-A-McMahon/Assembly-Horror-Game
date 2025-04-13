@@ -23,6 +23,13 @@
 %define DOWNCHAR 's'
 %define RIGHTCHAR 'd'
 
+%define GRAB 'e'
+
+
+
+;Inventory items
+%define MASTER_KEY 1
+
 
 segment .data
 
@@ -43,8 +50,10 @@ segment .data
 							LEFTCHAR,"=LEFT / ", \
 							DOWNCHAR,"=DOWN / ", \
 							RIGHTCHAR,"=RIGHT / ", \
+							GRAB,"=grab item /", \
 							EXITCHAR,"=EXIT", \
 							13,10,10,0
+msg db "%d",10,0
 
 segment .bss
 
@@ -54,6 +63,9 @@ segment .bss
 	; these variables store the current player position
 	xpos	resd	1
 	ypos	resd	1
+
+	inventory resd 1
+	temp resd 1
 
 segment .text
 
@@ -99,6 +111,13 @@ asm_main:
 
 		; draw the game board
 		call	render
+		;mov eax, [inventory] cringe
+mov [temp],eax
+push dword [inventory]
+push msg
+call printf
+mov eax, temp
+
 
 		; get an action from the user
 		call	getchar
@@ -120,20 +139,25 @@ asm_main:
 		je		move_down
 		cmp		eax, RIGHTCHAR
 		je		move_right
+		cmp		eax, GRAB
+		je		grab
 		jmp		input_end			; or just do nothing
 
 		; move the player according to the input character
+		grab:
+		call pick_up
+		jmp		input_end
 		move_up:
-			dec		DWORD [ypos]
-			jmp		input_end
+		dec		DWORD [ypos]
+		jmp		input_end
 		move_left:
-			dec		DWORD [xpos]
-			jmp		input_end
+		dec		DWORD [xpos]
+		jmp		input_end
 		move_down:
-			inc		DWORD [ypos]
-			jmp		input_end
+		inc		DWORD [ypos]
+		jmp		input_end
 		move_right:
-			inc		DWORD [xpos]
+		inc		DWORD [xpos]
 		input_end:
 
 		; (W * y) + x = pos
@@ -145,70 +169,70 @@ asm_main:
 		lea		eax, [board + eax]
 		cmp		BYTE [eax], WALL_CHAR
 		jne		valid_move
-			; opps, that was an invalid move, reset
-			mov		DWORD [xpos], esi
-			mov		DWORD [ypos], edi
+		; opps, that was an invalid move, reset
+		mov		DWORD [xpos], esi
+		mov		DWORD [ypos], edi
 		valid_move:
 
-	jmp		game_loop
-	game_loop_end:
+		jmp		game_loop
+		game_loop_end:
 
-	; restore old terminal functionality
-	call raw_mode_off
+		; restore old terminal functionality
+		call raw_mode_off
 
-	mov		eax, 0
-	mov		esp, ebp
-	pop		ebp
-	ret
+		mov		eax, 0
+		mov		esp, ebp
+		pop		ebp
+		ret
 
-raw_mode_on:
+		raw_mode_on:
 
-	push	ebp
-	mov		ebp, esp
+		push	ebp
+		mov		ebp, esp
 
-	push	raw_mode_on_cmd
-	call	system
-	add		esp, 4
+		push	raw_mode_on_cmd
+		call	system
+		add		esp, 4
 
-	mov		esp, ebp
-	pop		ebp
-	ret
+		mov		esp, ebp
+		pop		ebp
+		ret
 
-raw_mode_off:
+		raw_mode_off:
 
-	push	ebp
-	mov		ebp, esp
+		push	ebp
+		mov		ebp, esp
 
-	push	raw_mode_off_cmd
-	call	system
-	add		esp, 4
+		push	raw_mode_off_cmd
+		call	system
+		add		esp, 4
 
-	mov		esp, ebp
-	pop		ebp
-	ret
+		mov		esp, ebp
+		pop		ebp
+		ret
 
-init_board:
+		init_board:
 
-	push	ebp
-	mov		ebp, esp
+		push	ebp
+		mov		ebp, esp
 
-	; FILE* and loop counter
-	; ebp-4, ebp-8
-	sub		esp, 8
+		; FILE* and loop counter
+		; ebp-4, ebp-8
+		sub		esp, 8
 
-	; open the file
-	push	mode_r
-	push	board_file
-	call	fopen
-	add		esp, 8
-	mov		DWORD [ebp - 4], eax
+		; open the file
+		push	mode_r
+		push	board_file
+		call	fopen
+		add		esp, 8
+		mov		DWORD [ebp - 4], eax
 
-	; read the file data into the global buffer
-	; line-by-line so we can ignore the newline characters
-	mov		DWORD [ebp - 8], 0
-	read_loop:
-	cmp		DWORD [ebp - 8], HEIGHT
-	je		read_loop_end
+		; read the file data into the global buffer
+		; line-by-line so we can ignore the newline characters
+		mov		DWORD [ebp - 8], 0
+		read_loop:
+		cmp		DWORD [ebp - 8], HEIGHT
+		je		read_loop_end
 
 		; find the offset (WIDTH * counter)
 		mov		eax, WIDTH
@@ -320,3 +344,31 @@ render:
 	mov		esp, ebp
 	pop		ebp
 	ret
+
+
+	;;;;;; MY CUSTOM FUNCTIONS ;;;;;;;;;;
+pick_up:
+	push	ebp
+	mov		ebp, esp
+
+pusha
+
+mov eax, WIDTH
+mul dword [ypos]
+add eax, [xpos]
+
+mov ebx,board ;loads pointer to board in ebx
+
+add ebx,eax ; jump to the index we care about
+
+;cmp dword [inventory], 0
+cmp byte [ebx], 'k'
+jne done
+inc dword [inventory]
+mov byte[ebx], ' '
+done:
+popa
+
+		mov		esp, ebp
+		pop		ebp
+ret
