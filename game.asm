@@ -33,41 +33,52 @@
 
 segment .data
 
-	; used to fopen() the board file defined above
-	board_file			db BOARD_FILE,0
+; used to fopen() the board file defined above
+board_file			db BOARD_FILE,0
 
-	; used to change the terminal mode
-	mode_r				db "r",0
-	raw_mode_on_cmd		db "stty raw -echo",0
-	raw_mode_off_cmd	db "stty -raw echo",0
+; used to change the terminal mode
+mode_r				db "r",0
+raw_mode_on_cmd		db "stty raw -echo",0
+raw_mode_off_cmd	db "stty -raw echo",0
 
-	; ANSI escape sequence to clear/refresh the screen
-	clear_screen_code	db	27,"[2J",27,"[H",0
+; ANSI escape sequence to clear/refresh the screen
+clear_screen_code	db	27,"[2J",27,"[H",0
 
-	; things the program will print
-	help_str			db 13,10,"Controls: ", \
-							UPCHAR,"=UP / ", \
-							LEFTCHAR,"=LEFT / ", \
-							DOWNCHAR,"=DOWN / ", \
-							RIGHTCHAR,"=RIGHT / ", \
-							GRAB,"=grab item /", \
-							EXITCHAR,"=EXIT", \
-							13,10,10,0
-msg db "%d",10,0
+; things the program will print
+help_str			db 13,10,"Controls: ", \
+					UPCHAR,"=UP / ", \
+					LEFTCHAR,"=LEFT / ", \
+					DOWNCHAR,"=DOWN / ", \
+					RIGHTCHAR,"=RIGHT / ", \
+					GRAB,"=grab item /", \
+					EXITCHAR,"=EXIT", \
+					13,10,10,0
+					msg db "%d",10,0
+					msg_see_key db "You see a key",10,0
+					msg_see_b db "Lord of networking: 'Pull up wireshark and get a capture going. This Beacom building is very dangerous. Mr. T, lurks the halls'",10,0
+					game_over db "cat T.txt",0
 
-segment .bss
+					segment .bss
 
 	; this array stores the current rendered gameboard (HxW)
-	board	resb	(HEIGHT * WIDTH)
+board	resb	(HEIGHT * WIDTH)
 
 	; these variables store the current player position
 	xpos	resd	1
 	ypos	resd	1
 
+	; These variables store the enemy's position
+	T_xpos	resd	1
+	T_ypos	resd	1
+
 	inventory resd 1
 	temp resd 1
 
-segment .text
+
+
+	game_lost resd 1
+
+	segment .text
 
 	global	asm_main
 	global  raw_mode_on
@@ -84,7 +95,7 @@ segment .text
 	extern	fgetc
 	extern	fclose
 
-asm_main:
+	asm_main:
 	push	ebp
 	mov		ebp, esp
 
@@ -97,6 +108,7 @@ asm_main:
 	; set the player at the proper start position
 	mov		DWORD [xpos], STARTX
 	mov		DWORD [ypos], STARTY
+	mov dword [game_lost], 0
 
 	; the game happens in this loop
 	; the steps are...
@@ -109,152 +121,167 @@ asm_main:
 	;	7. otherwise, just continue! (xpos,ypos are ok)
 	game_loop:
 
-		; draw the game board
-		call	render
-		;mov eax, [inventory] cringe
-mov [temp],eax
-push dword [inventory]
-push msg
-call printf
-mov eax, temp
+	; draw the game board
+	call	render
+
+	mov [temp],eax
+	push dword [inventory]
+	push msg
+	call printf
+	mov eax, temp
 
 
-		; get an action from the user
-		call	getchar
+	call look
 
-		; store the current position
-		; we will test if the new position is legal
-		; if not, we will restore these
-		mov		esi, DWORD [xpos]
-		mov		edi, DWORD [ypos]
+cmp dword [game_lost],1
+je game_loop_end
 
-		; choose what to do
-		cmp		eax, EXITCHAR
-		je		game_loop_end
-		cmp		eax, UPCHAR
-		je 		move_up
-		cmp		eax, LEFTCHAR
-		je		move_left
-		cmp		eax, DOWNCHAR
-		je		move_down
-		cmp		eax, RIGHTCHAR
-		je		move_right
-		cmp		eax, GRAB
-		je		grab
-		jmp		input_end			; or just do nothing
 
-		; move the player according to the input character
-		grab:
-		call pick_up
-		jmp		input_end
-		move_up:
-		dec		DWORD [ypos]
-		jmp		input_end
-		move_left:
-		dec		DWORD [xpos]
-		jmp		input_end
-		move_down:
-		inc		DWORD [ypos]
-		jmp		input_end
-		move_right:
-		inc		DWORD [xpos]
-		input_end:
+	; get an action from the user
+	call	getchar
 
-		; (W * y) + x = pos
+	; store the current position
+	; we will test if the new position is legal
+	; if not, we will restore these
+	mov		esi, DWORD [xpos]
+	mov		edi, DWORD [ypos]
 
-		; compare the current position to the wall character
-		mov		eax, WIDTH
-		mul		DWORD [ypos]
-		add		eax, DWORD [xpos]
-		lea		eax, [board + eax]
-		cmp		BYTE [eax], WALL_CHAR
-		jne		valid_move
-		; opps, that was an invalid move, reset
-		mov		DWORD [xpos], esi
-		mov		DWORD [ypos], edi
-		valid_move:
+	; choose what to do
+	cmp		eax, EXITCHAR
+	je		game_loop_end
+	cmp		eax, UPCHAR
+	je 		move_up
+	cmp		eax, LEFTCHAR
+	je		move_left
+	cmp		eax, DOWNCHAR
+	je		move_down
+	cmp		eax, RIGHTCHAR
+	je		move_right
+	cmp		eax, GRAB
+	je		grab
+	jmp		input_end			; or just do nothing
 
-		jmp		game_loop
-		game_loop_end:
+	; move the player according to the input character
+	grab:
+	call pick_up
+	jmp		input_end
+	move_up:
+	dec		DWORD [ypos]
+	jmp		input_end
+	move_left:
+	dec		DWORD [xpos]
+	jmp		input_end
+	move_down:
+	inc		DWORD [ypos]
+	jmp		input_end
+	move_right:
+	inc		DWORD [xpos]
+	input_end:
 
-		; restore old terminal functionality
-		call raw_mode_off
+	; (W * y) + x = pos
 
-		mov		eax, 0
-		mov		esp, ebp
-		pop		ebp
-		ret
+	; compare the current position to the wall character
+	mov		eax, WIDTH
+	mul		DWORD [ypos]
+	add		eax, DWORD [xpos]
+	lea		eax, [board + eax]
+	cmp		BYTE [eax], WALL_CHAR
+	jne		valid_move
+	; opps, that was an invalid move, reset
+	mov		DWORD [xpos], esi
+	mov		DWORD [ypos], edi
+	valid_move:
 
-		raw_mode_on:
+	jmp		game_loop
+	game_loop_end:
 
-		push	ebp
-		mov		ebp, esp
+	; restore old terminal functionality
+	call raw_mode_off
 
-		push	raw_mode_on_cmd
-		call	system
-		add		esp, 4
+cmp dword [game_lost],1
+jne winner
+push game_over
+call system
 
-		mov		esp, ebp
-		pop		ebp
-		ret
+winner:
 
-		raw_mode_off:
+	mov		eax, 0
+	mov		esp, ebp
+	pop		ebp
+	ret
 
-		push	ebp
-		mov		ebp, esp
+	raw_mode_on:
 
-		push	raw_mode_off_cmd
-		call	system
-		add		esp, 4
+	push	ebp
+	mov		ebp, esp
+	
+push	raw_mode_on_cmd
+	call	system
 
-		mov		esp, ebp
-		pop		ebp
-		ret
+	add		esp, 4
 
-		init_board:
+	mov		esp, ebp
+	pop		ebp
+	ret
 
-		push	ebp
-		mov		ebp, esp
+	raw_mode_off:
 
-		; FILE* and loop counter
-		; ebp-4, ebp-8
-		sub		esp, 8
+	push	ebp
+	mov		ebp, esp
 
-		; open the file
-		push	mode_r
-		push	board_file
-		call	fopen
-		add		esp, 8
-		mov		DWORD [ebp - 4], eax
+	push	raw_mode_off_cmd
+	call	system
+	add		esp, 4
 
-		; read the file data into the global buffer
-		; line-by-line so we can ignore the newline characters
-		mov		DWORD [ebp - 8], 0
-		read_loop:
-		cmp		DWORD [ebp - 8], HEIGHT
-		je		read_loop_end
+	mov		esp, ebp
+	pop		ebp
+	ret
 
-		; find the offset (WIDTH * counter)
-		mov		eax, WIDTH
-		mul		DWORD [ebp - 8]
-		lea		ebx, [board + eax]
+	init_board:
 
-		; read the bytes into the buffer
-		push	DWORD [ebp - 4]
-		push	WIDTH
-		push	1
-		push	ebx
-		call	fread
-		add		esp, 16
+	push	ebp
+	mov		ebp, esp
 
-		; slurp up the newline
-		push	DWORD [ebp - 4]
-		call	fgetc
-		add		esp, 4
+	; FILE* and loop counter
+	; ebp-4, ebp-8
+	sub		esp, 8
+
+	; open the file
+	push	mode_r
+	push	board_file
+	call	fopen
+	add		esp, 8
+	mov		DWORD [ebp - 4], eax
+
+	; read the file data into the global buffer
+	; line-by-line so we can ignore the newline characters
+	mov		DWORD [ebp - 8], 0
+	read_loop:
+	cmp		DWORD [ebp - 8], HEIGHT
+	je		read_loop_end
+
+	; find the offset (WIDTH * counter)
+	mov		eax, WIDTH
+	mul		DWORD [ebp - 8]
+	lea		ebx, [board + eax]
+
+	; read the bytes into the buffer
+	push	DWORD [ebp - 4]
+	push	WIDTH
+	push	1
+	push	ebx
+	call	fread
+	add		esp, 16
+
+	; slurp up the newline
+	push	DWORD [ebp - 4]
+	call	fgetc
+	add		esp, 4
 
 	inc		DWORD [ebp - 8]
 	jmp		read_loop
 	read_loop_end:
+
 
 	; close the open file handle
 	push	DWORD [ebp - 4]
@@ -265,7 +292,7 @@ mov eax, temp
 	pop		ebp
 	ret
 
-render:
+	render:
 
 	push	ebp
 	mov		ebp, esp
@@ -291,51 +318,51 @@ render:
 	cmp		DWORD [ebp - 4], HEIGHT
 	je		y_loop_end
 
-		; inside loop by width
-		; i.e. for(c=0; c<width; c++)
-		mov		DWORD [ebp - 8], 0
-		x_loop_start:
-		cmp		DWORD [ebp - 8], WIDTH
-		je 		x_loop_end
+	; inside loop by width
+	; i.e. for(c=0; c<width; c++)
+	mov		DWORD [ebp - 8], 0
+	x_loop_start:
+	cmp		DWORD [ebp - 8], WIDTH
+	je 		x_loop_end
 
-			; check if (xpos,ypos)=(x,y)
-			mov		eax, DWORD [xpos]
-			cmp		eax, DWORD [ebp - 8]
-			jne		print_board
-			mov		eax, DWORD [ypos]
-			cmp		eax, DWORD [ebp - 4]
-			jne		print_board
-				; if both were equal, print the player
-				push	PLAYER_CHAR
-				call	putchar
-				add		esp, 4
-				jmp		print_end
-			print_board:
-				; otherwise print whatever's in the buffer
-				mov		eax, DWORD [ebp - 4]
-				mov		ebx, WIDTH
-				mul		ebx
-				add		eax, DWORD [ebp - 8]
-				mov		ebx, 0
-				mov		bl, BYTE [board + eax]
-				push	ebx
-				call	putchar
-				add		esp, 4
-			print_end:
+	; check if (xpos,ypos)=(x,y)
+	mov		eax, DWORD [xpos]
+	cmp		eax, DWORD [ebp - 8]
+	jne		print_board
+	mov		eax, DWORD [ypos]
+	cmp		eax, DWORD [ebp - 4]
+	jne		print_board
+	; if both were equal, print the player
+	push	PLAYER_CHAR
+	call	putchar
+	add		esp, 4
+	jmp		print_end
+	print_board:
+	; otherwise print whatever's in the buffer
+	mov		eax, DWORD [ebp - 4]
+	mov		ebx, WIDTH
+	mul		ebx
+	add		eax, DWORD [ebp - 8]
+	mov		ebx, 0
+	mov		bl, BYTE [board + eax]
+	push	ebx
+	call	putchar
+	add		esp, 4
+	print_end:
 
-		inc		DWORD [ebp - 8]
-		jmp		x_loop_start
-		x_loop_end:
+	inc		DWORD [ebp - 8]
+	jmp		x_loop_start
+	x_loop_end:
 
-		; write a carriage return (necessary when in raw mode)
-		push	0x0d
-		call 	putchar
-		add		esp, 4
+	; write a carriage return (necessary when in raw mode)
+	push	0x0d
+	call 	putchar
+	add		esp, 4
 
-		; write a newline
-		push	0x0a
-		call	putchar
-		add		esp, 4
+	; write a newline
+	push	0x0a
+	call	putchar
+	add		esp, 4
 
 	inc		DWORD [ebp - 4]
 	jmp		y_loop_start
@@ -347,9 +374,9 @@ render:
 
 
 	;;;;;; MY CUSTOM FUNCTIONS ;;;;;;;;;;
-pick_up:
-	push	ebp
-	mov		ebp, esp
+look:
+push	ebp
+mov		ebp, esp
 
 pusha
 
@@ -361,7 +388,53 @@ mov ebx,board ;loads pointer to board in ebx
 
 add ebx,eax ; jump to the index we care about
 
-;cmp dword [inventory], 0
+cmp byte [ebx], 'k'
+jne check_b
+mov eax, msg_see_key
+call print_string
+
+
+check_b:
+cmp byte [ebx], 'B'
+jne check_t
+mov eax, msg_see_b
+call print_string
+je done_look
+
+check_t:
+cmp byte [ebx], 'T'
+jne done_look
+mov dword [game_lost],1
+jmp done_look
+
+
+
+done_look:
+popa
+
+mov		esp, ebp
+pop		ebp
+ret
+
+
+
+
+
+pick_up:
+push	ebp
+mov		ebp, esp
+
+pusha
+
+mov eax, WIDTH
+mul dword [ypos]
+add eax, [xpos]
+
+mov ebx,board ;loads pointer to board in ebx
+
+add ebx,eax ; jump to the index we care about
+
+cmp dword [inventory], 0
 cmp byte [ebx], 'k'
 jne done
 inc dword [inventory]
@@ -369,6 +442,10 @@ mov byte[ebx], ' '
 done:
 popa
 
-		mov		esp, ebp
-		pop		ebp
+mov		esp, ebp
+pop		ebp
 ret
+
+
+
+
