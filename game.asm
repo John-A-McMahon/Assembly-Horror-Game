@@ -220,8 +220,8 @@ winner:
 
 	push	ebp
 	mov		ebp, esp
-
-	push	raw_mode_on_cmd
+	
+push	raw_mode_on_cmd
 	call	system
 
 	add		esp, 4
@@ -538,6 +538,9 @@ push dword [xpos]
 push dword [ypos]
 call get_pos; calculate position in game array
 add esp,8; pop parameters off stack
+mov eax, WIDTH
+mul dword [ypos]
+add eax, [xpos]
 
 mov ebx,board ;loads pointer to board in ebx
 
