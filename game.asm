@@ -56,7 +56,8 @@ help_str			db 13,10,"Controls: ", \
 					msg db "%d",10,0
 					msg_see_key db "You see a key",10,0
 					msg_see_b db "Lord of networking: 'Pull up wireshark and get a capture going. This Beacom building is very dangerous. Mr. T, lurks the halls'",10,0
-					game_over db "cat T.txt",0
+					game_over db "cat T.txt | lolcat",0
+					intro_lore db "cat intro.txt | while read line; do echo $line | lolcat; sleep 1; done; read confirmation;",0
 
 					segment .bss
 
@@ -98,6 +99,12 @@ board	resb	(HEIGHT * WIDTH)
 	asm_main:
 	push	ebp
 	mov		ebp, esp
+
+
+; Print intro lore
+push intro_lore
+call system
+
 
 	; put the terminal in raw mode so the game works nicely
 	call	raw_mode_on
