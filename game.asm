@@ -138,6 +138,19 @@ mov dword [T_ypos], 18
 
 
 ;tick/update function
+	call look
+push dword [T_xpos]
+push dword [T_ypos]
+call get_pos
+mov ebx,eax
+mov eax,board
+add eax,ebx
+mov byte [eax], ' '
+add esp,8
+
+
+call CREATE_MEMORY
+
 push dword [T_xpos]
 push dword [T_ypos]
 call get_pos
@@ -147,9 +160,9 @@ add eax,ebx
 mov byte [eax], 'T'
 add esp,8
 
-	call look
 
-call CREATE_MEMORY
+
+
 cmp dword [game_lost],1
 je game_loop_end
 
@@ -549,14 +562,15 @@ cmp ecx, WIDTH*HEIGHT
 jl traverse
 
 
+push eax
 
 push eax
 
 
 ; DO DFS
 push eax 
-push dword [T_xpos]
-push dword [T_ypos]
+push dword [xpos]
+push dword [ypos]
 push dword 0
 call SEARCH
 
@@ -567,8 +581,8 @@ add esp, 16
 pop eax
 push eax
 
-push dword [xpos]
-push dword [ypos]
+push dword [T_xpos]
+push dword [T_ypos]
 call get_pos
 add esp,8
 mov ebx,eax ; save T index into ebx
@@ -577,10 +591,12 @@ pop eax ; store memory back in eax
 add eax,ebx
 movzx eax, byte[eax]
 
-call print_int
-call print_nl
 
 
+pop eax
+push eax
+call move_T
+add esp,4
 
 add esp, WIDTH*HEIGHT ; remove memory array on the stack 
 popa
@@ -740,4 +756,143 @@ pop		ebp
 ret
 
 
+;[ebp+8] = memory 
+move_T:
+push ebp
+mov ebp,esp
 
+
+mov ebx, [ebp+8]
+
+
+mov [board+edx],byte ' '
+
+push dword [T_xpos]
+push dword [T_ypos]
+call get_pos
+add esp,8
+
+mov edx, eax; save old pos in edx
+
+add eax,ebx; cur pos
+
+
+
+
+
+
+dec eax,
+push eax ; left [ebp-4]
+inc eax,
+
+
+inc eax,
+push eax ;  right [ebp-8]
+dec eax,
+
+
+sub eax, WIDTH
+push eax ;  UP [ebp-12]
+add eax, WIDTH
+
+
+add eax, WIDTH
+push eax ;  DOWN  [ebp-16]
+sub eax, WIDTH
+
+mov eax,[ebp-4]
+movzx eax,byte[eax]
+push eax
+mov eax,[ebp-8]
+movzx eax,byte[eax]
+push eax
+call get_min
+add esp, 8
+
+push eax
+mov eax,[ebp-12]
+movzx eax,byte[eax]
+push eax
+call get_min
+add esp, 8
+
+push eax
+mov eax,[ebp-16]
+movzx eax,byte[eax]
+push eax
+call get_min
+add esp, 8
+
+
+
+mov ebx,[ebp-4]; LEFT
+movzx ebx, byte [ebx]
+cmp eax,ebx
+je MOVE_LEFT
+
+mov ebx,[ebp-8]; RIGHT
+movzx ebx, byte[ebx]
+cmp eax,ebx
+je MOVE_RIGHT
+
+mov ebx,[ebp-12]; UP
+movzx ebx, byte [ebx]
+cmp eax,ebx
+je MOVE_UP
+
+mov ebx,[ebp-16]; DOWN
+movzx ebx, byte [ebx]
+cmp eax,ebx
+je MOVE_DOWN
+
+
+
+JMP ALL_GOOD; here for debugging purposes
+
+MOVE_LEFT:
+dec dword [T_xpos]
+JMP ALL_GOOD
+
+MOVE_RIGHT:
+inc dword [T_xpos]
+JMP ALL_GOOD
+
+MOVE_UP:
+dec dword [T_ypos]
+JMP ALL_GOOD
+
+MOVE_DOWN:
+inc dword [T_ypos]
+JMP ALL_GOOD
+
+
+
+
+ALL_GOOD:
+
+add esp, 4*4; pop LEFT,RIGHT,UP,DOWN
+
+
+
+pop ebp
+ret
+
+
+;[ebp+8]
+;[ebp+12]
+;store min in eax
+get_min:
+push ebp
+mov ebp,esp
+
+mov eax,[ebp+8] 
+mov ebx,[ebp+12] 
+cmp eax,ebx
+jb found_min
+mov eax,ebx
+
+
+
+found_min:
+pop ebp
+ret
