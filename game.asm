@@ -765,7 +765,6 @@ mov ebp,esp
 mov ebx, [ebp+8]
 
 
-mov [board+edx],byte ' '
 
 push dword [T_xpos]
 push dword [T_ypos]
