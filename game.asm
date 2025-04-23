@@ -56,7 +56,7 @@ help_str			db 13,10,"Controls: ", \
 					msg db "%d",10,0
 					msg_see_key db "You see a key",10,0
 					msg_see_b db "Lord of networking: 'Pull up wireshark and get a capture going. This Beacom building is very dangerous. Mr. T, lurks the halls'",10,0
-					game_over db "cat T.txt",0
+					game_over db "cat T.txt && echo -e '\a'",0
 
 					segment .bss
 
@@ -99,6 +99,11 @@ board	resb	(HEIGHT * WIDTH)
 	push	ebp
 	mov		ebp, esp
 
+
+mov dword [T_xpos], 17
+mov dword [T_ypos], 18
+
+
 	; put the terminal in raw mode so the game works nicely
 	call	raw_mode_on
 
@@ -128,13 +133,23 @@ board	resb	(HEIGHT * WIDTH)
 	push dword [inventory]
 	push msg
 	call printf
+	add esi, 8
 	mov eax, temp
 
 
 ;tick/update function
-call CREATE_MEMORY
+push dword [T_xpos]
+push dword [T_ypos]
+call get_pos
+mov ebx,eax
+mov eax,board
+add eax,ebx
+mov byte [eax], 'T'
+add esp,8
+
 	call look
 
+call CREATE_MEMORY
 cmp dword [game_lost],1
 je game_loop_end
 
@@ -205,6 +220,7 @@ cmp dword [game_lost],1
 jne winner
 push game_over
 call system
+add esi, 4
 add dword [esp],4
 
 
@@ -381,46 +397,133 @@ push	raw_mode_on_cmd
 
 	;;;;;; MY CUSTOM FUNCTIONS ;;;;;;;;;;
 
-; [ebp-8] = steps
-; [ebp-12] = y
-; [ebp-16] = x
-; [ebp-20] = MEMORY POINTER THING
+; [ebp+8] = steps
+; [ebp+12] = y
+; [ebp+16] = x
+; [ebp+20] = MEMORY POINTER THING
 SEARCH:
 push ebp
 mov ebp, esp
-pusha
 
-push dword [ebp-16] ; x
-push dword [ebp-12] ; y
-call get_pos ; store index in eax
 
-add eax, board
-cmp [eax],byte -1
+
+
+;freezes for some reason
+;mov eax, [ebp+8]  ; store # steps in eax
+;cmp eax, 100
+;jge JOEVER
+
+
+
+mov eax, [ebp+20] ; move memory into eax
+
+push dword [ebp+16] ; x
+push dword [ebp+12] ; y
+call get_pos; store index in eax
+add esp, 8
+
+mov ebx,eax ; move index into ebx
+
+
+; For Debugging purposes skip all the code
+
+
+
+
+mov eax,[ebp+20] ; store memory in eax
+add eax,ebx; jump to correct index
+
+cmp [eax],byte 255 ; Ignore walls
 je JOEVER
 
 
 
 
-
-mov ebx, [eax]
-cmp [ebp-8],ebx 
+; if the current position can already be reached in fewer steps, stop
+mov cl, byte [eax]
+cmp [ebp+8],cl 
 jge JOEVER
 
 
+; cur position steps = steps
+mov eax, dword [ebp+20]
+add eax,ebx; Jump to correct index
+movzx ebx, byte [ebp+8]; ebx = steps
+mov byte [eax], bl
+movzx eax,byte [eax]
+
+;
+
+
+;push eax;  save eax
+
+;(x+1,y)
+mov eax, dword [ebp+20]; memory
+push eax
+mov eax, dword [ebp+16]; x
+inc eax ; (x+1)
+push eax
+mov eax, dword [ebp+12]; y
+push eax
+mov eax, dword [ebp+8]; steps
+inc eax
+push eax
+call SEARCH
+add esp,16 ; pop the stack back
+
+
+;(x-1,y)
+mov eax, dword [ebp+20]; memory
+push eax
+mov eax, dword [ebp+16]; x
+dec eax ;(x-1)
+push eax
+mov eax, dword [ebp+12]; y
+push eax
+mov eax, dword [ebp+8]; steps
+inc eax
+push eax
+call SEARCH
+add esp,16  ; pop the stack back
+
+
+;(x,y+1)
+mov eax, dword [ebp+20]; memory
+push eax
+mov eax, dword [ebp+16]; x
+push eax
+mov eax, dword [ebp+12]; y
+inc eax; (y+1)
+push eax
+mov eax, dword [ebp+8]; steps
+inc eax
+push eax
+call SEARCH
+add esp,16  ; pop the stack back
 
 
 
+;(x,y-1)
+mov eax, dword [ebp+20]; memory
+push eax
+mov eax, dword [ebp+16]; x
+push eax
+mov eax, dword [ebp+12]; y
+dec eax; (y-1)
+push eax
+mov eax, dword [ebp+8]; steps
+inc eax
+push eax
+call SEARCH
+add esp,16  ; pop the stack back
 
 
 
-
-
-
-
+;pop eax;  restore eax
 
 
 JOEVER:
-popa
+;popa
 pop ebp
 ret
 
@@ -430,37 +533,56 @@ push ebp
 mov ebp,esp
 pusha
 
-mov eax, esp; eax= memory pointer
 sub esp, WIDTH*HEIGHT ; this is the AI 'memory' 
+mov eax, esp; eax= memory pointer
 
-mov ecx, WIDTH*HEIGHT
-dec ecx
-mov edx, board
-add edx,ecx
-dec edx
-
-
+mov ecx, 0
 traverse:
-sub eax,ecx
-mov [eax],byte 0
-
-
-cmp [edx], byte '#'
+mov bl, [board+ecx]
+mov [eax+ecx],byte 100
+cmp bl, '#'
 jne KEEP_GOING
-mov [eax], byte -1
-
-
-
-
+mov [eax+ecx],byte 255
 KEEP_GOING:
+inc ecx; ecx=ecx+1
+cmp ecx, WIDTH*HEIGHT
+jl traverse
 
-add eax,ecx
 
-dec edx
-loop traverse
 
-add esp, WIDTH*HEIGHT
+push eax
 
+
+; DO DFS
+push eax 
+push dword [T_xpos]
+push dword [T_ypos]
+push dword 0
+call SEARCH
+
+
+add esp, 16
+
+
+pop eax
+push eax
+
+push dword [xpos]
+push dword [ypos]
+call get_pos
+add esp,8
+mov ebx,eax ; save T index into ebx
+
+pop eax ; store memory back in eax
+add eax,ebx
+movzx eax, byte[eax]
+
+call print_int
+call print_nl
+
+
+
+add esp, WIDTH*HEIGHT ; remove memory array on the stack 
 popa
 pop ebp
 ret
@@ -525,6 +647,19 @@ add eax, [ebp+12]
 pop ebp
 ret
 
+get_pos_2:
+push ebp
+mov ebp,esp
+
+;xor edx,edx
+;mov eax, WIDTH
+;mul dword [ebp+8]
+;add eax, [ebp+12]
+
+pop ebp
+ret
+
+
 
 
 
@@ -538,9 +673,9 @@ push dword [xpos]
 push dword [ypos]
 call get_pos; calculate position in game array
 add esp,8; pop parameters off stack
-mov eax, WIDTH
-mul dword [ypos]
-add eax, [xpos]
+;mov eax, WIDTH
+;mul dword [ypos]
+;add eax, [xpos]
 
 mov ebx,board ;loads pointer to board in ebx
 
