@@ -8,8 +8,8 @@
 %define PLAYER_CHAR 'O'
 
 ; the size of the game screen in characters
-%define HEIGHT 20
-%define WIDTH 40
+%define HEIGHT 31 
+%define WIDTH  59
 
 ; the player starting position.
 ; top left is considered (0,0)
@@ -30,6 +30,9 @@
 ;Inventory items
 %define MASTER_KEY 1
 
+
+;field of view/flashlight square radius
+%define field_of_view 7
 
 segment .data
 
@@ -58,6 +61,8 @@ help_str			db 13,10,"Controls: ", \
 					msg_see_b db "Lord of networking: 'Pull up wireshark and get a capture going. This Beacom building is very dangerous. Mr. T, lurks the halls'",10,0
 					game_over db "cat T.txt | lolcat",0
 					intro_lore db "cat intro.txt | while read line; do echo $line | lolcat; sleep 1; done; read confirmation;",0
+					side_border db `\x1b[31m|\x1b[39m`,0
+					wide_border db `\x1b[31m-\x1b[39m`,0
 
 					segment .bss
 
@@ -75,6 +80,10 @@ board	resb	(HEIGHT * WIDTH)
 	inventory resd 1
 	temp resd 1
 
+	start_row resd 1
+	start_col resd 1
+	end_row resd 1
+	end_col resd 1
 
 
 	game_lost resd 1
@@ -138,6 +147,7 @@ call system
 	push dword [inventory]
 	push msg
 	call printf
+	add esp,4
 	add esi, 8
 	mov eax, temp
 
@@ -337,6 +347,58 @@ push	raw_mode_on_cmd
 	push	ebp
 	mov		ebp, esp
 
+
+
+
+pusha
+
+;Start n rows before player row
+mov eax, [ypos]
+sub eax, field_of_view
+cmp eax,0
+jge GOOD_START_ROW
+mov eax,0
+GOOD_START_ROW:
+mov [start_row],eax
+
+;end n rows after player row
+mov eax, [ypos]
+add eax,field_of_view
+cmp eax,WIDTH
+jl GOOD_END_ROW
+mov eax, WIDTH
+dec eax
+GOOD_END_ROW:
+mov [end_row],eax
+
+
+;Start n cols before player row
+mov eax, [xpos]
+sub eax, field_of_view
+cmp eax,0
+jge GOOD_START_COL
+mov eax,0
+GOOD_START_COL:
+mov [start_col],eax
+
+;End n cols after player row
+mov eax, [xpos]
+add eax,field_of_view
+cmp eax, WIDTH
+jl GOOD_END_COL
+mov eax, WIDTH
+dec eax
+GOOD_END_COL:
+mov [end_col],eax
+
+
+
+popa
+
+
+
+
+
 	; two ints, for two loop counters
 	; ebp-4, ebp-8
 	sub		esp, 8
@@ -353,16 +415,49 @@ push	raw_mode_on_cmd
 
 	; outside loop by height
 	; i.e. for(c=0; c<height; c++)
-	mov		DWORD [ebp - 4], 0
+	
+
+
+
+
+; print top row
+	call print_wide_border
+
+	; write a carriage return (necessary when in raw mode)
+	push	0x0d
+	call 	putchar
+	add		esp, 4
+
+
+
+	mov eax, [start_row]
+	mov		DWORD [ebp - 4], eax;0
 	y_loop_start:
-	cmp		DWORD [ebp - 4], HEIGHT
+
+
+
+
+
+
+	mov eax, [end_row]
+	cmp		DWORD [ebp - 4], eax;HEIGHT
 	je		y_loop_end
+
+
+
+	; print red |  on the left side
+	push side_border
+	call printf
+	add esp,4
+
 
 	; inside loop by width
 	; i.e. for(c=0; c<width; c++)
-	mov		DWORD [ebp - 8], 0
+	mov eax, [start_col]
+	mov		DWORD [ebp - 8], eax;0
 	x_loop_start:
-	cmp		DWORD [ebp - 8], WIDTH
+	mov eax, [end_col]
+	cmp		DWORD [ebp - 8], eax;WIDTH
 	je 		x_loop_end
 
 	; check if (xpos,ypos)=(x,y)
@@ -390,9 +485,22 @@ push	raw_mode_on_cmd
 	add		esp, 4
 	print_end:
 
+
+
+
+
+
+
 	inc		DWORD [ebp - 8]
 	jmp		x_loop_start
 	x_loop_end:
+
+
+	; print red |  on the right side
+	push side_border
+	call printf
+	add esp,4
+
 
 	; write a carriage return (necessary when in raw mode)
 	push	0x0d
@@ -404,9 +512,16 @@ push	raw_mode_on_cmd
 	call	putchar
 	add		esp, 4
 
+
+
+	
+
 	inc		DWORD [ebp - 4]
 	jmp		y_loop_start
 	y_loop_end:
+
+
+	call print_wide_border
 
 	mov		esp, ebp
 	pop		ebp
@@ -898,5 +1013,36 @@ mov eax,ebx
 
 
 found_min:
+pop ebp
+ret
+
+
+print_wide_border:
+push ebp
+mov ebp,esp
+
+
+pusha
+mov eax,[start_col]
+mov ebx,[end_col]
+sub ebx,eax
+
+mov ecx, ebx
+wide_border_loop:
+
+mov eax, wide_border 
+call print_string
+
+
+dec ecx
+cmp ecx,0
+jge wide_border_loop
+
+
+call print_nl
+
+
+popa
+
 pop ebp
 ret
