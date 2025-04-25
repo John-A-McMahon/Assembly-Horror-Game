@@ -10,3 +10,4 @@ We need to find him...
 
 
 Do you wish to embark on a dangerous journey... (y)/(n)
+(PS this experience is best enjoyed with the terminal zoomed out (use ctl-minus) ;)  )

@@ -62,6 +62,7 @@ help_str			db 13,10,"Controls: ", \
 					msg_see_b db `\n\rLord of networking: 'Pull up wireshark and get a capture going!\n\r This Beacom building is very dangerous!\n\r Mr. T, lurks the halls.\n\rMr. Y has gone missing, you must find 3 wireshark packet captures before it is too late.\n\rIf you are ever scared, I have used my networking magic to secure this room and some others Mr. T. He cannot enter them! Good luck on your quest! '`,10,0
 msg_safe_room db `\n\rYou feel a comforting aura in this room\n\rYou feel safe here\n\rIt is protected by a powerful network sorcerer\n\r`,0
 					game_over db "cat T.txt | lolcat",0
+					game_over_interesting db "cat chicken_jockey.txt | lolcat",0
 					game_won db "cat W.txt | lolcat",0
 					intro_lore db "cat intro.txt | while read line; do echo $line | lolcat; sleep 1; done; read confirmation;",0
 					side_border db `\x1b[31m|\x1b[39m`,0
@@ -73,6 +74,7 @@ msg_safe_room db `\n\rYou feel a comforting aura in this room\n\rYou feel safe h
 
 	; this array stores the current rendered gameboard (HxW)
 board	resb	(HEIGHT * WIDTH)
+secret_game_over resd 1
 
 	; these variables store the current player position
 	xpos	resd	1
@@ -95,6 +97,7 @@ board	resb	(HEIGHT * WIDTH)
 	T_goal_ypos	resd	1
 
 	game_lost resd 1
+	
 
 	segment .text
 
@@ -127,6 +130,7 @@ extern rand
 
 mov dword [T_xpos], 17
 mov dword [T_ypos], 18
+mov [secret_game_over],dword  0
 
 ; Print intro lore
 push intro_lore
@@ -178,11 +182,16 @@ add esp,4
 	add esp,4
 	add esi, 8
 	mov eax, temp
-	call dist
 
+mov eax, [game_lost]
+call print_int
+call print_nl
 
 ;tick/update function
 	call look
+mov eax, [game_lost]
+cmp eax, 0
+jne game_loop_end
 push dword [T_xpos]
 push dword [T_ypos]
 call get_pos
@@ -295,7 +304,13 @@ CON:
 
 cmp dword [game_lost],1
 jne winner
+cmp [secret_game_over],dword 1
+jne regular_game_over
+push game_over_interesting
+jmp CALL_SYSTEM_TO_END
+regular_game_over:
 push game_over
+CALL_SYSTEM_TO_END:
 call system
 add esi, 4
 add dword [esp],4
@@ -880,6 +895,17 @@ mov ebx,board ;loads pointer to board in ebx
 
 add ebx,eax ; jump to the index we care about
 
+
+;;Chicken Jockey Easter Egg
+cmp byte [ebx], 'J'
+jne check_wireshark_packet
+mov [game_lost],dword 1
+mov eax,[game_lost]
+mov [secret_game_over],dword  1
+jmp done_look
+
+
+check_wireshark_packet:
 cmp byte [ebx], WIRESHARK_PACKET_CHAR
 jne check_b
 mov eax, msg_see_key
