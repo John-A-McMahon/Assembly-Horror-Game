@@ -35,6 +35,13 @@
 ;field of view/flashlight square radius
 %define field_of_view 7
 
+
+
+%define INFINITY 99999
+%define UNREACHABLE -1
+
+
+
 segment .data
 
 ; used to fopen() the board file defined above
@@ -631,6 +638,7 @@ push dword [ebp+12] ; y
 call get_pos; store index in eax
 add esp, 8
 
+shl eax, 2; index*4
 mov ebx,eax ; move index into ebx
 
 
@@ -642,24 +650,24 @@ mov ebx,eax ; move index into ebx
 mov eax,[ebp+20] ; store memory in eax
 add eax,ebx; jump to correct index
 
-cmp [eax],byte 255 ; Ignore walls
+cmp [eax],dword UNREACHABLE; Ignore walls
 je JOEVER
 
 
 
 
 ; if the current position can already be reached in fewer steps, stop
-mov cl, byte [eax]
-cmp [ebp+8],cl 
+mov ecx, dword [eax]
+cmp [ebp+8],ecx
 jge JOEVER
 
 
 ; cur position steps = steps
 mov eax, dword [ebp+20]
 add eax,ebx; Jump to correct index
-movzx ebx, byte [ebp+8]; ebx = steps
-mov byte [eax], bl
-movzx eax,byte [eax]
+mov ebx, dword [ebp+8]; ebx = steps
+mov dword [eax], ebx
+mov eax,dword [eax]
 
 ;
 
@@ -742,16 +750,16 @@ push ebp
 mov ebp,esp
 pusha
 
-sub esp, WIDTH*HEIGHT ; this is the AI 'memory' 
+sub esp, 4*WIDTH*HEIGHT ; this is the AI 'memory' 
 mov eax, esp; eax= memory pointer
 
 mov ecx, 0
 traverse:
 mov bl, [board+ecx]
-mov [eax+ecx],byte 100
+mov [eax+4*ecx],dword INFINITY
 cmp bl, ' ' ; T does not go to special tiles
 je KEEP_GOING
-mov [eax+ecx],byte 255
+mov [eax+4*ecx],dword UNREACHABLE
 KEEP_GOING:
 inc ecx; ecx=ecx+1
 cmp ecx, WIDTH*HEIGHT
@@ -787,7 +795,7 @@ mov ebx,eax ; save T index into ebx
 
 pop eax ; store memory back in eax
 add eax,ebx
-movzx eax, byte[eax]
+mov eax, dword [eax]
 
 
 
@@ -796,7 +804,7 @@ push eax
 call move_T
 add esp,4
 
-add esp, WIDTH*HEIGHT ; remove memory array on the stack 
+add esp, 4*WIDTH*HEIGHT ; remove memory array on the stack 
 popa
 pop ebp
 ret
@@ -985,62 +993,60 @@ push dword [T_xpos]
 push dword [T_ypos]
 call get_pos
 add esp,8
-
+shl eax,2; *4
 mov edx, eax; save old pos in edx
-
 add eax,ebx; cur pos
 
 
 
 
 
-
-dec eax,
+sub eax, 4
 push eax ; left [ebp-4]
-inc eax,
+add eax, 4
 
 
-inc eax,
+add eax, 4
 push eax ;  right [ebp-8]
-dec eax,
+sub eax, 4
 
 
-sub eax, WIDTH
+sub eax, 4*WIDTH
 push eax ;  UP [ebp-12]
-add eax, WIDTH
+add eax, 4*WIDTH
 
 
-add eax, WIDTH
+add eax, 4*WIDTH
 push eax ;  DOWN  [ebp-16]
-sub eax, WIDTH
+sub eax, 4*WIDTH
 
 mov eax,[ebp-4]
-movzx eax,byte[eax]
+mov eax, dword[eax]
 push eax
 mov eax,[ebp-8]
-movzx eax,byte[eax]
+mov eax,dword [eax]
 push eax
 call get_min
 add esp, 8
 
 push eax
 mov eax,[ebp-12]
-movzx eax,byte[eax]
+mov eax,dword [eax]
 push eax
 call get_min
 add esp, 8
 
 push eax
 mov eax,[ebp-16]
-movzx eax,byte[eax]
+mov eax,dword [eax]
 push eax
 call get_min
 add esp, 8
 
 pusha
-;If eax==100 than the destination is unreachable and we should make a new goal
+;If eax==INFINITY than the destination is unreachable and we should make a new goal
 mov ebx,0
-cmp eax,100
+cmp eax, INFINITY
 jne CAN_REACH
 mov ebx,1
 mov eax,msg_safe_room 
@@ -1057,22 +1063,22 @@ mov eax,[T_goal_ypos]
 popa
 
 mov ebx,[ebp-4]; LEFT
-movzx ebx, byte [ebx]
+mov ebx, dword [ebx]
 cmp eax,ebx
 je MOVE_LEFT
 
 mov ebx,[ebp-8]; RIGHT
-movzx ebx, byte[ebx]
+mov ebx, dword [ebx]
 cmp eax,ebx
 je MOVE_RIGHT
 
 mov ebx,[ebp-12]; UP
-movzx ebx, byte [ebx]
+mov ebx, dword [ebx]
 cmp eax,ebx
 je MOVE_UP
 
 mov ebx,[ebp-16]; DOWN
-movzx ebx, byte [ebx]
+mov ebx, dword [ebx]
 cmp eax,ebx
 je MOVE_DOWN
 
@@ -1255,7 +1261,6 @@ movzx ecx, byte [eax]
 pop ebx
 pop eax
 
-mov eax,ecx
 cmp ecx, byte ' '
 jne LOOP_UNTIL_VALID_LOCATION
 
