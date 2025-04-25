@@ -6,6 +6,7 @@
 ; how to represent everything
 %define WALL_CHAR '#'
 %define PLAYER_CHAR 'O'
+%define WIRESHARK_PACKET_CHAR 'W'
 
 ; the size of the game screen in characters
 %define HEIGHT 31 
@@ -56,13 +57,17 @@ help_str			db 13,10,"Controls: ", \
 					GRAB,"=grab item /", \
 					EXITCHAR,"=EXIT", \
 					13,10,10,0
-					msg db "%d",10,0
-					msg_see_key db "You see a key",10,0
-					msg_see_b db "Lord of networking: 'Pull up wireshark and get a capture going. This Beacom building is very dangerous. Mr. T, lurks the halls'",10,0
+					msg db `\r%d\n\r`,10,0
+					msg_see_key db "You see a wireshark packet capture... interesting",10,0
+					msg_see_b db `\n\rLord of networking: 'Pull up wireshark and get a capture going!\n\r This Beacom building is very dangerous!\n\r Mr. T, lurks the halls.\n\rMr. Y has gone missing, you must find 3 wireshark packet captures before it is too late.\n\rIf you are ever scared, I have used my networking magic to secure this room and some others Mr. T. He cannot enter them! Good luck on your quest! '`,10,0
+msg_safe_room db `\n\rYou feel a comforting aura in this room\n\rYou feel safe here\n\rIt is protected by a powerful network sorcerer\n\r`,0
 					game_over db "cat T.txt | lolcat",0
+					game_won db "cat W.txt | lolcat",0
 					intro_lore db "cat intro.txt | while read line; do echo $line | lolcat; sleep 1; done; read confirmation;",0
 					side_border db `\x1b[31m|\x1b[39m`,0
 					wide_border db `\x1b[31m-\x1b[39m`,0
+					sound db `\x1b[31mshh! You made a noise!\x1b[39m`,0
+; Note to self, to use fancy ansi escape codes we need to use backticks `` instead of quotes ""
 
 					segment .bss
 
@@ -85,6 +90,9 @@ board	resb	(HEIGHT * WIDTH)
 	end_row resd 1
 	end_col resd 1
 
+	;Where T's destination is
+	T_goal_xpos	resd	1
+	T_goal_ypos	resd	1
 
 	game_lost resd 1
 
@@ -105,6 +113,13 @@ board	resb	(HEIGHT * WIDTH)
 	extern	fgetc
 	extern	fclose
 
+
+
+
+
+extern srand
+extern rand
+
 	asm_main:
 	push	ebp
 	mov		ebp, esp
@@ -116,6 +131,14 @@ mov dword [T_ypos], 18
 ; Print intro lore
 push intro_lore
 call system
+add esp,4
+
+
+;Seed rng
+push 5
+call srand
+add esp,4
+
 
 
 	; put the terminal in raw mode so the game works nicely
@@ -123,6 +146,11 @@ call system
 
 	; read the game board file into the global variable
 	call	init_board
+
+
+;Spawn keys
+	call spawn_wireshark_packet_captures
+	call spawn_T
 
 	; set the player at the proper start position
 	mov		DWORD [xpos], STARTX
@@ -150,6 +178,7 @@ call system
 	add esp,4
 	add esi, 8
 	mov eax, temp
+	call dist
 
 
 ;tick/update function
@@ -162,9 +191,22 @@ mov eax,board
 add eax,ebx
 mov byte [eax], ' '
 add esp,8
+call rand_pos
 
+call defeated
 
 call CREATE_MEMORY
+
+
+call defeated
+
+
+call rand
+and eax,15; 1/16 chance of making a sound
+cmp eax,0
+jne SILENCE
+call made_sound
+SILENCE:
 
 push dword [T_xpos]
 push dword [T_ypos]
@@ -180,6 +222,13 @@ add esp,8
 
 cmp dword [game_lost],1
 je game_loop_end
+cmp dword [inventory],3
+jne CON
+mov [game_lost],dword -1
+jmp game_loop_end
+
+
+CON:
 
 
 	; get an action from the user
@@ -250,10 +299,22 @@ push game_over
 call system
 add esi, 4
 add dword [esp],4
+jmp loser
 
 
 
 winner:
+cmp dword [game_lost], -1
+jne loser
+
+push game_won
+call system
+add esi, 4
+add dword [esp],4
+
+loser:
+
+
 
 	mov		eax, 0
 	mov		esp, ebp
@@ -673,8 +734,8 @@ mov ecx, 0
 traverse:
 mov bl, [board+ecx]
 mov [eax+ecx],byte 100
-cmp bl, '#'
-jne KEEP_GOING
+cmp bl, ' ' ; T does not go to special tiles
+je KEEP_GOING
 mov [eax+ecx],byte 255
 KEEP_GOING:
 inc ecx; ecx=ecx+1
@@ -689,11 +750,13 @@ push eax
 
 ; DO DFS
 push eax 
-push dword [xpos]
-push dword [ypos]
+push dword [T_goal_xpos]
+push dword [T_goal_ypos]
 push dword 0
 call SEARCH
 
+mov eax,[T_goal_xpos]
+mov eax,[T_goal_ypos]
 
 add esp, 16
 
@@ -817,7 +880,7 @@ mov ebx,board ;loads pointer to board in ebx
 
 add ebx,eax ; jump to the index we care about
 
-cmp byte [ebx], 'k'
+cmp byte [ebx], WIRESHARK_PACKET_CHAR
 jne check_b
 mov eax, msg_see_key
 call print_string
@@ -826,9 +889,15 @@ call print_string
 check_b:
 cmp byte [ebx], 'B'
 jne check_t
+cmp [inventory], dword 3
+jl NOT_ENOUGH_PACKETS
+mov [game_lost], dword -1 ; Game won
+jmp done_look
+NOT_ENOUGH_PACKETS:
+;jne check_t
 mov eax, msg_see_b
 call print_string
-je done_look
+jmp done_look
 
 check_t:
 cmp byte [ebx], 'T'
@@ -864,7 +933,7 @@ mov ebx,board ;loads pointer to board in ebx
 add ebx,eax ; jump to the index we care about
 
 cmp dword [inventory], 0
-cmp byte [ebx], 'k'
+cmp byte [ebx], WIRESHARK_PACKET_CHAR 
 jne done
 inc dword [inventory]
 mov byte[ebx], ' '
@@ -942,7 +1011,24 @@ push eax
 call get_min
 add esp, 8
 
+pusha
+;If eax==100 than the destination is unreachable and we should make a new goal
+mov ebx,0
+cmp eax,100
+jne CAN_REACH
+mov ebx,1
+mov eax,msg_safe_room 
+call print_string
+CAN_REACH:
+mov eax,ebx
+push ebx
+call T_goal_logic
+add esp,4
 
+mov eax,[T_goal_xpos]
+mov eax,[T_goal_ypos]
+
+popa
 
 mov ebx,[ebp-4]; LEFT
 movzx ebx, byte [ebx]
@@ -1046,3 +1132,235 @@ popa
 
 pop ebp
 ret
+
+
+
+defeated:
+push ebp
+mov ebp,esp
+
+call dist
+cmp eax,1
+jg TOO_FAR
+mov eax,1 
+jmp D_LOGIC_DONE
+
+
+
+
+TOO_FAR:
+mov eax,0
+
+D_LOGIC_DONE:
+mov [game_lost], eax
+
+pop ebp
+ret
+
+
+;Calculating |x2-x1|+|y2-y1|
+;Taxi/Manhattan distance because idk how to do square roots in assembly lol
+dist:
+push ebp
+mov ebp,esp
+
+mov eax, [xpos]
+sub eax, [T_xpos]
+cmp eax,0
+jge Y_dist
+neg eax
+
+
+
+
+Y_dist:
+mov ebx, [ypos]
+sub ebx, [T_ypos]
+cmp ebx,0
+jge sum_them_up
+neg ebx
+
+
+
+
+sum_them_up:
+add eax,ebx
+
+
+pop ebp
+ret
+
+
+
+rand_pos:
+push ebp
+mov ebp,esp
+
+
+
+LOOP_UNTIL_VALID_LOCATION:
+
+
+xor eax,eax; row=0
+xor ebx,ebx; col=0
+
+
+call rand
+mov ecx,HEIGHT
+xor edx,edx
+div ecx
+mov eax,edx; use remainder
+mov ebx, eax
+
+
+
+call rand
+mov ecx,WIDTH
+xor edx,edx
+div ecx
+mov eax,edx; use remainder
+
+
+push eax
+push ebx
+call get_pos
+add eax, board
+movzx ecx, byte [eax]
+pop ebx
+pop eax
+
+mov eax,ecx
+cmp ecx, byte ' '
+jne LOOP_UNTIL_VALID_LOCATION
+
+
+
+pop ebp
+ret
+
+
+
+spawn_wireshark_packet_captures:
+push ebp
+mov ebp,esp
+pusha
+
+mov ecx,4
+LOOP_SPAWN_WIRESHARK_PACKET_CAPTURES:
+pusha
+call rand_pos
+push eax
+push ebx
+call get_pos
+add eax,board
+mov bl,byte WIRESHARK_PACKET_CHAR
+mov [eax],bl
+add esp,8
+popa
+loop LOOP_SPAWN_WIRESHARK_PACKET_CAPTURES
+
+popa
+pop ebp
+ret
+
+spawn_T:
+push ebp
+mov ebp,esp
+
+call print_int
+call print_nl
+
+TRY_AGAIN_IF_TOO_CLOSE:
+call rand_pos
+mov [T_xpos],eax
+mov [T_ypos],ebx
+call dist
+cmp eax,20
+jle TRY_AGAIN_IF_TOO_CLOSE
+pop ebp
+ret
+
+
+
+;[ebp+4] = cannot reach
+T_goal_logic:
+push ebp
+mov ebp,esp
+
+;mov eax, [ebp+8]
+;call print_int
+;call print_nl
+
+;cmp [ebp+8],byte 1
+;je PICK_RANDOM
+
+
+;mov eax, [T_xpos]
+;
+;cmp eax, [T_goal_xpos]
+;jne FINISH_GOAL_LOGIC
+
+;mov eax, [T_ypos]
+;cmp eax, [T_goal_ypos]
+;jne FINISH_GOAL_LOGIC
+
+
+
+
+
+; If T is close to the player than set T's goal to the player postion (AKA you should be scared!)
+;call dist
+;cmp eax, 10
+;jge PICK_RANDOM
+
+
+;This code alone is hard mode need to fix commented code for 'smart' AI
+mov eax, [xpos]
+mov [T_goal_xpos], eax
+mov eax, [ypos]
+mov [T_goal_ypos], eax
+;jmp FINISH_GOAL_LOGIC
+
+
+
+
+
+
+;PICK_RANDOM:
+;call rand_pos
+;mov [T_goal_xpos],eax
+;mov [T_goal_ypos],ebx
+
+
+;FINISH_GOAL_LOGIC:
+pop ebp
+ret
+
+
+
+
+; When you become cooked!
+made_sound:
+push ebp
+mov ebp,esp
+
+mov eax, [xpos]
+mov ebx, [ypos]
+mov [T_goal_xpos], eax
+mov [T_goal_ypos], ebx
+
+
+mov eax,sound
+call print_string
+
+
+
+
+
+pop ebp
+ret
+
+
+
+
+
