@@ -9,7 +9,7 @@
 %define WIRESHARK_PACKET_CHAR 'W'
 
 ; the size of the game screen in characters
-%define HEIGHT 31 
+%define HEIGHT 31
 %define WIDTH  59
 
 ; the player starting position.
@@ -37,8 +37,8 @@
 
 
 
-%define INFINITY 99999
-%define UNREACHABLE -1
+%define INFINITY WIDTH+HEIGHT
+%define UNREACHABLE 2*INFINITY
 
 
 
@@ -191,8 +191,6 @@ add esp,4
 	mov eax, temp
 
 mov eax, [game_lost]
-call print_int
-call print_nl
 
 ;tick/update function
 	call look
@@ -212,6 +210,7 @@ call rand_pos
 call defeated
 
 call CREATE_MEMORY
+;call can_reach_player
 
 
 call defeated
@@ -447,9 +446,9 @@ mov [start_row],eax
 ;end n rows after player row
 mov eax, [ypos]
 add eax,field_of_view
-cmp eax,WIDTH
+cmp eax,HEIGHT
 jl GOOD_END_ROW
-mov eax, WIDTH
+mov eax, HEIGHT
 dec eax
 GOOD_END_ROW:
 mov [end_row],eax
@@ -626,7 +625,9 @@ mov ebp, esp
 
 ;freezes for some reason
 ;mov eax, [ebp+8]  ; store # steps in eax
-;cmp eax, 100
+;call print_int
+;call print_nl
+;cmp eax,INFINITY 
 ;jge JOEVER
 
 
@@ -993,7 +994,7 @@ push dword [T_xpos]
 push dword [T_ypos]
 call get_pos
 add esp,8
-shl eax,2; *4
+shl eax,2; index *4
 mov edx, eax; save old pos in edx
 add eax,ebx; cur pos
 
@@ -1298,8 +1299,6 @@ spawn_T:
 push ebp
 mov ebp,esp
 
-call print_int
-call print_nl
 
 TRY_AGAIN_IF_TOO_CLOSE:
 call rand_pos
@@ -1318,34 +1317,38 @@ T_goal_logic:
 push ebp
 mov ebp,esp
 
-;mov eax, [ebp+8]
-;call print_int
-;call print_nl
 
-;cmp [ebp+8],byte 1
-;je PICK_RANDOM
+cmp [ebp+8],byte 1
+je PICK_RANDOM
 
 
-;mov eax, [T_xpos]
-;
-;cmp eax, [T_goal_xpos]
-;jne FINISH_GOAL_LOGIC
+mov eax, [T_xpos]
 
-;mov eax, [T_ypos]
-;cmp eax, [T_goal_ypos]
-;jne FINISH_GOAL_LOGIC
+cmp eax, [T_goal_xpos]
+jne FINISH_GOAL_LOGIC
+
+mov eax, [T_ypos]
+cmp eax, [T_goal_ypos]
+jne FINISH_GOAL_LOGIC
 
 
 
 
 
 ; If T is close to the player than set T's goal to the player postion (AKA you should be scared!)
-;call dist
-;cmp eax, 10
-;jge PICK_RANDOM
+call dist
+cmp eax, 20
+jge PICK_RANDOM
+
 
 
 ;This code alone is hard mode need to fix commented code for 'smart' AI
+pusha
+call can_reach_player
+cmp eax,0
+popa
+jne PICK_RANDOM
+
 mov eax, [xpos]
 mov [T_goal_xpos], eax
 mov eax, [ypos]
@@ -1357,13 +1360,13 @@ mov [T_goal_ypos], eax
 
 
 
-;PICK_RANDOM:
-;call rand_pos
-;mov [T_goal_xpos],eax
-;mov [T_goal_ypos],ebx
+PICK_RANDOM:
+call rand_pos
+mov [T_goal_xpos],eax
+mov [T_goal_ypos],ebx
 
 
-;FINISH_GOAL_LOGIC:
+FINISH_GOAL_LOGIC:
 pop ebp
 ret
 
@@ -1393,5 +1396,33 @@ ret
 
 
 
+can_reach_player:
+push ebp
+mov ebp, esp
+
+
+
+push dword [xpos]
+push dword [ypos]
+call get_pos
+add esp,8
+
+
+add eax, board
+
+cmp [eax], byte ' '
+mov ebx,0
+jne answer_found
+mov ebx,1
+
+
+
+
+
+answer_found:
+mov eax,ebx
+
+pop ebp
+ret
 
 
