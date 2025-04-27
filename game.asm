@@ -80,7 +80,7 @@ msg_safe_room db `\n\rYou feel a comforting aura in this room\n\rYou feel safe h
 					question db "DO YOU WISH TO EMBARK ON THIS JOURNEY? (YES=1, NO=0)",10,0
 					omniman db "cat rusure.txt | lolcat", 0
 					usure db "Are you sure? (YES=1, NO=0)",10,0
-					hityler db `YOU: HI TYLER\n\rTYLER: 'HI I AM TYLER'`,0
+					hityler db `\x1b[31mYOU: HI TYLER\n\rTYLER: 'HI I AM TYLER'\x1b[0m`,0
 					prompt_seed db `Please enter your game seed (-1 for random):`,0
 ; Note to self, to use fancy ansi escape codes we need to use backticks `` instead of quotes ""
 
