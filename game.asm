@@ -9,8 +9,8 @@
 %define WIRESHARK_PACKET_CHAR 'W'
 
 ; the size of the game screen in characters
-%define HEIGHT 36
-%define WIDTH  67
+%define HEIGHT 31
+%define WIDTH  59
 
 ; the player starting position.
 ; top left is considered (0,0)
@@ -80,7 +80,8 @@ msg_safe_room db `\n\rYou feel a comforting aura in this room\n\rYou feel safe h
 					question db "DO YOU WISH TO EMBARK ON THIS JOURNEY? (YES=1, NO=0)",10,0
 					omniman db "cat rusure.txt | lolcat", 0
 					usure db "Are you sure? (YES=1, NO=0)",10,0
-					hityler db `YOU: HI TYLER\n\rTYLER: 'HI I AM TYLER'`
+					hityler db `YOU: HI TYLER\n\rTYLER: 'HI I AM TYLER'`,0
+					prompt_seed db `Please enter your game seed (-1 for random):`,0
 ; Note to self, to use fancy ansi escape codes we need to use backticks `` instead of quotes ""
 
 					segment .bss
@@ -136,6 +137,7 @@ secret_game_over resd 1
 extern srand
 extern rand
 extern sleep
+extern time
 
 	asm_main:
 	push	ebp
@@ -169,7 +171,17 @@ JOURNEY:
 
 
 ;Seed rng
-push 5
+mov eax, prompt_seed
+call print_string
+call read_int
+cmp eax, -1
+jne do_seed
+push 0
+call time
+add esp, 4
+
+do_seed:
+push eax
 call srand
 add esp,4
 
