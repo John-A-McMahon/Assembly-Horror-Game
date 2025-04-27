@@ -9,8 +9,8 @@
 %define WIRESHARK_PACKET_CHAR 'W'
 
 ; the size of the game screen in characters
-%define HEIGHT 31
-%define WIDTH  59
+%define HEIGHT 36
+%define WIDTH  67
 
 ; the player starting position.
 ; top left is considered (0,0)
@@ -80,6 +80,7 @@ msg_safe_room db `\n\rYou feel a comforting aura in this room\n\rYou feel safe h
 					question db "DO YOU WISH TO EMBARK ON THIS JOURNEY? (YES=1, NO=0)",10,0
 					omniman db "cat rusure.txt | lolcat", 0
 					usure db "Are you sure? (YES=1, NO=0)",10,0
+					hityler db `YOU: HI TYLER\n\rTYLER: 'HI I AM TYLER'`
 ; Note to self, to use fancy ansi escape codes we need to use backticks `` instead of quotes ""
 
 					segment .bss
@@ -945,7 +946,7 @@ call print_string
 
 check_b:
 cmp byte [ebx], 'B'
-jne check_t
+jne check_tyler
 cmp [inventory], dword 3
 jl NOT_ENOUGH_PACKETS
 mov [game_lost], dword -1 ; Game won
@@ -955,6 +956,13 @@ NOT_ENOUGH_PACKETS:
 mov eax, msg_see_b
 call print_string
 jmp done_look
+
+check_tyler:
+cmp byte [ebx], 't'
+jne check_t
+push hityler
+call printf
+add esp,4
 
 check_t:
 cmp byte [ebx], 'T'
