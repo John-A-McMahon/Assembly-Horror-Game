@@ -82,6 +82,8 @@ msg_safe_room db `\n\rYou feel a comforting aura in this room\n\rYou feel safe h
 					usure db "Are you sure? (YES=1, NO=0)",10,0
 					hityler db `\x1b[31mYOU: HI TYLER\n\rTYLER: 'HI I AM TYLER'\x1b[0m`,0
 					prompt_seed db `Please enter your game seed (-1 for random):`,0
+					new_line db `\n`,0
+					int_format db `%d`,0
 ; Note to self, to use fancy ansi escape codes we need to use backticks `` instead of quotes ""
 
 					segment .bss
@@ -113,9 +115,12 @@ secret_game_over resd 1
 	game_lost resd 1
 	
 
+	INPUT resd 1
+
 	segment .text
 
-	global	asm_main
+;	global	asm_main
+	global	main
 	global  raw_mode_on
 	global  raw_mode_off
 	global  init_board
@@ -138,8 +143,9 @@ extern srand
 extern rand
 extern sleep
 extern time
+extern scanf
 
-	asm_main:
+main:
 	push	ebp
 	mov		ebp, esp
 
@@ -152,17 +158,25 @@ mov [secret_game_over],dword  0
 push intro_lore
 call system
 add esp,4
-mov eax, question
-call print_string
+push question
+call printf
+add esp,4
 doom_loop:
-call read_int
+push INPUT
+push int_format
+call scanf
+add esp,8
+mov eax,[INPUT]
+
 cmp eax, 0
 jne JOURNEY
 push omniman
 call system
-mov eax, usure
-call print_string
 add esp,4
+push usure
+call printf
+add esp,4
+
 push 1
 call sleep
 add esp,4
@@ -171,9 +185,14 @@ JOURNEY:
 
 
 ;Seed rng
-mov eax, prompt_seed
-call print_string
-call read_int
+push prompt_seed
+call printf
+add esp,4
+push INPUT
+push int_format
+call scanf
+add esp,8
+mov eax, [INPUT]
 cmp eax, -1
 jne do_seed
 push 0
@@ -658,14 +677,6 @@ mov ebp, esp
 
 
 
-;freezes for some reason
-;mov eax, [ebp+8]  ; store # steps in eax
-;call print_int
-;call print_nl
-;cmp eax,INFINITY 
-;jge JOEVER
-
-
 
 mov eax, [ebp+20] ; move memory into eax
 
@@ -952,8 +963,9 @@ jmp done_look
 check_wireshark_packet:
 cmp byte [ebx], WIRESHARK_PACKET_CHAR
 jne check_b
-mov eax, msg_see_key
-call print_string
+push msg_see_key
+call printf
+add esp,4
 
 
 check_b:
@@ -965,8 +977,9 @@ mov [game_lost], dword -1 ; Game won
 jmp done_look
 NOT_ENOUGH_PACKETS:
 ;jne check_t
-mov eax, msg_see_b
-call print_string
+push msg_see_b
+call printf
+add esp,4
 jmp done_look
 
 check_tyler:
@@ -1092,8 +1105,9 @@ mov ebx,0
 cmp eax, INFINITY
 jne CAN_REACH
 mov ebx,1
-mov eax,msg_safe_room 
-call print_string
+push msg_safe_room 
+call printf
+add esp,4
 CAN_REACH:
 mov eax,ebx
 push ebx
@@ -1191,8 +1205,9 @@ sub ebx,eax
 mov ecx, ebx
 wide_border_loop:
 
-mov eax, wide_border 
-call print_string
+push wide_border 
+call printf
+add esp,4
 
 
 dec ecx
@@ -1200,7 +1215,9 @@ cmp ecx,0
 jge wide_border_loop
 
 
-call print_nl
+push new_line
+call printf
+add esp, 4
 
 
 popa
@@ -1426,8 +1443,9 @@ mov [T_goal_xpos], eax
 mov [T_goal_ypos], ebx
 
 
-mov eax,sound
-call print_string
+push sound
+call printf
+add esp, 4
 
 
 
