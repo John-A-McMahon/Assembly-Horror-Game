@@ -1,5 +1,3 @@
-%include "/usr/local/share/csc314/asm_io.inc"
-
 ; the file that stores the initial state
 %define BOARD_FILE 'board.txt'
 
