@@ -12,3 +12,43 @@ Your journey starts now...
 ## Assignment description:
 
 Our group, Quentin, Carson and myself (John), have created a horror game in assembly. This game is meant to be similar to 'Granny' or 'Baldi's Basics' Where the player is being chased and you need to collect some objects to escape without being caught. The aim of this game is to collect 3 'wireshark packet captures' to free someone. The game features random seeds and pathfinding for replayability. This game demonstrates storing 2d arrays, functions, path finding (DFS/Dijkstra), and recursion in assembly.
+
+
+
+## Commands to run using docker  (Linux commands)
+use the dockerfile to build the image, run the image, and use make to build the game
+```
+sudo docker build -t assembly_game .
+```
+
+```
+sudo docker run -it assembly_game /bin/bash
+```
+
+
+Inside of container:
+
+```
+make
+```
+
+```
+./game
+```
+
+
+To uninstall:
+
+
+get container id
+```
+sudo doker ps -a
+```
+
+```
+sudo docker rm <container ID>
+```
+
+```
+sudo docker rmi assembly_game
+```
