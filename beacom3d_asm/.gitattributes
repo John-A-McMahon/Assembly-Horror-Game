@@ -1,0 +1,4 @@
+# keep Unix line endings: the Makefile and maps are also used from Linux/WSL
+* text=auto eol=lf
+*.exe binary
+*.dll binary

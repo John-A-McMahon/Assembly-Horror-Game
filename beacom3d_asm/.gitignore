@@ -1,0 +1,7 @@
+# build outputs
+*.o
+beacom3d
+beacom3d.exe
+*.dll
+build-win/
+shots/
