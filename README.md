@@ -15,16 +15,22 @@ Our group, Quentin, Carson and myself (John), have created a horror game in asse
 
 
 
+## Two versions
+
+- `game.asm` — the original terminal/ASCII version (32-bit, `make game` / `./game`).
+- `doom.asm` — a first-person, raycast 3D version (Wolfenstein/early-Doom style), 64-bit NASM + SDL2 + libm. Same map (`board.txt`), same "collect 3 wireshark captures while T hunts you" loop, but rendered as a real 3D corridor view in an SDL window instead of ASCII art. WASD to move/turn, walk into an item to pick it up, ESC to quit.
+
 ## Commands to run using docker  (Linux commands)
 use the dockerfile to build the image, run the image, and use make to build the game
 ```
 sudo docker build -t assembly_game .
 ```
 
+Since `doom` opens a real window, forward your X11 display to the container (on Linux with X11: `xhost +local:docker` first):
 ```
-sudo docker run -it assembly_game /bin/bash
+sudo docker run -it -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix assembly_game /bin/bash
 ```
-
+(If you just want the original terminal game, the plain `sudo docker run -it assembly_game /bin/bash` from before still works.)
 
 Inside of container:
 
@@ -34,6 +40,10 @@ make
 
 ```
 ./game
+```
+
+```
+./doom
 ```
 
 

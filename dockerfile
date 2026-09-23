@@ -6,6 +6,8 @@ RUN apt-get -y install gcc
 RUN apt-get -y install nasm
 RUN apt-get -y install make
 RUN apt-get -y install gcc-multilib g++-multilib libc6-dev-i386
+RUN apt-get -y install libsdl2-dev
+RUN apt-get -y install libsdl2-image-dev
 RUN echo "export PATH=$PATH:/usr/games" >> /root/.bashrc
 
 
