@@ -172,7 +172,7 @@ Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
   deauth packets, start with the map + compass, portal gun hidden / in hand / off,
-  hookshot hidden / in hand / off, how many cans of Diet Mountain Dew (0-8), how many bottom feeders (0-4), whether T remembers you between nights (nemesis)
+  hookshot hidden / in hand / off, how many cans of Diet Mountain Dew (0-8), how many bottom feeders (0-4), whether T learns your tricks during the night
 * **You** — sprint stamina drain, flashlight battery drain, walk speed, jump
   height, zipline speed
 * **Controls** — mouse sensitivity, invert Y, crouch hold/toggle
@@ -325,7 +325,7 @@ guard with a purple cannon on his shoulder, turning to track T. Whenever T
 comes within 16 m in sight of him, a purple bolt blasts T clean across the
 building. The cannon then needs 20 seconds to recharge. Lure T past Tyler.
 
-### T fights back: the director, building, portals, the nemesis
+### T fights back: the director, building, portals, learning your tricks
 
 **The director.** T's pressure comes in waves. If he hasn't chased you for
 40 s, he's nudged toward where you are (and again every 15 s after). When a
@@ -348,10 +348,10 @@ more safe-room cheese: **portals can't be opened in (or into) a safe room**.
 **The hookshot is loud.** When the hook bites, T hears the clank (22 m) and
 comes to look at where you'll land.
 
-**T remembers you (nemesis).** Every chase you escape is put down to the
-last trick you used: the hookshot, a portal, a safe room, a perch he had to
-build up to, or a deauth. After 3 escapes the same way he adapts, and after
-6 he adapts more:
+**T learns your tricks during the night.** Every chase you escape is put
+down to the last trick you used: the hookshot, a portal, a safe room, a
+perch he had to build up to, or a deauth. Get away the same way **twice**
+and he adapts; **four** times and he adapts more:
 
 | You keep escaping with... | T learns to... |
 | --- | --- |
@@ -361,11 +361,12 @@ build up to, or a deauth. After 3 escapes the same way he adapts, and after
 | perches | build his stairs faster (1.05 s, then 0.6 s) |
 | deauths | shake them off quicker (4 s, then 3 s of stun) |
 
-He also holds a grudge: each night you beat him makes him 4% faster (each
-time he catches you takes 2% off, capped at +16%). When he learns something
-mid-night you're told, and every night after the first opens with what he
-remembers. It's saved in `beacom_nemesis.cfg` (delete it to start over, or
-switch it off in the pause menu).
+You're always told what's going on: the night opens with *"T learns as the
+night goes on..."*, each escape tells you *"T saw how you got away: the
+hookshot. (1 of 2 -- then he adapts)"*, and when he adapts you get a red
+*"T HAS LEARNED your hookshot: he hears the hook bite from 33 m away now."*
+It's **per night**: every run starts with a T who knows nothing, and nothing
+is saved. Switch it off in the pause menu if you like.
 
 ### Generated layouts
 
@@ -417,7 +418,7 @@ follow you down into the atrium. He still can't climb ladders.
 | `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, hookshot, sleeve |
 | `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |
 | `feeders.asm` | the bottom feeders: wander / chase / steal / flee / stash, on T's nav graph |
-| `nemesis.asm` | T's memory of how you escape him, across nights (`beacom_nemesis.cfg`) |
+| `nemesis.asm` | T learning how you escape him, over one night |
 | `hookshot.asm` | the hookshot: traces the throw, latches on, pulls you in, fling, auto-mantle, stuns T |
 | `player.asm` | first-person controller: mouselook, movement, gravity, stairs, stamina, flashlight battery |
 | `ai.asm` | T: BFS over the 3D nav graph, 3D sight, occluded hearing, wander / investigate / chase |

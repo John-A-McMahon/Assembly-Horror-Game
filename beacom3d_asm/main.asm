@@ -139,7 +139,7 @@ st_bld_aim db "[selftest] T's stairs: deauth aimed at them=%d (expect 1); hook p
 st_por_t db "[selftest] T follows you through your portal: came out of the exit=%d (expect 1) after %.1fs",10,0
 st_por_safe db "[selftest] portal at a safe-room wall: placed=%d (expect 0 -- no portals in safe rooms)",10,0
 st_hook_hear db "[selftest] hookshot bite heard: T investigating=%d (expect 1)",10,0
-st_nem db "[selftest] nemesis: 3 hookshot escapes -> hears it from %.0f m (expect 33); 3 perches -> builds in %.2fs (expect 1.05); 2 wins -> speed x%.2f (expect 1.08)",10,0
+st_nem db "[selftest] nemesis: 3 hookshot escapes -> hears it from %.0f m (expect 33); 3 perches -> builds in %.2fs (expect 1.05); next night it's forgotten: %.0f m (expect 22)",10,0
 st_dew_you db "[selftest] Diet Mountain Dew: %.1fs of it (expect 10.0), stamina %.2f after sprinting on empty (expect 1.00)",10,0
 st_dew_t db "[selftest] T sniffed out a can %d cells away and drank it after %.1fs (expect < 15): wired for %.1fs (expect > 0), can gone=%d (expect 1)",10,0
 st_hook_across db "[selftest] hookshot across the collaboration space: pulled to x=%.2f (the media wall is at x=70; expect > 67)",10,0
@@ -268,6 +268,7 @@ sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
 sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
 sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
+sh_learn db "shots/43_t_learns.bmp",0
 sh_build db "shots/42_t_builds_stairs.bmp",0
 sh_grod db "shots/40_packet_of_grod.bmp",0
 sh_tyler db "shots/41_dauth_cannon_of_grod.bmp",0
@@ -938,7 +939,7 @@ new_game:
     call enemy_reset
     call feeders_reset                  ; ...and the bottom feeders, away from you
     call director_reset
-    call nemesis_new_night              ; what T remembers about you
+    call nemesis_new_night              ; T starts the night knowing nothing
 
     ; welcome messages
     lea rdi, [msg_buf]
@@ -1194,8 +1195,6 @@ interact:
     cmp dword [inventory], 3
     jl .talk
     mov dword [game_state], GS_WON
-    mov edi, 1
-    call nemesis_end
     call ach_won
     jmp .done
 .talk:
@@ -2602,8 +2601,6 @@ game_tick:
     cmp dword [t_caught], 0
     je .alive
     mov dword [game_state], GS_LOST
-    xor edi, edi
-    call nemesis_end
 .alive:
     call update_prompt
     call hud_update_explored
@@ -3234,6 +3231,29 @@ shot_mode_run:
     call shot_now
     mov dword [bld_on], 0
     mov dword [t_build], 0
+    ; T learning your tricks: what you are told
+    call hud_clear_messages
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    call nemesis_new_night
+    mov r12d, 2
+.learn:
+    mov dword [t_caught], 0
+    mov dword [t_state], T_CHASE
+    call nemesis_tick
+    xor edi, edi
+    call nemesis_note
+    mov dword [t_state], T_WANDER
+    call nemesis_tick
+    dec r12d
+    jnz .learn
+    lea rdi, [sh_learn]
+    call shot_now
+    call nemesis_forget
+    call hud_clear_messages
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -5231,11 +5251,14 @@ balance_tests:
     call nemesis_tick
     dec r12d
     jnz .esc
-    mov dword [nm_wins], 2
-    call nemesis_apply
     cvtss2sd xmm0, [nm_hook_hear]
     cvtss2sd xmm1, [nm_build_time]
-    cvtss2sd xmm2, [nm_speed]
+    movsd [rsp+0], xmm0
+    movsd [rsp+8], xmm1
+    call nemesis_new_night              ; the next night: he's forgotten
+    cvtss2sd xmm2, [nm_hook_hear]
+    movsd xmm0, [rsp+0]
+    movsd xmm1, [rsp+8]
     lea rdi, [st_nem]
     mov eax, 3
     call printf
@@ -6035,7 +6058,6 @@ main:
     jne .no_cfg
     call settings_load
     call ach_load                       ; (and save them from now on)
-    call nemesis_load                   ; ...and what T remembers about you
 .no_cfg:
     call world_init
     call render_init

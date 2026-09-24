@@ -74,7 +74,7 @@ cfg_portal      dd 0            ; 0 somewhere in the building, 1 start with it, 
 cfg_hookshot    dd 0            ; (same)
 cfg_dew         dd 4            ; cans of Diet Mountain Dew
 cfg_feeders     dd 2            ; bottom feeders
-cfg_nemesis     dd 1            ; T remembers how you escape him
+cfg_nemesis     dd 1            ; T learns how you escape him (per night)
 cfg_stamina     dd 100
 cfg_battery     dd 100
 cfg_walk        dd 100
@@ -108,7 +108,7 @@ l_portal    db "Portal gun *",0
 l_hookshot  db "Hookshot *",0
 l_dew       db "Diet Mountain Dew cans *",0
 l_feeders   db "Bottom feeders *",0
-l_nemesis   db "T remembers you (nemesis) *",0
+l_nemesis   db "T learns your tricks during the night *",0
 h_you       db "YOU",0
 l_stamina   db "Sprint stamina drain",0
 l_battery   db "Flashlight battery drain",0

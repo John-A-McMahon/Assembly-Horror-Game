@@ -1600,7 +1600,6 @@ enemy_update:
     addss xmm0, [t_speed_bonus]
     PCT xmm1, cfg_t_speed               ; custom run: T's speed
     mulss xmm0, xmm1
-    mulss xmm0, [nm_speed]              ; (nemesis: a grudge)
     movss xmm1, [t_dew]
     comiss xmm1, [c_zero]
     jbe .flat_legs

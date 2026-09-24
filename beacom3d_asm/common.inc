@@ -413,10 +413,8 @@ extern hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz
 %endif
 
 %ifndef MODULE_NEMESIS
-extern nemesis_load, nemesis_note, nemesis_tick, nemesis_end, nemesis_new_night
-extern nemesis_forget, nemesis_apply
-extern nm_build_time, nm_stun, nm_portal_any, nm_camp_time, nm_hook_hear, nm_speed
-extern nm_cnt, nm_caught, nm_wins, nm_nights
+extern nemesis_note, nemesis_tick, nemesis_new_night, nemesis_forget, nemesis_apply
+extern nm_build_time, nm_stun, nm_portal_any, nm_camp_time, nm_hook_hear, nm_cnt
 %endif
 
 %ifndef MODULE_FEED
