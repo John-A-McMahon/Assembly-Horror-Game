@@ -70,6 +70,7 @@ check_warning:
     comiss xmm0, [c_warn_on]
     jb .done
     mov dword [warned], 1
+    inc dword [run_warned]              ; (no SILENT RUNNING this run)
     lea rdi, [m_noise]
     mov esi, 0xFF47B3FF                 ; warning orange (ABGR)
     xor edx, edx

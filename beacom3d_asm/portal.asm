@@ -444,6 +444,8 @@ portal_check_teleport:
     mov eax, [c_cool]
     mov [cooldown], eax
     call snd_portal_enter
+    mov edi, ACH_PORTALS
+    call ach_unlock
     jmp .done
 .next:
     inc r12d

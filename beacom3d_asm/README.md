@@ -181,6 +181,16 @@ Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
 
 Rows marked * apply when you restart.
 
+### Achievements
+
+18 of them, from **PACIFIST** (win without firing a single deauth packet) and
+**GHOST PROTOCOL** (win without T ever seeing you) to **STAGE FRIGHT** (stand
+on the grand staircase stage while T chases you), **KING OF THE CRATES**,
+**THINKING WITH PORTALS**, **LOST IN THE MAZE** and a couple of secrets.
+Unlocking one pops a gold banner with a fanfare. They're saved to
+`beacom_achievements.cfg` (delete it to start over), listed at the bottom of
+the Esc menu, and the end screen in the terminal shows what that run earned.
+
 ### Generated Beacom
 
 Set *Building* to **GENERATED FROM THE SEED** and restart: the seed now
@@ -284,6 +294,7 @@ follow you down into the atrium. He still can't climb ladders.
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
+| `achievements.asm` | the 18 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
 | `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, sleeve |
 | `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |

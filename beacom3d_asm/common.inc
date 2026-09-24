@@ -77,6 +77,27 @@ section .rodata
 %define CF_FLAT   16    ; space S              flat floor at storey height
 %define CF_SIGHT  32    ; open, d, B           does not block line of sight
 
+; ---- achievements (achievements.asm) -----------------------------------------
+%define ACH_PACKET 0
+%define ACH_FULL_CAPTURE 1
+%define ACH_PACIFIST 2
+%define ACH_GHOST 3
+%define ACH_SPEEDRUN 4
+%define ACH_SILENT 5
+%define ACH_ARCHITECT 6
+%define ACH_MAZE 7
+%define ACH_POINT_BLANK 8
+%define ACH_FREE_RUNNER 9
+%define ACH_ZIPLINE 10
+%define ACH_PORTALS 11
+%define ACH_SAFE 12
+%define ACH_STAGE 13
+%define ACH_CRATES 14
+%define ACH_TYLER 15
+%define ACH_JOCKEY 16
+%define ACH_NETWORKING 17
+%define NACH 18
+
 ; ---- T's states --------------------------------------------------------------
 %define T_WANDER      0
 %define T_INVESTIGATE 1
@@ -363,6 +384,11 @@ extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_gra
     cvtsi2ss %1, dword [%2]
     mulss %1, [c_pct]
 %endmacro
+
+%ifndef MODULE_ACH
+extern ach_unlock, ach_new_run, ach_won, ach_tick, ach_load, ach_print_run
+extern ach_flag, ach_persist, run_deauths, run_spotted, run_warned, run_moves
+%endif
 
 %ifndef MODULE_MAIN
 extern items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h

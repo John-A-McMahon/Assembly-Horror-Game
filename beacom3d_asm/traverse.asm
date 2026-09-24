@@ -494,6 +494,12 @@ ride:
     call noise_add
     jmp .done
 .release:
+    movss xmm0, [zip_t]                 ; all the way to the end?
+    comiss xmm0, [c_one]
+    jb .let_go
+    mov edi, ACH_ZIPLINE
+    call ach_unlock
+.let_go:
     mov dword [p_mode], MODE_WALK
     mov dword [p_on_ground], 0
     mov dword [p_vy], 0

@@ -21,6 +21,7 @@ global on_t_spotted, have_map, have_compass, have_portal, invert_y, show_fps
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
+extern p_on_ground
 extern portal_reset, portal_fire, portal_check_teleport, world_select, render_rebuild_world
 extern add_box, snd_fanfare, map_floor, dump_shadow_map, glFinish, p_eye_y, getenv, SDL_SetHint, hud_fps, render_cycle_scale, render_toggle_shadows
 
@@ -109,6 +110,8 @@ st_real_zip db "[selftest] real Beacom zipline: grabbed=%d, landed at y=%.2f z=%
 st_real_glass db "[selftest] real Beacom: T sees into the server room through glass=%d (expect 1), through a solid wall=%d (expect 0)",10,0
 st_real_hunt db "[selftest] real Beacom: T came up from the sub-level and caught you in room 213 after %.1fs -- PASS",10,0
 st_real_lost db "[selftest] real Beacom: T never reached you in room 213 -- FAIL",10,0
+st_ach_fmt  db "[selftest] achievements, clean win: PACIFIST=%d GHOST=%d SPEEDRUN=%d (expect 1 1 0); after a deauth and being seen: PACIFIST=%d FULL CAPTURE=%d (expect 0 1)",10,0
+st_ach_fmt2 db "[selftest] achievements: KING OF THE CRATES on the tall crate stack=%d (expect 1)",10,0
 st_row_fmt  db "%.59s",10,0
 env_gensweep db "BEACOM_GENSWEEP",0
 st_sweep_fmt db "[selftest] seed sweep 1..%d: seeds missing a stairwell %d, storeys without open floor %d, seeds with unreachable spots %d (%d cells)",10,0
@@ -198,6 +201,8 @@ sh_gen_map db "shots/15_generated_map_ground.bmp",0
 sh_gen_map0 db "shots/16_generated_map_basement.bmp",0
 sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
+sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
+sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
 sh_r0 db "shots/30_beacom_entry_media_wall.bmp",0
 sh_r1 db "shots/31_beacom_balcony_over_collab.bmp",0
 sh_r2 db "shots/32_beacom_grand_staircase.bmp",0
@@ -662,6 +667,7 @@ new_game:
     call noise_reset
     call traverse_reset
     call portal_reset
+    call ach_new_run
     mov dword [crouch_latch], 0
     xor edi, edi
     call snd_mute                       ; (volume setting)
@@ -861,6 +867,8 @@ interact:
     call snd_pickup
     cmp dword [rbx+ITEM_KIND], IT_KEY
     jne .weapon
+    mov edi, ACH_PACKET
+    call ach_unlock
     inc dword [inventory]
     ; T gets angrier with every capture (unless the custom run says no)
     cmp dword [cfg_t_angry], 0
@@ -929,8 +937,11 @@ interact:
     cmp dword [inventory], 3
     jl .talk
     mov dword [game_state], GS_WON
+    call ach_won
     jmp .done
 .talk:
+    mov edi, ACH_NETWORKING
+    call ach_unlock
     movss xmm0, [b_cooldown]
     comiss xmm0, [c_zero]
     ja .done
@@ -961,6 +972,17 @@ fire_deauth:
     EPILOGUE
 .have:
     dec dword [deauths]
+    inc dword [run_deauths]             ; (no PACIFIST this run)
+    movss xmm0, [t_dist]
+    FLD xmm1, 4.0
+    comiss xmm0, xmm1
+    jae .not_close
+    movss xmm0, [t_stun]
+    comiss xmm0, [c_zero]
+    ja .not_close
+    mov edi, ACH_POINT_BLANK
+    call ach_unlock
+.not_close:
     call snd_deauth
     movss xmm0, [c_noise_deauth]        ; the zap is loud
     call noise_add
@@ -1031,6 +1053,7 @@ fire_deauth:
 ; called by ai.asm the moment T starts chasing you
 on_t_spotted:
     PROLOGUE 16
+    inc dword [run_spotted]             ; (no GHOST PROTOCOL this run)
     call snd_spotted
     lea rdi, [m_spotted]
     mov esi, COL_DANGER
@@ -1631,6 +1654,8 @@ update_items:
     comiss xmm0, [c_tyler_d]
     jae .n
     mov dword [tyler_said], 1
+    mov edi, ACH_TYLER
+    call ach_unlock
     lea rdi, [m_tyler]
     mov esi, COL_DANGER
     call msg
@@ -1640,6 +1665,8 @@ update_items:
     jne .n
     comiss xmm0, [c_jockey_d]
     jae .n
+    mov edi, ACH_JOCKEY
+    call ach_unlock
     mov dword [game_state], GS_SECRET
 .n:
     inc ebx
@@ -2004,6 +2031,7 @@ game_tick:
 .alive:
     call update_prompt
     call hud_update_explored
+    call ach_tick
     EPILOGUE
 
 ; draw the frame and present it (xmm0 = dt for the HUD)
@@ -2173,6 +2201,7 @@ end_screen:
     mov r9d, [inventory]
     xor eax, eax
     call printf
+    call ach_print_run
     EPILOGUE
 
 ; =============================================================================
@@ -2339,6 +2368,22 @@ shot_mode_run:
     mov esi, [win_w]
     mov edx, [win_h]
     call save_screenshot
+    ; the achievements at the bottom of the menu (a few unlocked for show)
+    mov dword [ach_flag+ACH_PACKET*4], 1
+    mov dword [ach_flag+ACH_PACIFIST*4], 1
+    mov dword [ach_flag+ACH_ZIPLINE*4], 1
+    mov ebx, 60
+.to_bottom:
+    mov edi, SC_DOWN
+    call menu_key
+    dec ebx
+    jnz .to_bottom
+    lea rdi, [sh_menu_ach]
+    call shot_now
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
     ; a building generated from seed 42: its map, then the view from the start
     mov dword [hud_paused], 0
     mov dword [cfg_building], 1
@@ -2439,6 +2484,17 @@ shot_mode_run:
     inc ebx
     jmp .real_shot
 .real_done:
+    ; an achievement popping
+    call hud_clear_messages
+    mov edi, ACH_STAGE
+    call ach_unlock
+    mov edi, 1
+    mov esi, 28
+    mov edx, 17
+    call player_spawn
+    mov dword [p_yaw], __float32__(3.1416)
+    lea rdi, [sh_ach_toast]
+    call shot_now
     EPILOGUE
 
 ; find_maze_spot -- stand in a one-cell passage on the ground floor (open
@@ -3131,6 +3187,58 @@ real_tests:
     call traverse_reset
     EPILOGUE
 
+; ach_tests -- the achievement rules (nothing is saved in a test run)
+ach_tests:
+    PROLOGUE 32
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    call ach_new_run
+    mov dword [elapsed_time], __float32__(1000.0)
+    call ach_won                        ; a slow win, no deauths, never seen
+    mov eax, [ach_flag+ACH_PACIFIST*4]
+    mov [rsp+0], eax
+    mov eax, [ach_flag+ACH_GHOST*4]
+    mov [rsp+4], eax
+    mov eax, [ach_flag+ACH_SPEEDRUN*4]
+    mov [rsp+8], eax
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    call ach_new_run
+    inc dword [run_deauths]             ; this time: fired one, got spotted
+    inc dword [run_spotted]
+    call ach_won
+    mov eax, [ach_flag+ACH_PACIFIST*4]
+    mov [rsp+12], eax
+    mov eax, [ach_flag+ACH_FULL_CAPTURE*4]
+    mov [rsp+16], eax
+    ; standing on the tall crate stack in the atrium pit (original map)
+    xor edi, edi
+    mov esi, 35
+    mov edx, 19
+    call player_spawn
+    mov dword [p_y], __float32__(1.9)
+    mov dword [p_on_ground], 1
+    mov dword [p_mode], 0
+    call ach_tick
+    lea rdi, [st_ach_fmt]
+    mov esi, [rsp+0]
+    mov edx, [rsp+4]
+    mov ecx, [rsp+8]
+    mov r8d, [rsp+12]
+    mov r9d, [rsp+16]
+    xor eax, eax
+    call printf
+    lea rdi, [st_ach_fmt2]
+    mov esi, [ach_flag+ACH_CRATES*4]
+    xor eax, eax
+    call printf
+    mov dword [elapsed_time], 0
+    EPILOGUE
+
 ; start_node -> eax = the node you start on in this building
 start_node:
     sub rsp, 8
@@ -3526,6 +3634,7 @@ selftest:
     call atrium_tests
     call parkour_tests
     call gen_tests
+    call ach_tests
     lea rdi, [env_gensweep]
     call getenv
     test rax, rax
@@ -3844,6 +3953,7 @@ main:
     cmp dword [shot_mode], 0
     jne .no_cfg
     call settings_load
+    call ach_load                       ; (and save them from now on)
 .no_cfg:
     call world_init
     call render_init

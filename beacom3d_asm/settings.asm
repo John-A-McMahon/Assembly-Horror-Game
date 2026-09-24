@@ -28,13 +28,14 @@ global cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_gra
 
 extern invert_y, show_fps, shadows_on, shadows_ok, render_scale
 extern draw_text, draw_rect, font_hud, font_small, font_big, tt_w, tt_h, glDeleteTextures
-extern fwrite
+extern fwrite, ach_flag
 
 %define T_HEADER 0
 %define T_INT    1
 %define T_PCT    2
 %define T_CHOICE 3
 %define T_ACTION 4
+%define T_INFO   5              ; shown, not changed (achievements)
 
 %define ROW_SIZE 48
 %define R_LABEL  0
@@ -123,6 +124,28 @@ l_shadows   db "Flashlight shadows",0
 l_fps       db "FPS counter",0
 l_grain     db "Film grain",0
 a_resume    db "> RESUME",0
+h_ach       db "ACHIEVEMENTS",0
+l_ach0     db "PACKET SNIFFER - collect a wireshark capture",0
+l_ach1     db "FULL CAPTURE - bring all three to B and free Y",0
+l_ach2     db "PACIFIST - win without firing a deauth packet",0
+l_ach3     db "GHOST PROTOCOL - win without T ever seeing you",0
+l_ach4     db "SPEEDRUN.EXE - win in under 5 minutes",0
+l_ach5     db "SILENT RUNNING - win without a single shh!",0
+l_ach6     db "ARCHITECT - win in a generated building",0
+l_ach7     db "LOST IN THE MAZE - win a generated maze",0
+l_ach8     db "POINT BLANK - deauth T from under 4 m away",0
+l_ach9     db "FREE RUNNER - 10 mantles or vaults in one run",0
+l_ach10     db "ZIPLINE ZOOMER - ride a zipline to the very end",0
+l_ach11     db "THINKING WITH PORTALS - step through a portal",0
+l_ach12     db "SAFE AND SOUND - reach a safe room while chased",0
+l_ach13     db "STAGE FRIGHT - stand on the stage while chased",0
+l_ach14     db "KING OF THE CRATES - stand on a tall crate stack",0
+l_ach15     db "HI I AM TYLER - meet Tyler",0
+l_ach16     db "CHICKEN JOCKEY - find the chicken jockey",0
+l_ach17     db "NETWORKING - talk to B",0
+s_locked    db "locked",0
+s_unlocked  db "UNLOCKED",0
+fmt_info    db "%s",0
 a_restart   db "> RESTART THIS RUN (same seed)",0
 a_newseed   db "> RESTART WITH A NEW SEED",0
 a_quit      db "> QUIT TO THE TERMINAL",0
@@ -180,6 +203,7 @@ s_half      db "1/2 (fast)",0
 s_third     db "1/3 (fastest)",0
 align 8
 n_offon     dq s_off, s_on
+n_ach       dq s_locked, s_unlocked
 n_building  dq s_classic, s_generated, s_original
 n_layout    dq s_maze, s_classic2, s_open
 n_map       dq s_hidden, s_start_w
@@ -228,6 +252,25 @@ rows:
     ROW l_shadows,   k_shadows,   shadows_on,     T_CHOICE, 0, 1, 1, n_offon
     ROW l_fps,       k_fps,       show_fps,       T_CHOICE, 0, 1, 1, n_offon
     ROW l_grain,     k_grain,     cfg_grain,      T_PCT,    0, 200, 25, 0
+    ROW h_ach,       0,           0,              T_HEADER, 0, 0, 0, 0
+    ROW l_ach0,     0,           ach_flag+0,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach1,     0,           ach_flag+4,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach2,     0,           ach_flag+8,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach3,     0,           ach_flag+12,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach4,     0,           ach_flag+16,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach5,     0,           ach_flag+20,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach6,     0,           ach_flag+24,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach7,     0,           ach_flag+28,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach8,     0,           ach_flag+32,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach9,     0,           ach_flag+36,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach10,     0,           ach_flag+40,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach11,     0,           ach_flag+44,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach12,     0,           ach_flag+48,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach13,     0,           ach_flag+52,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach14,     0,           ach_flag+56,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach15,     0,           ach_flag+60,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach16,     0,           ach_flag+64,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach17,     0,           ach_flag+68,     T_INFO,   0, 1, 1, n_ach
 rows_end:
 %define NROWS ((rows_end - rows) / ROW_SIZE)
 
@@ -284,8 +327,10 @@ menu_reset:
 selectable:
     call row_ptr
     xor ecx, ecx
-    cmp dword [rax+R_TYPE], T_HEADER
-    setne cl
+    cmp dword [rax+R_TYPE], T_HEADER    ; (achievements can be scrolled to,
+    je .no                              ; just not changed)
+    inc ecx
+.no:
     mov eax, ecx
     ret
 
@@ -325,6 +370,8 @@ change:
     EPILOGUE
 .value:
     cmp eax, T_HEADER
+    je .none
+    cmp eax, T_INFO
     je .none
     mov rdx, [rbx+R_VALUE]
     mov eax, [rdx]
@@ -530,6 +577,10 @@ make_static:
     jne .lbl2
     mov edx, RGBC(143,227,143)
 .lbl2:
+    cmp dword [r12+R_TYPE], T_INFO
+    jne .lbl3
+    mov edx, RGBC(190,184,150)
+.lbl3:
     mov rsi, [r12+R_LABEL]
     call text
     mov [lbl_tex+rbx*4], eax
@@ -587,9 +638,15 @@ refresh_value:
     jne .not_pct
     lea rdx, [fmt_pct]
 .not_pct:
+    cmp dword [r12+R_TYPE], T_INFO
+    jne .not_info
+    lea rdx, [fmt_info]
+    jmp .named
+.not_info:
     cmp dword [r12+R_TYPE], T_CHOICE
     jne .print
     lea rdx, [fmt_choice]
+.named:
     mov eax, r13d
     sub eax, [r12+R_MIN]
     mov rcx, [r12+R_NAMES]

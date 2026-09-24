@@ -284,6 +284,12 @@ parkour_try:
     mov dword [p_mode], MODE_MOVE
     xor edi, edi
     call snd_footstep                   ; hands and shoes on the edge
+    inc dword [run_moves]
+    cmp dword [run_moves], 10
+    jl .counted
+    mov edi, ACH_FREE_RUNNER
+    call ach_unlock
+.counted:
     mov eax, 1
     EPILOGUE
 .no:
