@@ -308,10 +308,10 @@ rag_width   dd 0.2, 0.05, 0.06, 0.06, 0.08, 0.08
 %define RAG_DRAW_BONES 6
 ; pickups: half-size of the spinning box, and the colour of the glow under it
 ;              capture deauth map   compass portal
-item_half_x dd 0.21,   0.25,  0.26,  0.17,   0.28,   0.30
-item_half_y dd 0.21,   0.15,  0.04,  0.06,   0.12,   0.08
-item_half_z dd 0.21,   0.15,  0.19,  0.17,   0.12,   0.10
-item_glow   dd 0.16,0.66,1.0,  1.0,0.12,0.12,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35
+item_half_x dd 0.21,   0.25,  0.26,  0.17,   0.28,   0.30,  0.10
+item_half_y dd 0.21,   0.15,  0.04,  0.06,   0.12,   0.08,  0.17
+item_half_z dd 0.21,   0.15,  0.19,  0.17,   0.12,   0.10,  0.10
+item_glow   dd 0.16,0.66,1.0,  1.0,0.12,0.12,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35,  0.6,1.0,0.2
 ; per material: bump strength (texture brightness read as height) and shine
 ;              H    C    G    L    N    #    floor flrB flrS ceil ceilB rack white
 mat_bump    dd 0.55,0.25,0.2, 0.5, 0.4, 0.5, 0.35,0.5, 0.35,0.3, 0.5, 0.4, 0.0
@@ -3639,6 +3639,8 @@ draw_items:
     call model_begin
     movss xmm0, [c_item_emit]
     call set_emit
+    cmp dword [r12+ITEM_KIND], IT_DEW
+    je .dew_can
     mov eax, [r12+ITEM_KIND]
     mov edi, [label_tex+rax*4]
     call bind
@@ -3662,6 +3664,71 @@ draw_items:
     mov dword [v_rep], __float32__(1.0)
     mov edi, F_ALL
     call emit_box
+    call glEnd
+    call model_end
+    xorps xmm0, xmm0
+    call set_emit
+    jmp .n
+.dew_can:
+    ; a can of Diet Mountain Dew: silver ends, green body, the red DIET band
+    mov edi, [white_tex]
+    call bind
+    mov edi, GL_QUADS
+    call glBegin
+    push rbx
+    push rbx
+    mov ebx, 0xc8ccd0
+    call set_rgb
+    xorps xmm0, xmm0
+    FLD xmm1, -0.17
+    xorps xmm2, xmm2
+    FLD xmm3, 0.085
+    FLD xmm4, 0.1
+    FLD xmm5, 0.03
+    mov edi, 14
+    call emit_cyl
+    mov ebx, 0x1f9a3a
+    call set_rgb
+    xorps xmm0, xmm0
+    FLD xmm1, -0.14
+    xorps xmm2, xmm2
+    FLD xmm3, 0.1
+    FLD xmm4, 0.1
+    FLD xmm5, 0.24
+    mov edi, 14
+    call emit_cyl
+    mov ebx, 0xd02028
+    call set_rgb
+    xorps xmm0, xmm0
+    FLD xmm1, -0.03
+    xorps xmm2, xmm2
+    FLD xmm3, 0.102
+    FLD xmm4, 0.102
+    FLD xmm5, 0.05
+    mov edi, 14
+    call emit_cyl
+    mov ebx, 0xc8ccd0
+    call set_rgb
+    xorps xmm0, xmm0
+    FLD xmm1, 0.1
+    xorps xmm2, xmm2
+    FLD xmm3, 0.1
+    FLD xmm4, 0.078
+    FLD xmm5, 0.04
+    mov edi, 14
+    call emit_cyl
+    xorps xmm0, xmm0
+    FLD xmm1, 0.14
+    xorps xmm2, xmm2
+    FLD xmm3, 0.078
+    xorps xmm4, xmm4
+    FLD xmm5, 0.005
+    mov edi, 14
+    call emit_cyl
+    mov ebx, 0xffffff
+    call set_rgb
+    pop rbx
+    pop rbx
     call glEnd
     call model_end
     xorps xmm0, xmm0

@@ -22,7 +22,7 @@ global hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz
 
 extern p_mode, p_vy, p_on_ground, p_mom_x, p_mom_z, parkour_try
 extern plat_inside, plat_height, t_stun, snd_hook_fire, snd_hook_hit, snd_hook_miss
-extern hud_message
+extern hud_message, slab_cross
 
 %define MODE_WALK 0
 %define MODE_HOOK 4
@@ -448,6 +448,17 @@ hookshot_update:
     movss xmm3, [c_radius]
     movss xmm4, [c_body]
     call collides
+    test eax, eax
+    jnz .arrive
+    ; ...or a floor / ceiling between here and there (hooked the floor, or
+    ; hauled up at a ceiling): stop at it rather than go through
+    movss xmm0, [rsp+20]
+    movss xmm1, [rsp+28]
+    movss xmm2, [p_y]
+    movss xmm3, [rsp+24]
+    movss xmm4, [c_radius]
+    movss xmm5, [c_body]
+    call slab_cross
     test eax, eax
     jnz .arrive
     mov eax, [rsp+20]

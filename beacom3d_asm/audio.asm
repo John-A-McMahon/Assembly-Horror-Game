@@ -21,7 +21,7 @@ global audio_init, snd_footstep, snd_tstep, snd_heartbeat, snd_pickup, snd_deaut
 global snd_noise_alert, snd_spotted, snd_thunder, snd_jumpscare, snd_win, snd_set_t
 global snd_set_floor, snd_mute, audio_cb, snd_fanfare, snd_clatter, snd_clank, snd_zip
 global snd_portal_open, snd_portal_fizzle, snd_portal_enter, snd_slide
-global snd_hook_fire, snd_hook_hit, snd_hook_miss
+global snd_hook_fire, snd_hook_hit, snd_hook_miss, snd_can, snd_can_t
 %ifdef WIN64
 extern audio_cb_win64
 %endif
@@ -817,6 +817,19 @@ snd_hook_miss:
     PROLOGUE 16
     BURST 2800.0, 0.5, 0.3, 0.12, FT_BP, 0, 0.0, 0.05
     TONE 500.0, 250.0, 0.2, 0.05, W_SQR, 0.05
+    EPILOGUE
+
+; a can cracked open: the pop, then the fizz (snd_can_t: T's, where he is)
+snd_can:
+    PROLOGUE 16
+    BURST 3200.0, 0.3, 0.05, 0.55, FT_BP, 0, 0.0, 0.0
+    BURST 7000.0, 0.8, 0.7, 0.16, FT_HP, 0, 0.04, 0.08
+    TONE 180.0, 120.0, 0.25, 0.05, W_SINE, 0.3
+    EPILOGUE
+snd_can_t:
+    PROLOGUE 16
+    BURST 3200.0, 0.3, 0.05, 0.7, FT_BP, 1, 0.0, 0.0
+    BURST 7000.0, 0.8, 0.7, 0.2, FT_HP, 1, 0.04, 0.08
     EPILOGUE
 
 ; a slide: shoes and jeans scraping along the floor

@@ -26,6 +26,7 @@
 %include "common.inc"
 
 global find_path, enemy_reset, enemy_update, enemy_hear, enemy_deauth, random_node
+global t_dew, enemy_lure
 global t_x, t_y, t_z, t_state, t_stun, t_sees, t_speed_bonus, t_caught, t_dist, t_same_storey
 global t_anim_phase, t_moving, path_len, t_hear_d, seen, stamp
 global far_spawn_node, spawn_dist, spawn_maxd
@@ -65,6 +66,8 @@ c_t_eye         dd 1.75                 ; T's eyes above his feet
 c_torso         dd 0.9                  ; he can also spot your body
 c_hunch_r       dd 40.0                 ; hunch range (world units, 3D)...
 c_hunch_y       dd 2.5                  ; ...height difference counts extra
+c_dew_speed     dd 1.4                  ; T on Diet Mountain Dew: faster...
+c_dew_sense     dd 1.4                  ; ...sees and hears further
 
 section .bss
 alignb 4
@@ -94,6 +97,7 @@ t_lost      resd 1                      ; float seconds since he last saw you
 t_step      resd 1                      ; float footstep timer
 t_sees      resd 1
 t_last_known resd 1                     ; node where he last saw you (-1 none)
+t_dew       resd 1                      ; seconds of Diet Mountain Dew buzz left
 t_speed_bonus resd 1                    ; float, grows with every capture you take
 t_caught    resd 1                      ; out: 1 = you're dead
 t_dist      resd 1                      ; out: float distance to player
@@ -483,9 +487,25 @@ enemy_reset:
     mov dword [t_repath], 0
     mov dword [t_lost], 0
     mov dword [t_stun], 0
+    mov dword [t_dew], 0
     mov dword [t_sees], 0
     mov dword [t_last_known], -1
     mov dword [t_caught], 0
+    EPILOGUE
+
+; enemy_lure(edi=node) -- something T wants (a can of Dew) is there: if he's
+; just wandering and could stand there, he heads for it
+enemy_lure:
+    PROLOGUE 16
+    cmp dword [t_state], T_WANDER
+    jne .no
+    mov ebx, edi
+    call node_walkable
+    test eax, eax
+    jz .no
+    mov edi, ebx
+    call set_goal
+.no:
     EPILOGUE
 
 ; set_goal(edi=node) -- change target; forces a re-path unless unchanged
@@ -515,6 +535,11 @@ enemy_hear:
     movss [rsp+8], xmm2
     PCT xmm4, cfg_t_hear                ; custom run: T's hearing
     mulss xmm3, xmm4
+    movss xmm4, [t_dew]
+    comiss xmm4, [c_zero]
+    jbe .flat_hear
+    mulss xmm3, [c_dew_sense]
+.flat_hear:
     movss [rsp+12], xmm3
     cmp dword [t_state], T_CHASE
     je .ignore
@@ -606,6 +631,11 @@ enemy_update:
     ;  [rsp+48] speed
     movss [rsp+0], xmm0
     mov dword [t_caught], 0
+    ; the Dew wears off
+    movss xmm1, [t_dew]
+    subss xmm1, xmm0
+    maxss xmm1, [c_zero]
+    movss [t_dew], xmm1
 
     ; ---- where is the player on the node graph?
     movss xmm0, [p_x]
@@ -677,6 +707,11 @@ enemy_update:
 .have_range:
     PCT xmm2, cfg_t_vision              ; custom run: T's eyesight
     mulss xmm1, xmm2
+    movss xmm2, [t_dew]
+    comiss xmm2, [c_zero]
+    jbe .flat_eyes
+    mulss xmm1, [c_dew_sense]
+.flat_eyes:
     movss [rsp+52], xmm1
     call t_eye_to_player
     movss xmm4, [p_eye_y]
@@ -824,6 +859,11 @@ enemy_update:
     addss xmm0, [t_speed_bonus]
     PCT xmm1, cfg_t_speed               ; custom run: T's speed
     mulss xmm0, xmm1
+    movss xmm1, [t_dew]
+    comiss xmm1, [c_zero]
+    jbe .flat_legs
+    mulss xmm0, [c_dew_speed]
+.flat_legs:
     mulss xmm0, [rsp+0]
     movss [rsp+32], xmm0                ; remaining distance this frame
 .walk:

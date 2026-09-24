@@ -17,6 +17,7 @@
 
 global player_spawn, player_update, player_look, player_floor, player_in_safe
 global p_x, p_y, p_z, p_yaw, p_pitch, p_stamina, p_battery, p_flash_on, p_crouch
+global p_dew
 global p_exhausted, p_eye_y, p_step_event, p_flash_level, keys_down, p_roll, p_sprint
 global p_vy, p_on_ground, p_bob, p_mom_x, p_mom_z
 extern p_mode, trav_roll, trav_shake, player_ground, footprint_ground, parkour_try, snd_slide
@@ -93,6 +94,7 @@ p_yaw        resd 1
 p_pitch      resd 1
 p_on_ground  resd 1
 p_stamina    resd 1
+p_dew        resd 1           ; seconds of Diet Mountain Dew left (unlimited stamina)
 p_battery    resd 1
 p_flash_on   resd 1
 p_crouch     resd 1
@@ -134,6 +136,7 @@ player_spawn:
     xor eax, eax
     mov [p_vy], eax
     mov [p_pitch], eax
+    mov [p_dew], eax
     mov [p_bob], eax
     mov [p_step_acc], eax
     mov [p_exhausted], eax
@@ -412,6 +415,14 @@ player_update:
     maxss xmm0, [c_zero]
     minss xmm0, [c_one]
     movss [p_stamina], xmm0
+    ; Diet Mountain Dew: you can't run out
+    movss xmm0, [p_dew]
+    comiss xmm0, [c_zero]
+    jbe .no_dew
+    mov eax, [c_one]
+    mov [p_stamina], eax
+    mov dword [p_exhausted], 0
+.no_dew:
 
     movss xmm0, [c_walk]
     cmp dword [p_sprint], 0
@@ -629,7 +640,19 @@ player_update:
     movss xmm3, [c_head_r]
     call collides
     test eax, eax
+    jnz .bonk
+    ; ...or on the slab of the storey above (or the roof)
+    call body_height
+    movaps xmm5, xmm0
+    movss xmm0, [p_x]
+    movss xmm1, [p_z]
+    movss xmm2, [p_y]
+    movss xmm3, [rsp+32]
+    movss xmm4, [c_head_r]
+    call slab_cross
+    test eax, eax
     jz .no_bonk
+.bonk:
     mov dword [p_vy], 0
     mov eax, [p_y]
     mov [rsp+32], eax

@@ -161,7 +161,7 @@ radial_tex  resd 1
 led_tex     resd 1
 sign_tex    resd NSIGNS
 prop_tex    resd 2                    ; cardboard box, wet-floor sign
-label_tex   resd 9                    ; .pcap DEAUTH MAP COMPASS PORTAL HOOKSHOT B "Y HELP"
+label_tex   resd 10                   ; .pcap DEAUTH MAP COMPASS PORTAL HOOKSHOT (dew) B "Y HELP"
 tt_w        resd 1                    ; size of the last text texture made
 tt_h        resd 1
 font_hud    resq 1

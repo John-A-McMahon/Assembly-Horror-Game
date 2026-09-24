@@ -30,7 +30,7 @@ global start_f, start_x, start_y, start_yaw
 extern sign_set_cur
 extern worldgen_generate
 global plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
-global plat_style, plat_inside, plat_height
+global plat_style, plat_inside, plat_height, slab_cross
 
 %define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
 %define XN(i) (NCELLS + (i))
@@ -1084,6 +1084,92 @@ collides:
 .f_next:
     inc r12d
     jmp .f_loop
+.clear:
+    xor eax, eax
+    EPILOGUE
+.hit:
+    mov eax, 1
+    EPILOGUE
+
+; -----------------------------------------------------------------------------
+; slab_cross(xmm0=x, xmm1=z, xmm2=feet from, xmm3=feet to, xmm4=radius,
+;            xmm5=body height) -> eax 1 if that vertical move takes the body
+; through a floor/ceiling slab: the head rising through a ceiling, or the feet
+; sinking through a floor. A slab is only missing over an open shaft ('.');
+; the roof and the basement floor are always there. (collides() only looks
+; at the cells the body is in, so a fast rise -- a hookshot fling -- could
+; otherwise pop you into the room above or out onto the roof.)
+; -----------------------------------------------------------------------------
+slab_cross:
+    PROLOGUE 48
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    movss [rsp+12], xmm3
+    movss [rsp+16], xmm4
+    movss [rsp+20], xmm5
+    xor r12d, r12d                      ; k: the slab at k*FH
+.k:
+    cmp r12d, NF
+    jg .clear
+    cvtsi2ss xmm0, r12d
+    mulss xmm0, [c_fh]
+    movss xmm1, [rsp+12]
+    comiss xmm1, [rsp+8]
+    jbe .down
+    ; rising: the head goes from at/under the slab to above it
+    movss xmm1, [rsp+8]
+    addss xmm1, [rsp+20]
+    comiss xmm1, xmm0
+    ja .next
+    movss xmm1, [rsp+12]
+    addss xmm1, [rsp+20]
+    comiss xmm1, xmm0
+    jbe .next
+    jmp .slab
+.down:
+    ; sinking: the feet go from on/over the slab to under it
+    movss xmm1, [rsp+8]
+    comiss xmm1, xmm0
+    jb .next
+    movss xmm1, [rsp+12]
+    comiss xmm1, xmm0
+    jae .next
+.slab:
+    cmp r12d, 0
+    je .hit
+    cmp r12d, NF
+    jge .hit
+    ; over storey k's cells under the four corners: open shaft everywhere?
+    xor r13d, r13d
+.c:
+    cmp r13d, 4
+    jge .next
+    movss xmm0, [rsp+16]
+    test r13d, 1
+    jnz .cx
+    xorps xmm0, [c_sign_mask]
+.cx:
+    addss xmm0, [rsp+0]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si esi, xmm0
+    movss xmm0, [rsp+16]
+    test r13d, 2
+    jnz .cz
+    xorps xmm0, [c_sign_mask]
+.cz:
+    addss xmm0, [rsp+4]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si edx, xmm0
+    mov edi, r12d
+    call cell_at
+    cmp eax, '.'
+    jne .hit
+    inc r13d
+    jmp .c
+.next:
+    inc r12d
+    jmp .k
 .clear:
     xor eax, eax
     EPILOGUE

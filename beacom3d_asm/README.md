@@ -172,7 +172,7 @@ Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
   deauth packets, start with the map + compass, portal gun hidden / in hand / off,
-  hookshot hidden / in hand / off
+  hookshot hidden / in hand / off, how many cans of Diet Mountain Dew (0-8)
 * **You** — sprint stamina drain, flashlight battery drain, walk speed, jump
   height, zipline speed
 * **Controls** — mouse sensitivity, invert Y, crouch hold/toggle
@@ -185,11 +185,12 @@ Rows marked * apply when you restart.
 
 ### Achievements
 
-20 of them, from **PACIFIST** (win without firing a single deauth packet) and
+21 of them, from **PACIFIST** (win without firing a single deauth packet) and
 **GHOST PROTOCOL** (win without T ever seeing you) to **STAGE FRIGHT** (stand
 on the grand staircase stage while T chases you), **KING OF THE CRATES**,
 **THINKING WITH PORTALS**, **GET OVER HERE** (hit T with the hookshot),
-**SPIDER-BEACOM** (hookshot yourself 2.5 m up), **LOST IN THE MAZE** and a
+**SPIDER-BEACOM** (hookshot yourself 2.5 m up), **DO THE DEW** (drink 3 Diet
+Mountain Dews in one night), **LOST IN THE MAZE** and a
 couple of secrets.
 Unlocking one pops a gold banner with a fanfare. They're saved to
 `beacom_achievements.cfg` (delete it to start over), listed at the bottom of
@@ -265,7 +266,9 @@ can grapple from the collaboration space straight up to
 the second floor. Press **Space** mid-pull to let go and keep flying (jump
 gaps, launch yourself across the atrium). Hook T and he staggers for a
 moment, but the clank is loud. Miss and the hook reels back in. T can't
-follow you anywhere the hookshot takes you.
+follow you anywhere the hookshot takes you. The hookshot can't take you
+through a floor, a ceiling or the roof: a fling stops when your head hits
+the ceiling, and hooking the floor doesn't drag you through it.
 
 You can only hold **one special item**: the deauth stack (up to 3 packets),
 the portal gun, or the hookshot. Pick up a different one and what you were
@@ -273,6 +276,20 @@ holding drops at your feet (a deauth stack drops as one item with all its
 packets), so you can go back and swap. The HUD shows what you're holding in
 the bottom-left. The pause menu's **Hookshot** row makes it hidden (default),
 in your hand from the start, or off.
+
+### Diet Mountain Dew
+
+Four cans (set 0-8 in the pause menu) are scattered around the building.
+Drink one (**E**) and you get **20 seconds of unlimited stamina**: the
+stamina bar turns lime and counts down. Cracking a can open makes a little
+noise.
+
+T drinks them too. He drinks any can he walks past, and while he's
+wandering he'll go out of his way for a can within about 14 m. When you
+see *"T just cracked open a Diet Mountain Dew"*, he's **wired for 15
+seconds**: 40% faster, and he sees and hears 40% further. Grabbing the
+cans near his patrol is as much about denying them to him as drinking them
+yourself.
 
 ### Generated layouts
 
@@ -319,7 +336,7 @@ follow you down into the atrium. He still can't climb ladders.
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
-| `achievements.asm` | the 20 achievements: rules, unlock banner, `beacom_achievements.cfg` |
+| `achievements.asm` | the 21 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
 | `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, hookshot, sleeve |
 | `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |

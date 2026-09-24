@@ -38,10 +38,12 @@ s_pr2       db "[E] take the MAP",0
 s_pr3       db "[E] take the COMPASS",0
 s_pr4       db "[E] take the PORTAL GUN",0
 s_pr5       db "[E] take the HOOKSHOT",0
-s_pr6       db "[E] talk to B",0
-s_pr7       db "[E] give B the captures",0
-s_pr8       db "[E] grab the zipline",0
-s_pr9       db "[W] climb the ladder",0
+s_pr6       db "[E] drink the DIET MOUNTAIN DEW",0
+s_pr7       db "[E] talk to B",0
+s_pr8       db "[E] give B the captures",0
+s_pr9       db "[E] grab the zipline",0
+s_pr10      db "[W] climb the ladder",0
+s_dew       db "DIET DEW: UNLIMITED STAMINA",0
 s_mapfull   db "MAP  --  [ ] change floor",0
 s_dirs      db "N",0,"E",0,"S",0,"W",0
 s_paused    db "PAUSED",0
@@ -57,8 +59,8 @@ item_strs   dq s_item_none, 0, s_item_portal, s_item_hook
 s_fps_fmt   db "FPS %d",0
 align 8
 floor_names dq s_floor0, s_floor1, s_floor2
-prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8, s_pr9
-%define NPROMPTS 10
+prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8, s_pr9, s_pr10
+%define NPROMPTS 11
 
 c_msg_life   dd 7.5
 c_lore_life  dd 15.5
@@ -67,7 +69,7 @@ c_grain_a    dd 0.07
 c_pulse      dd 9.0
 c_neg_pi     dd -3.14159265
 ; compass marker colours by pickup kind: capture deauth map compass portal
-mark_col     dd 0.3,0.85,1.0,  1.0,0.3,0.3,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35
+mark_col     dd 0.3,0.85,1.0,  1.0,0.3,0.3,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35,  0.6,1.0,0.2
 
 section .bss
 floor_tex   resd NF
@@ -86,9 +88,9 @@ item_w      resd 4
 item_h      resd 4
 deauth_w    resd 10
 deauth_h    resd 10
-misc_tex    resd 8                  ; stamina, flashlight, sees, paused, paused2, map, noise, full map
-misc_w      resd 8
-misc_h      resd 8
+misc_tex    resd 9                  ; stamina, flashlight, sees, paused, paused2, map, noise, full map, dew
+misc_w      resd 9
+misc_h      resd 9
 msg_tex     resd MAX_MSG
 msg_w       resd MAX_MSG
 msg_h       resd MAX_MSG
@@ -249,6 +251,13 @@ hud_init:
     mov [misc_tex+28], eax
     mov [misc_w+28], ecx
     mov [misc_h+28], r8d
+    mov rdi, [font_small]
+    lea rsi, [s_dew]
+    mov edx, RGBC(150,255,60)
+    call mk
+    mov [misc_tex+32], eax
+    mov [misc_w+32], ecx
+    mov [misc_h+32], r8d
     ; compass letters
     xor ebx, ebx
 .dir:
@@ -1490,6 +1499,13 @@ hud_draw:
     mov edi, [misc_tex+0]
     mov esi, [misc_w+0]
     mov edx, [misc_h+0]
+    movss xmm0, [p_dew]
+    comiss xmm0, [c_zero]
+    jbe .stam_label
+    mov edi, [misc_tex+32]
+    mov esi, [misc_w+32]
+    mov edx, [misc_h+32]
+.stam_label:
     FLD xmm0, 18.0
     movss xmm1, [rsp+8]
     FLD xmm2, 22.0
@@ -1509,6 +1525,17 @@ hud_draw:
     FLD xmm3, 0.23
     FLD xmm4, 0.23
 .st:
+    movss xmm5, [p_dew]                 ; on the Dew: a lime bar, running down
+    comiss xmm5, [c_zero]
+    jbe .st_plain
+    movaps xmm1, xmm5
+    FLD xmm5, 20.0
+    divss xmm1, xmm5
+    minss xmm1, [c_one]
+    FLD xmm2, 0.6
+    FLD xmm3, 1.0
+    FLD xmm4, 0.2
+.st_plain:
     call bar
     mov edi, [misc_tex+4]
     mov esi, [misc_w+4]

@@ -22,7 +22,7 @@ global special, have_hookshot
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
-extern p_on_ground
+extern p_on_ground, snd_can, snd_can_t, p_vy
 extern portal_reset, portal_fire, portal_check_teleport, world_select, render_rebuild_world
 extern add_box, snd_fanfare, map_floor, dump_shadow_map, glFinish, p_eye_y, getenv, SDL_SetHint, hud_fps, render_cycle_scale, render_toggle_shadows
 
@@ -113,6 +113,12 @@ st_real_hunt db "[selftest] real Beacom: T came up from the sub-level and caught
 st_real_lost db "[selftest] real Beacom: T never reached you in room 213 -- FAIL",10,0
 st_ach_fmt  db "[selftest] achievements, clean win: PACIFIST=%d GHOST=%d SPEEDRUN=%d (expect 1 1 0); after a deauth and being seen: PACIFIST=%d FULL CAPTURE=%d (expect 0 1)",10,0
 st_ach_fmt2 db "[selftest] achievements: KING OF THE CRATES on the tall crate stack=%d (expect 1)",10,0
+st_oob_fling db "[selftest] hookshot at the ceiling + fling: floor %d -> floor %d, head reached y=%.2f (expect <= 6.40: no popping into the room above)",10,0
+st_oob_floor db "[selftest] hookshot at the floor: floor %d -> floor %d, feet got down to y=%.2f (expect >= 3.20: not dragged through it)",10,0
+st_oob_roof db "[selftest] hookshot fling on the top floor: head reached y=%.2f (expect <= 9.60: not out through the roof)",10,0
+st_oob_none db "[selftest] hookshot out-of-bounds: no open spot found on floor %d -- FAIL",10,0
+st_dew_you db "[selftest] Diet Mountain Dew: %.1fs of it (expect 20.0), stamina %.2f after sprinting on empty (expect 1.00)",10,0
+st_dew_t db "[selftest] T sniffed out a can %d cells away and drank it after %.1fs (expect < 15): wired for %.1fs (expect > 0), can gone=%d (expect 1)",10,0
 st_hook_across db "[selftest] hookshot across the collaboration space: pulled to x=%.2f (the media wall is at x=70; expect > 67)",10,0
 st_hook_up db "[selftest] hookshot up to the balcony: ended at y=%.2f on floor %d (expect floor 2), SPIDER-BEACOM=%d (expect 1)",10,0
 st_hook_t db "[selftest] hookshot hits T: stunned for %.2fs (expect > 0), GET OVER HERE=%d (expect 1)",10,0
@@ -159,6 +165,14 @@ m_got_portal db "You got the PORTAL GUN! Left click (or Q): blue portal, right c
 m_got_hook  db "You got the HOOKSHOT! Left click (or Q) at a wall, a ceiling, a ledge: it bites and yanks you there. SPACE mid-pull flings you.",0
 m_dropped   db "You can only carry one special item -- you leave the %s where you stand.",0
 m_full      db "You can't carry more than 3 deauth packets.",0
+m_dew_you   db "*kssht* DIET MOUNTAIN DEW. Unlimited stamina for 20 seconds -- run.",0
+m_dew_off   db "The Dew wears off.",0
+m_dew_t     db "*kssht* ...somewhere, T just cracked open a Diet Mountain Dew. He's WIRED: faster, sharper, for 15 seconds.",0
+c_dew_you   dd 20.0
+c_dew_t     dd 15.0
+c_dew_sip   dd 0.9                      ; T drinks a can this close
+c_dew_sniff dd 14.0                     ; ...and wanders over to one this close
+c_noise_can dd 0.1                      ; cracking a can open is not quiet
 m_nothing   db "You're not holding a special item (deauth packet, portal gun or hookshot).",0
 sp_name1    db "deauth packets",0
 sp_name2    db "portal gun",0
@@ -218,6 +232,7 @@ sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
 sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
 sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
+sh_dew db "shots/38_diet_mountain_dew.bmp",0
 sh_hook_hand db "shots/36_hookshot_in_hand.bmp",0
 sh_hook_chain db "shots/37_hookshot_chain.bmp",0
 sh_r0 db "shots/30_beacom_entry_media_wall.bmp",0
@@ -310,6 +325,11 @@ items       resb ITEM_SIZE*MAX_ITEMS
 item_count  resd 1
 inventory   resd 1
 deauths     resd 1
+dew_count   resd 1                      ; cans you drank this run
+fo_x        resd 1                      ; find_open's answer
+fo_y        resd 1
+hr_maxy     resd 1                      ; hook_run: highest / lowest feet
+hr_miny     resd 1
 game_state  resd 1
 elapsed_time resd 1
 win_w       resd 1
@@ -661,6 +681,7 @@ new_game:
     xor eax, eax
     mov [inventory], eax
     mov [deauths], eax
+    mov [dew_count], eax
     mov [elapsed_time], eax
     mov [item_count], eax
     mov [last_band], eax
@@ -800,6 +821,21 @@ new_game:
     mov esi, eax
     mov edi, IT_JOCKEY
     call add_item
+    ; cans of Diet Mountain Dew, for whoever gets there first
+    mov ebx, [cfg_dew]
+    test ebx, ebx
+    jz .dew_done
+.dew:
+    mov edi, -1
+    xor esi, esi
+    xor edx, edx
+    call random_cell
+    mov esi, eax
+    mov edi, IT_DEW
+    call add_item
+    dec ebx
+    jnz .dew
+.dew_done:
 
     ; boxes and wet-floor signs to knock over
     call physics_reset
@@ -934,7 +970,27 @@ interact:
     jmp .done
 .weapon:
     cmp dword [rbx+ITEM_KIND], IT_WEAPON
+    jne .dew
+    jmp .deauth
+.dew:
+    cmp dword [rbx+ITEM_KIND], IT_DEW
     jne .zelda
+    call snd_can
+    movss xmm0, [c_noise_can]
+    call noise_add
+    mov eax, [c_dew_you]
+    mov [p_dew], eax
+    inc dword [dew_count]
+    cmp dword [dew_count], 3
+    jl .dew_msg
+    mov edi, ACH_DEW
+    call ach_unlock
+.dew_msg:
+    lea rdi, [m_dew_you]
+    mov esi, COL_GOOD
+    call msg
+    jmp .done
+.deauth:
     mov r12d, [rbx+ITEM_CHARGES]        ; (a dropped stack can hold several)
     cmp r12d, 1
     jge .charges
@@ -2131,10 +2187,86 @@ update_prompt:
     call near_b
     test eax, eax
     jz .done
-    mov dword [hud_prompt], 6
+    mov dword [hud_prompt], 7
     cmp dword [inventory], 3
     jl .done
-    mov dword [hud_prompt], 7
+    mov dword [hud_prompt], 8
+.done:
+    EPILOGUE
+
+; dew_tick(xmm0 = dt) -- your Dew running out; T finding cans: he drinks any
+; he walks past, and while wandering he sniffs out the nearest one
+dew_tick:
+    PROLOGUE 48
+    movss [rsp+0], xmm0
+    movss xmm1, [p_dew]
+    comiss xmm1, [c_zero]
+    jbe .t
+    subss xmm1, xmm0
+    maxss xmm1, [c_zero]
+    movss [p_dew], xmm1
+    comiss xmm1, [c_zero]
+    ja .t
+    lea rdi, [m_dew_off]
+    mov esi, COL_WARN
+    call msg
+.t:
+    movss xmm0, [t_stun]
+    comiss xmm0, [c_zero]
+    ja .done
+    mov eax, [c_dew_sniff]
+    mov [rsp+4], eax                    ; nearest can so far
+    mov qword [rsp+8], 0
+    xor ebx, ebx
+.it:
+    cmp ebx, [item_count]
+    jge .lure
+    imul eax, ebx, ITEM_SIZE
+    lea r12, [items+rax]
+    cmp dword [r12+ITEM_ACTIVE], 0
+    je .n
+    cmp dword [r12+ITEM_KIND], IT_DEW
+    jne .n
+    movss xmm0, [r12+ITEM_X]
+    subss xmm0, [t_x]
+    mulss xmm0, xmm0
+    movss xmm1, [r12+ITEM_Z]
+    subss xmm1, [t_z]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    movss xmm1, [r12+ITEM_Y]
+    subss xmm1, [t_y]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    comiss xmm0, [c_dew_sip]
+    jb .drink
+    comiss xmm0, [rsp+4]
+    jae .n
+    movss [rsp+4], xmm0
+    mov [rsp+8], r12
+.n:
+    inc ebx
+    jmp .it
+.drink:
+    mov dword [r12+ITEM_ACTIVE], 0
+    mov eax, [c_dew_t]
+    mov [t_dew], eax
+    call snd_can_t
+    lea rdi, [m_dew_t]
+    mov esi, COL_DANGER
+    call msg
+    EPILOGUE
+.lure:
+    mov r12, [rsp+8]
+    test r12, r12
+    jz .done
+    movss xmm0, [r12+ITEM_X]
+    movss xmm1, [r12+ITEM_Y]
+    movss xmm2, [r12+ITEM_Z]
+    call node_at_pos
+    mov edi, eax
+    call enemy_lure
 .done:
     EPILOGUE
 
@@ -2165,6 +2297,8 @@ game_tick:
     call physics_update
     movss xmm0, [rsp+0]
     call enemy_update
+    movss xmm0, [rsp+0]
+    call dew_tick
     movss xmm0, [rsp+0]
     movss xmm1, [elapsed_time]
     call world_lights_update
@@ -2692,6 +2826,26 @@ shot_mode_run:
     mov dword [p_mode], 0
     mov dword [special], SP_NONE
     mov dword [have_hookshot], 0
+    ; a can of Diet Mountain Dew on the floor ahead
+    mov edi, 1
+    mov esi, 28
+    mov edx, 15
+    call cell_index
+    mov esi, eax
+    mov edi, IT_DEW
+    call add_item
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], __float32__(-0.35)
+    lea rdi, [sh_dew]
+    call shot_now
+    mov eax, [item_count]
+    dec eax
+    imul eax, eax, ITEM_SIZE
+    mov dword [items+rax+ITEM_ACTIVE], 0
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -3455,6 +3609,12 @@ hook_run:
     mulss xmm0, xmm1
     cvttss2si ebx, xmm0
 .f:
+    movss xmm0, [hr_maxy]
+    maxss xmm0, [p_y]
+    movss [hr_maxy], xmm0
+    movss xmm0, [hr_miny]
+    minss xmm0, [p_y]
+    movss [hr_miny], xmm0
     movss xmm0, [c_dt_shot]
     call hookshot_update
     movss xmm0, [c_dt_shot]
@@ -3585,6 +3745,323 @@ hook_tests:
     mov dword [special], SP_NONE
     mov dword [have_hookshot], 0
     mov dword [have_portal], 0
+    EPILOGUE
+
+; find_open(edi = floor, esi = 1: open floor under it too) -> eax 1 and
+; fo_x/fo_y: a cell in the middle of a bit of open floor (3x3) with a slab
+; over it (or the roof)
+find_open:
+    PROLOGUE 16
+    mov r12d, edi
+    mov r15d, esi
+    mov r14d, 2
+.y:
+    cmp r14d, MAP_H-3
+    jg .none
+    mov r13d, 2
+.x:
+    cmp r13d, MAP_W-3
+    jg .ny
+    lea eax, [r12d+1]
+    cmp eax, NF
+    jge .roofed
+    mov edi, eax
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, '.'
+    je .nx
+.roofed:
+    test r15d, r15d
+    jz .below_ok
+    lea edi, [r12d-1]
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    jne .nx
+.below_ok:
+    mov ebx, -1                         ; 3x3 of plain floor
+.dy:
+    cmp ebx, 1
+    jg .found
+    mov ecx, -1
+.dx:
+    cmp ecx, 1
+    jg .ndy
+    push rcx
+    push rcx
+    mov edi, r12d
+    lea esi, [r13d+ecx]
+    lea edx, [r14d+ebx]
+    call cell_at
+    pop rcx
+    pop rcx
+    cmp eax, ' '
+    jne .nx
+    inc ecx
+    jmp .dx
+.ndy:
+    inc ebx
+    jmp .dy
+.found:
+    mov [fo_x], r13d
+    mov [fo_y], r14d
+    mov eax, 1
+    EPILOGUE
+.nx:
+    inc r13d
+    jmp .x
+.ny:
+    inc r14d
+    jmp .y
+.none:
+    xor eax, eax
+    EPILOGUE
+
+; hook_fling_up(edi = floor) -- stand on open floor, hook the ceiling, fling
+hook_fling_up:
+    PROLOGUE 16
+    mov edx, [fo_y]
+    mov esi, [fo_x]
+    call player_spawn
+    mov dword [p_yaw], 0
+    mov dword [p_pitch], __float32__(1.5)
+    FLD xmm0, 0.05
+    call hook_run
+    mov eax, [p_y]
+    mov [hr_maxy], eax
+    mov [hr_miny], eax
+    call hookshot_fire
+    mov byte [keys_down+K_JUMP], 1
+    FLD xmm0, 0.1
+    call hook_run
+    mov byte [keys_down+K_JUMP], 0
+    FLD xmm0, 2.0
+    call hook_run
+    EPILOGUE
+
+; oob_tests -- the hookshot can't take you through floors, ceilings or the roof
+oob_tests:
+    PROLOGUE 16
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    mov dword [t_stun], __float32__(10000.0)
+    ; the ground floor: fling up at the ceiling
+    mov edi, 1
+    xor esi, esi
+    call find_open
+    test eax, eax
+    jz .none1
+    mov edi, 1
+    call hook_fling_up
+    call player_floor
+    mov edx, eax
+    lea rdi, [st_oob_fling]
+    mov esi, 1
+    movss xmm0, [hr_maxy]
+    FLD xmm1, 1.7
+    addss xmm0, xmm1
+    cvtss2sd xmm0, xmm0
+    mov eax, 1
+    call printf
+    ; ...and hook the floor at your feet, over open basement
+    mov edi, 1
+    mov esi, 1
+    call find_open
+    test eax, eax
+    jz .none1
+    mov edi, 1
+    mov esi, [fo_x]
+    mov edx, [fo_y]
+    call player_spawn
+    mov dword [p_yaw], 0
+    mov dword [p_pitch], __float32__(-1.3)
+    FLD xmm0, 0.05
+    call hook_run
+    mov eax, [p_y]
+    mov [hr_maxy], eax
+    mov [hr_miny], eax
+    call hookshot_fire
+    FLD xmm0, 2.0
+    call hook_run
+    call player_floor
+    mov edx, eax
+    lea rdi, [st_oob_floor]
+    mov esi, 1
+    cvtss2sd xmm0, [hr_miny]
+    mov eax, 1
+    call printf
+    ; the top floor: fling up at the roof
+    mov edi, NF-1
+    xor esi, esi
+    call find_open
+    test eax, eax
+    jz .none2
+    mov edi, NF-1
+    call hook_fling_up
+    lea rdi, [st_oob_roof]
+    movss xmm0, [hr_maxy]
+    FLD xmm1, 1.7
+    addss xmm0, xmm1
+    cvtss2sd xmm0, xmm0
+    mov eax, 1
+    call printf
+    jmp .done
+.none1:
+    mov esi, 1
+    jmp .none
+.none2:
+    mov esi, NF-1
+.none:
+    lea rdi, [st_oob_none]
+    xor eax, eax
+    call printf
+.done:
+    call hookshot_reset
+    mov dword [p_mode], 0
+    EPILOGUE
+
+; dew_tests -- a can for you, a can for T
+dew_tests:
+    PROLOGUE 32
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    ; you: drink one, then sprint on an empty tank
+    mov edi, IT_DEW
+    call drop_item
+    call interact
+    movss xmm0, [p_dew]
+    movss [rsp+0], xmm0
+    mov dword [p_stamina], __float32__(0.05)
+    mov byte [keys_down+K_SPRINT], 1
+    mov byte [keys_down+K_FWD], 1
+    FLD xmm0, 1.0
+    call hook_run
+    mov byte [keys_down+K_SPRINT], 0
+    mov byte [keys_down+K_FWD], 0
+    lea rdi, [st_dew_you]
+    cvtss2sd xmm0, [rsp+0]
+    cvtss2sd xmm1, [p_stamina]
+    mov eax, 2
+    call printf
+    ; T: blind and deaf for the test, a can a few cells from where he stands
+    mov eax, [cfg_t_vision]
+    mov [rsp+8], eax
+    mov eax, [cfg_t_hear]
+    mov [rsp+12], eax
+    mov dword [cfg_t_vision], 0
+    mov dword [cfg_t_hear], 0
+    xor ebx, ebx                        ; no other cans
+.off:
+    cmp ebx, [item_count]
+    jge .offed
+    imul eax, ebx, ITEM_SIZE
+    cmp dword [items+rax+ITEM_KIND], IT_DEW
+    jne .offn
+    mov dword [items+rax+ITEM_ACTIVE], 0
+.offn:
+    inc ebx
+    jmp .off
+.offed:
+    call start_node
+    mov edi, eax
+    call enemy_reset
+    mov dword [t_stun], 0
+    ; the first plain floor cell 4..7 steps from the start (on its storey)
+    mov r13d, -7
+.cy:
+    cmp r13d, 7
+    jg .placed
+    mov r12d, -7
+.cx:
+    cmp r12d, 7
+    jg .ncy
+    mov eax, r12d
+    cdq
+    xor eax, edx
+    sub eax, edx
+    mov ecx, eax
+    mov eax, r13d
+    cdq
+    xor eax, edx
+    sub eax, edx
+    add ecx, eax                        ; |dx| + |dy|
+    cmp ecx, 4
+    jl .ncx
+    cmp ecx, 7
+    jg .ncx
+    mov [rsp+16], ecx
+    mov edi, [start_f]
+    mov esi, [start_x]
+    add esi, r12d
+    mov edx, [start_y]
+    add edx, r13d
+    call cell_at
+    cmp eax, ' '
+    jne .ncx
+    mov edi, [start_f]
+    mov esi, [start_x]
+    add esi, r12d
+    mov edx, [start_y]
+    add edx, r13d
+    call cell_index
+    mov esi, eax
+    mov edi, IT_DEW
+    call add_item
+    jmp .placed
+.ncx:
+    inc r12d
+    jmp .cx
+.ncy:
+    inc r13d
+    jmp .cy
+.placed:
+    mov eax, [item_count]
+    dec eax
+    imul eax, eax, ITEM_SIZE
+    lea r14, [items+rax]
+    xor ebx, ebx
+.walk:
+    cmp ebx, 900
+    jge .walked
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    movss xmm0, [c_dt_shot]
+    call dew_tick
+    inc ebx
+    movss xmm0, [t_dew]
+    comiss xmm0, [c_zero]
+    jbe .walk
+.walked:
+    cvtsi2ss xmm0, ebx
+    mulss xmm0, [c_dt_shot]
+    cvtss2sd xmm0, xmm0
+    cvtss2sd xmm1, [t_dew]
+    xor ecx, ecx
+    cmp dword [r14+ITEM_ACTIVE], 0
+    sete cl
+    lea rdi, [st_dew_t]
+    mov esi, [rsp+16]
+    mov edx, ecx
+    mov eax, 2
+    call printf
+    mov eax, [rsp+8]
+    mov [cfg_t_vision], eax
+    mov eax, [rsp+12]
+    mov [cfg_t_hear], eax
+    mov dword [p_dew], 0
+    mov dword [t_dew], 0
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
     EPILOGUE
 
 ; start_node -> eax = the node you start on in this building
@@ -3888,6 +4365,8 @@ selftest:
     mov dword [seed_val], 42
     call real_tests                     ; the real Beacom first...
     call hook_tests
+    call oob_tests
+    call dew_tests
     mov dword [cfg_building], BLD_ORIGINAL
     call prepare_world                  ; ...then the original map's tests
     call new_game
