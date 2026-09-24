@@ -320,7 +320,7 @@ walk_checks:
     ; any cable within reach?
     xor ebx, ebx
 .zip:
-    cmp ebx, NZIP
+    cmp ebx, [zip_count]                ; (each building has its own)
     jge .done
     call zip_closest                    ; xmm0 = t, xmm1 = horiz dist, xmm2 = height
     comiss xmm1, [c_grab_r]

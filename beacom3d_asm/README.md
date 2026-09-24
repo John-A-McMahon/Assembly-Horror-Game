@@ -158,14 +158,15 @@ Blue rooms are **safe rooms** — T can never enter them.
 
 T always starts on the far side of the building from you: a flood of his own
 path-finding graph measures the real walking distance, and he spawns at
-least 55% of the longest walk away (never closer than ~55 steps in 20000
-tested seeds), so no seed spawn-camps you.
+least 55% of the longest walk away (tested over thousands of seeds: never
+closer than ~40 steps, about 80 m of walking, in the real Beacom, which is
+the smallest building; ~50 in generated ones), so no seed spawn-camps you.
 
 ### The pause menu (custom runs)
 
 Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
 
-* **Custom run** — building (the real Beacom or **generated from the seed**),
+* **Custom run** — building (**the real Beacom** researched from DSU's own descriptions, **generated from the seed**, or the original game map),
   generated layout (**maze / classic / open**),
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
@@ -189,6 +190,44 @@ night. The same seed always gives the same building on every platform. The
 atrium, the 2nd-floor server room and B's library are kept as landmarks,
 and a flood fill guarantees every spot is reachable from the start.
 
+### The real Beacom
+
+The default building is the **Beacom Institute of Technology** at Dakota State
+University, rebuilt from what DSU, its architect and its builder have
+published. No public floor plan exists, so the room-by-room layout is a
+reconstruction around those facts (`tools/beacom_map.js` builds the maps and
+documents every choice):
+
+| From the sources | In the game |
+| --- | --- |
+| Two storeys, ~31,300 sq ft, a long rectangle running north-south, east of Washington Ave between Emry Hall and Girton House | The building runs north-south (row 0 = north), 36 m x 58 m inside -- about 1.4x the real floor area, for room to play |
+| The entry is surrounded by glass and opens onto a large collaboration space | A glass west wall (facing Washington Ave) onto a two-storey collaboration space; you start just inside it |
+| A media wall of 25 55-inch TVs (5 x 5) that work separately or as one huge screen | A 5 x 5 wall of screens facing the entry, all showing one huge scrolling Wireshark capture |
+| A grand staircase at the south end of the collaboration space with bleachers built in, wrapped in repurposed wood; a stage halfway up so the stairs act as bleachers for performances | 16 m of wooden bleacher-steps from the 1st floor up to a stage halfway, then on up to the 2nd floor -- solid, climbable, and T walks them |
+| 2nd floor: collaboration pods and the "cyber ops room" float over the collaboration space; labs are visible from the hallways | The collaboration space is open to the 2nd floor; the cyber ops room is a glass box on a bridge over the void, pods jut out from the balconies; labs have glass fronts (T can see you through glass) |
+| The Academic Server Room (13 x 26 ft, glass-walled, real servers and network gear) between two large classrooms, on the raised-floor north end of the 2nd floor | Classroom 231, the glass server room (2 x 4 cells = 4 m x 8 m, racks), classroom 233, across the north end of the 2nd floor |
+| Rooms 112, 114, 117 (117 hosts presentations), 213, 231, 233, 235 (the conference room); the Beacom College offices; labs for game design, animation and network & security administration | All of these, signed at their doors; the college office is the 2nd floor's safe room |
+
+Invented for the game: exact room positions and sizes, a restroom (the
+1st floor's safe room), a back stair, the zipline down onto the stage, and the
+entire **sub-level** -- the real building has no known basement; the game's
+third storey is fiction: utility tunnels, a mechanical hall with Y's cage, an
+electrical room (safe room), a storeroom of crates, and a maintenance ladder up
+to a hatch in room 117.
+
+Sources:
+[DSU: The Beacom College](https://dsu.edu/academics/colleges/beacom-college/),
+[TSP (architect)](https://teamtsp.com/portfolio-items/beacom-institute-technology/),
+[Journey Construction](https://www.journeyconstruction.com/projects/dakota-state-university-beacom-institute-of-technology),
+[SiouxFalls.Business](https://siouxfalls.business/have-you-seen-dsu-lately-prepare-to-be-amazed-by-the-changes/),
+[The Trojan Times](https://trojan-times.com/dsu-campus-embraces-the-renovation-the-ongoing-projects-that-mark-the-first-major-campus-construction-since-the-1980s/),
+[DSU Network & Security Admin program review (server room)](https://blogs.dsu.edu/wp-content/uploads/sites/15/2022/03/2021_NetSec_Program_Review_Final_Draft.pdf),
+[DSU Computer Science program review (room 235)](https://blogs.dsu.edu/wp-content/uploads/sites/18/2024/06/DSU-MS-and-BS-CS-2024-PROGRAM-REVIEW-REPORT.pdf),
+[DSU campus map](https://dsu.edu/Registration/DSU%20Campus%20Map.pdf).
+
+The original game's map is still there: *Building* -> **THE ORIGINAL GAME MAP**
+(generated buildings keep its atrium, server room and library as landmarks).
+
 ### Parkour
 
 Desks, crates and cardboard boxes are solid now, and you can climb them.
@@ -210,8 +249,11 @@ character:
   before you see him.
 * **Classic** -- rooms off corridors, like the real Beacom.
 * **Open** -- bigger rooms with most walls knocked through, open halls with
-  crates and pillars for cover. Long sightlines both ways: stealth is about
-  breaking line of sight.
+  crates and pillars for cover, and **tall ceilings**: wherever solid rock sat
+  above open floor it becomes air, so halls and corridors rise two or three
+  storeys and the floors above turn into balconies and ledges. Tall crate
+  stacks under the ledges let you climb up to the next floor (T can't).
+  Long sightlines both ways: stealth is about breaking line of sight.
 
 Every layout is checked the same way (every spot reachable, all stairwells,
 no duplicate buildings, T starting far away) -- `BEACOM_GENSWEEP` runs the
@@ -254,13 +296,16 @@ follow you down into the atrium. He still can't climb ladders.
 
 ### Maps
 
-`maps/ground.txt` is the original `../board.txt` with stairwells carved in;
-`maps/basement.txt` and `maps/second.txt` are new. Same 59×31 character
-format — edit them in any text editor:
+`maps/beacom/` is the real Beacom Institute of Technology (generated by
+`node tools/beacom_map.js`); `maps/original/` is the original game's map
+(`ground.txt` is `../board.txt` with stairwells carved in). Same 59×31
+character format — edit them in any text editor:
 
 ```
 ' ' floor     S safe-room floor   # H C G L N  walls (concrete, hallway, classroom, gym, library, safe room)
 d desk        R server rack       P pillar    Y Y's cage    B B
+k crate       K tall crate stack  g glass     W media wall  b floor under the grand stair
+u ladder foot (the cell above it upstairs is a '.' hatch)
 ^ v < >       stairs (the arrow points the way the stair RISES)
 .             open shaft above a stair on the floor below
 ```

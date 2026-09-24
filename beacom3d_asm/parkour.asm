@@ -17,8 +17,9 @@
 %define MODULE_PARKOUR
 %include "common.inc"
 
-global parkour_try, parkour_update, player_ground, pk_kind
+global parkour_try, parkour_update, player_ground, footprint_ground, pk_kind
 
+extern plat_inside, plat_height
 extern p_mode, p_vy, p_on_ground, p_sprint, trav_roll, props_top, snd_footstep
 
 %define MODE_WALK 0
@@ -79,6 +80,48 @@ player_ground:
     movss xmm2, [rsp+8]
     call props_top
     maxss xmm0, [rsp+12]
+    EPILOGUE
+
+; footprint_ground(xmm0=X, xmm1=Z, xmm2=feet, xmm3=step, xmm4=radius) -> xmm0:
+; like player_ground, but any platform under the edge of your footprint counts
+; too -- so you step up onto a stair or a ledge as soon as your toes reach it,
+; instead of only once your middle is over it
+footprint_ground:
+    PROLOGUE 32
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    movss [rsp+12], xmm3
+    movss [rsp+16], xmm4
+    call player_ground
+    movss [rsp+20], xmm0                ; best so far
+    movss xmm0, [rsp+8]
+    addss xmm0, [rsp+12]
+    movss [rsp+24], xmm0                ; the highest you can step to
+    xor ebx, ebx
+.p:
+    cmp ebx, [plat_count]
+    jge .done
+    mov ecx, ebx
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    movss xmm2, [rsp+16]
+    call plat_inside
+    test eax, eax
+    jz .n
+    mov ecx, ebx
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    call plat_height
+    comiss xmm0, [rsp+24]
+    ja .n
+    maxss xmm0, [rsp+20]
+    movss [rsp+20], xmm0
+.n:
+    inc ebx
+    jmp .p
+.done:
+    movss xmm0, [rsp+20]
     EPILOGUE
 
 ; ahead(xmm0 = distance) -> xmm0 = X, xmm1 = Z that far in front of you. leaf

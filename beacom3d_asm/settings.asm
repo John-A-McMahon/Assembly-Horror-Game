@@ -163,8 +163,9 @@ k_grain     db "film_grain",0
 ; ---- choice names ---------------------------------------------------------------
 s_off       db "OFF",0
 s_on        db "ON",0
-s_classic   db "THE REAL BEACOM",0
+s_classic   db "THE REAL BEACOM (researched)",0
 s_generated db "GENERATED FROM THE SEED",0
+s_original  db "THE ORIGINAL GAME MAP",0
 s_maze      db "MAZE (tight, twisty)",0
 s_classic2  db "CLASSIC",0
 s_open      db "OPEN (sightlines, cover)",0
@@ -179,7 +180,7 @@ s_half      db "1/2 (fast)",0
 s_third     db "1/3 (fastest)",0
 align 8
 n_offon     dq s_off, s_on
-n_building  dq s_classic, s_generated
+n_building  dq s_classic, s_generated, s_original
 n_layout    dq s_maze, s_classic2, s_open
 n_map       dq s_hidden, s_start_w
 n_portal    dq s_hidden, s_start_it, s_none
@@ -192,7 +193,7 @@ rows:
     ROW a_newseed,   0,           0,              T_ACTION, 2, 0, 0, 0
     ROW a_quit,      0,           0,              T_ACTION, 3, 0, 0, 0
     ROW h_run,       0,           0,              T_HEADER, 0, 0, 0, 0
-    ROW l_building,  k_building,  cfg_building,   T_CHOICE, 0, 1, 1, n_building
+    ROW l_building,  k_building,  cfg_building,   T_CHOICE, 0, 2, 1, n_building
     ROW l_layout,    k_layout,    cfg_layout,     T_CHOICE, 0, 2, 1, n_layout
     ROW l_t_speed,   k_t_speed,   cfg_t_speed,    T_PCT,   40, 250, 10, 0
     ROW l_t_hear,    k_t_hear,    cfg_t_hear,     T_PCT,   25, 300, 25, 0

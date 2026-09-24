@@ -24,9 +24,6 @@ extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
 extern portal_reset, portal_fire, portal_check_teleport, world_select, render_rebuild_world
 extern add_box, snd_fanfare, map_floor, dump_shadow_map, glFinish, p_eye_y, getenv, SDL_SetHint, hud_fps, render_cycle_scale, render_toggle_shadows
 
-%define START_F 1                   ; STARTX/STARTY from game.asm
-%define START_X 1
-%define START_Y 1
 
 ; keys_down slots (player.asm)
 %define K_FWD    0
@@ -103,6 +100,15 @@ lay_n1      db "CLASSIC",0
 lay_n2      db "OPEN",0
 align 8
 layout_names dq lay_n0, lay_n1, lay_n2
+st_real_reach db "[selftest] real Beacom: %d open cells, %d that T cannot reach from the entry (expect 0)",10,0
+st_real_grand db "real Beacom: up the grand staircase (fl 2)",0
+st_real_back db "real Beacom: up the back stair (fl 2)",0
+st_real_down db "real Beacom: down to the sub-level (fl 0)",0
+st_real_ladder db "real Beacom: ladder up into room 117",0
+st_real_zip db "[selftest] real Beacom zipline: grabbed=%d, landed at y=%.2f z=%.1f (expect the stage: y 4.8, z 42..44)",10,0
+st_real_glass db "[selftest] real Beacom: T sees into the server room through glass=%d (expect 1), through a solid wall=%d (expect 0)",10,0
+st_real_hunt db "[selftest] real Beacom: T came up from the sub-level and caught you in room 213 after %.1fs -- PASS",10,0
+st_real_lost db "[selftest] real Beacom: T never reached you in room 213 -- FAIL",10,0
 st_row_fmt  db "%.59s",10,0
 env_gensweep db "BEACOM_GENSWEEP",0
 st_sweep_fmt db "[selftest] seed sweep 1..%d: seeds missing a stairwell %d, storeys without open floor %d, seeds with unreachable spots %d (%d cells)",10,0
@@ -192,6 +198,24 @@ sh_gen_map db "shots/15_generated_map_ground.bmp",0
 sh_gen_map0 db "shots/16_generated_map_basement.bmp",0
 sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
+sh_r0 db "shots/30_beacom_entry_media_wall.bmp",0
+sh_r1 db "shots/31_beacom_balcony_over_collab.bmp",0
+sh_r2 db "shots/32_beacom_grand_staircase.bmp",0
+sh_r3 db "shots/33_beacom_server_room.bmp",0
+sh_r4 db "shots/34_beacom_sublevel.bmp",0
+align 8
+real_shots:   ; storey, x, y, yaw, pitch, file
+    dd 1, 22, 15, __float32__(-1.5708), __float32__(0.08)
+    dq sh_r0
+    dd 2, 24, 8, __float32__(2.8), __float32__(-0.38)
+    dq sh_r1
+    dd 1, 28, 17, __float32__(3.1416), __float32__(0.18)
+    dq sh_r2
+    dd 2, 30, 7, __float32__(0.0), __float32__(-0.05)
+    dq sh_r3
+    dd 0, 30, 24, __float32__(-1.5708), __float32__(0.0)
+    dq sh_r4
+%define NREAL_SHOTS 5
 sh_hands_gun db "shots/19_hands_torch_gun.bmp",0
 sh_hands_zip db "shots/20_hands_zipline.bmp",0
 sh_hands_ladder db "shots/21_hands_ladder.bmp",0
@@ -300,7 +324,7 @@ fps_frames  resd 1
 fps_time    resd 1
 crouch_latch resd 1
 restart_new resd 1                  ; the menu asked for a new seed
-built_mode  resd 1                  ; which building is in grid: 0 real, 1 generated
+built_mode  resd 1                  ; which building is in grid (BLD_...), -1 none yet
 built_seed  resd 1                  ; ...and from which seed
 built_layout resd 1                 ; ...with which layout
 
@@ -558,18 +582,18 @@ random_cell:
     jl .try
     ; far from the start: |x-1| + |y-1| + 15*|f-1| > 12
     mov eax, r13d
-    sub eax, START_X
+    sub eax, [start_x]
     mov ecx, eax
     neg ecx
     cmovl ecx, eax
     mov eax, r14d
-    sub eax, START_Y
+    sub eax, [start_y]
     mov edx, eax
     neg edx
     cmovl edx, eax
     add ecx, edx
     mov eax, ebx
-    sub eax, START_F
+    sub eax, [start_f]
     mov edx, eax
     neg edx
     cmovl edx, eax
@@ -645,9 +669,9 @@ new_game:
     mov [have_map], eax
     mov [have_compass], eax
     mov [have_portal], eax
-    mov edi, START_F
-    mov esi, START_X
-    mov edx, START_Y
+    mov edi, [start_f]                  ; (each building has its own start)
+    mov esi, [start_x]
+    mov edx, [start_y]
     call player_spawn
 
     ; one wireshark capture per storey, so you have to go everywhere
@@ -737,7 +761,8 @@ new_game:
 
     ; T starts on the far side of the building from you (whatever the seed:
     ; at least 55% of the longest walk away -- see far_spawn_node)
-    mov edi, (START_F*MAP_H + START_Y)*MAP_W + START_X
+    call start_node
+    mov edi, eax
     call far_spawn_node
     mov edi, eax
     call enemy_reset
@@ -755,8 +780,8 @@ new_game:
     lea rdi, [m_controls]
     mov esi, COL_INFO
     call msg
-    cmp dword [cfg_building], 0
-    je .real_beacom
+    cmp dword [cfg_building], BLD_GENERATED
+    jne .real_beacom
     lea rdi, [msg_buf]
     mov esi, 512
     lea rdx, [m_generated]
@@ -2158,6 +2183,8 @@ shot_mode_run:
     lea rdi, [mkdir_shots]
     call system
     mov dword [seed_val], 42
+    mov dword [cfg_building], BLD_ORIGINAL
+    call prepare_world
     call new_game
     mov dword [have_map], 1             ; show off the MAP + COMPASS in the shots
     mov dword [have_compass], 1
@@ -2360,8 +2387,8 @@ shot_mode_run:
     call shot_now
     mov dword [map_visible], 0
     mov dword [cfg_layout], 1
-    ; the hands in every pose, in the real Beacom's main hallway
-    mov dword [cfg_building], 0
+    ; the hands in every pose, in the original map's main hallway
+    mov dword [cfg_building], BLD_ORIGINAL
     call prepare_world
     call new_game
     call hud_clear_messages
@@ -2384,6 +2411,34 @@ shot_mode_run:
     lea rdi, [sh_hands_ladder]
     call shot_now
     mov dword [p_mode], 0
+    ; the real Beacom Institute of Technology
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    call hud_clear_messages
+    xor ebx, ebx
+.real_shot:
+    cmp ebx, NREAL_SHOTS
+    jge .real_done
+    imul eax, ebx, 28
+    lea r13, [real_shots+rax]
+    mov edi, [r13+0]
+    mov esi, [r13+4]
+    mov edx, [r13+8]
+    call player_spawn
+    mov eax, [r13+12]
+    mov [p_yaw], eax
+    mov eax, [r13+16]
+    mov [p_pitch], eax
+    mov rdi, [r13+20]
+    push rbx
+    sub rsp, 8
+    call shot_now
+    add rsp, 8
+    pop rbx
+    inc ebx
+    jmp .real_shot
+.real_done:
     EPILOGUE
 
 ; find_maze_spot -- stand in a one-cell passage on the ground floor (open
@@ -2885,8 +2940,8 @@ gen_sweep:
     xor eax, eax
     call printf
     ; the real Beacom too: T's start for the first 2000 seeds
-    mov dword [cfg_building], 0
-    xor edi, edi
+    mov dword [cfg_building], BLD_REAL
+    mov edi, BLD_REAL
     xor esi, esi
     call world_select
     mov dword [sw_min_pct], 1000
@@ -2906,16 +2961,191 @@ gen_sweep:
     mov edx, [sw_min_pct]
     xor eax, eax
     call printf
-    mov dword [cfg_building], 0
-    xor edi, edi
+    mov dword [cfg_building], BLD_ORIGINAL
+    mov edi, BLD_ORIGINAL
     xor esi, esi
     call world_select
     EPILOGUE
 
+; real_tests -- the real Beacom Institute of Technology (maps/beacom/)
+real_tests:
+    PROLOGUE 32
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    mov dword [t_stun], __float32__(10000.0)
+    call traverse_reset
+    ; every open spot T can reach from the entry
+    call start_node
+    mov edi, eax
+    mov esi, NNODES + 1                 ; (a target that can't exist: flood it all)
+    call find_path
+    mov r15d, [stamp]
+    xor r13d, r13d
+    xor ecx, ecx
+.oc:
+    cmp ecx, [open_count]
+    jge .oc_done
+    mov eax, [open_cells+rcx*4]
+    cmp [seen+rax*4], r15d
+    je .oc_ok
+    inc r13d
+.oc_ok:
+    inc ecx
+    jmp .oc
+.oc_done:
+    lea rdi, [st_real_reach]
+    mov esi, [open_count]
+    mov edx, r13d
+    xor eax, eax
+    call printf
+    ; up the grand staircase, over the stage, to the 2nd floor
+    lea rdi, [st_real_grand]
+    mov esi, 1
+    mov edx, 28
+    mov ecx, 19
+    FLD xmm0, 3.1416                    ; south
+    FLD xmm1, 3.0
+    call walk_test
+    ; the back stair: round the corner at its foot, then up
+    mov edi, 1
+    mov esi, 35
+    mov edx, 29
+    call player_spawn
+    xor edi, edi
+    FLD xmm0, -1.5708                   ; east, onto its bottom step
+    FLD xmm1, 1.1
+    call walk_leg
+    lea rdi, [st_real_back]
+    FLD xmm0, 0.0                       ; north, up the stair
+    FLD xmm1, 3.0
+    call walk_leg
+    ; down to the sub-level from the service landing
+    lea rdi, [st_real_down]
+    mov esi, 1
+    mov edx, 37
+    mov ecx, 13
+    FLD xmm0, 3.1416
+    FLD xmm1, 4.0
+    call walk_test
+    ; up the maintenance ladder into room 117
+    call traverse_reset
+    lea rdi, [st_real_ladder]
+    xor esi, esi
+    mov edx, 22
+    mov ecx, 3
+    FLD xmm0, 3.1416                    ; south, into the ladder's wall
+    FLD xmm1, 4.0
+    call walk_test
+    call traverse_reset
+    ; the zipline from the north balcony down onto the stage
+    mov edi, 2
+    mov esi, 22
+    mov edx, 8
+    call player_spawn
+    movss xmm0, [c_dt_shot]
+    call traverse_update
+    call traverse_try_grab
+    mov [rsp+0], eax
+    mov ebx, 60*6
+.ride:
+    movss xmm0, [c_dt_shot]
+    call traverse_update
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call player_update
+    dec ebx
+    jnz .ride
+    lea rdi, [st_real_zip]
+    mov esi, [rsp+0]
+    cvtss2sd xmm0, [p_y]
+    cvtss2sd xmm1, [p_z]
+    mov eax, 2
+    call printf
+    call traverse_reset
+    ; glass: T sees into the server room from the lobby, not through a wall
+    FLD xmm0, 61.0
+    FLD xmm1, 8.0
+    FLD xmm2, 15.0
+    FLD xmm3, 61.0
+    FLD xmm4, 8.0
+    FLD xmm5, 7.0
+    call line_of_sight_3d
+    mov [rsp+0], eax
+    FLD xmm0, 47.0
+    FLD xmm1, 8.0
+    FLD xmm2, 17.0
+    FLD xmm3, 47.0
+    FLD xmm4, 8.0
+    FLD xmm5, 7.0
+    call line_of_sight_3d
+    mov edx, eax
+    mov esi, [rsp+0]
+    lea rdi, [st_real_glass]
+    xor eax, eax
+    call printf
+    ; T comes up from the sub-level for you, hiding in room 213
+    mov edi, 2
+    mov esi, 23
+    mov edx, 27
+    call player_spawn
+    mov dword [p_flash_on], 0
+    mov edi, (0*MAP_H + 25)*MAP_W + 30
+    call enemy_reset
+    xor ebx, ebx
+.hunt:
+    cmp ebx, 60*200
+    jge .lost
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, 60
+    div ecx
+    test edx, edx
+    jnz .no_hear
+    movss xmm0, [p_x]
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    FLD xmm3, 1000.0
+    call enemy_hear
+.no_hear:
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    cmp dword [t_caught], 0
+    jne .caught
+    inc ebx
+    jmp .hunt
+.caught:
+    cvtsi2sd xmm0, ebx
+    mov rax, __float64__(60.0)
+    movq xmm1, rax
+    divsd xmm0, xmm1
+    lea rdi, [st_real_hunt]
+    mov eax, 1
+    call printf
+    jmp .done
+.lost:
+    lea rdi, [st_real_lost]
+    xor eax, eax
+    call printf
+.done:
+    call traverse_reset
+    EPILOGUE
+
+; start_node -> eax = the node you start on in this building
+start_node:
+    sub rsp, 8
+    mov edi, [start_f]
+    mov esi, [start_x]
+    mov edx, [start_y]
+    call cell_index
+    add rsp, 8
+    ret
+
 ; spawn_check -- run T's spawn choice and keep the closest it ever came
 spawn_check:
     sub rsp, 8
-    mov edi, (START_F*MAP_H + START_Y)*MAP_W + START_X
+    call start_node
+    mov edi, eax
     call far_spawn_node
     mov eax, [spawn_dist]
     cmp eax, [sw_min_steps]
@@ -3016,8 +3246,8 @@ gen_tests:
     cmp dword [gt_layout], 3
     jl .layout
     mov dword [cfg_layout], 1
-    mov dword [cfg_building], 0
-    xor edi, edi
+    mov dword [cfg_building], BLD_ORIGINAL
+    mov edi, BLD_ORIGINAL
     xor esi, esi
     call world_select
     EPILOGUE
@@ -3200,6 +3430,9 @@ atrium_tests:
 selftest:
     PROLOGUE 32
     mov dword [seed_val], 42
+    call real_tests                     ; the real Beacom first...
+    mov dword [cfg_building], BLD_ORIGINAL
+    call prepare_world                  ; ...then the original map's tests
     call new_game
     mov dword [t_stun], __float32__(10000.0)   ; T frozen for the walking tests
 
@@ -3616,6 +3849,7 @@ main:
     call render_init
     call hud_init
     call audio_init
+    mov dword [built_mode], -1
     call prepare_world
 
     cmp dword [shot_mode], 0

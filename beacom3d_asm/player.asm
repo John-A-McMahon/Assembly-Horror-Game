@@ -19,7 +19,7 @@ global player_spawn, player_update, player_look, player_floor, player_in_safe
 global p_x, p_y, p_z, p_yaw, p_pitch, p_stamina, p_battery, p_flash_on, p_crouch
 global p_exhausted, p_eye_y, p_step_event, p_flash_level, keys_down, p_roll, p_sprint
 global p_vy, p_on_ground, p_bob
-extern p_mode, trav_roll, trav_shake, player_ground, parkour_try, snd_slide
+extern p_mode, trav_roll, trav_shake, player_ground, footprint_ground, parkour_try, snd_slide
 
 ; keys_down[] slots, filled by main.asm from SDL_GetKeyboardState
 %define K_FWD    0
@@ -77,7 +77,6 @@ c_pitch_max  dd 1.5
 c_pitch_min  dd -1.5
 c_head_r     dd 0.16
 c_head_extra dd 0.1
-c_start_yaw  dd -2.3561945    ; -3/4 pi: face into the first room
 c_slide_time dd 0.85          ; seconds
 c_slide_v0   dd 8.2           ; speed at the start of a slide...
 c_slide_v1   dd 2.6           ; ...and at the end
@@ -135,7 +134,7 @@ player_spawn:
     mov [p_bob], eax
     mov [p_step_acc], eax
     mov [p_exhausted], eax
-    mov eax, [c_start_yaw]
+    mov eax, [start_yaw]                ; the building's start direction
     mov [p_yaw], eax
     mov eax, [c_one]
     mov [p_stamina], eax
@@ -220,7 +219,8 @@ try_move:
     movss [rsp+4], xmm1
     movss xmm2, [p_y]
     movss xmm3, [c_step_up]
-    call player_ground                  ; (the building, or a box you're on)
+    movss xmm4, [c_radius]
+    call footprint_ground               ; (the building, a box, a step under your toes)
     maxss xmm0, [p_y]                   ; feet = max(y, ground)
     movaps xmm2, xmm0
     call body_height

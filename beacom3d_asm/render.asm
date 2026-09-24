@@ -58,7 +58,7 @@ global lightning, save_screenshot, choose_render_scale, render_cycle_scale, rend
 
 extern glPushMatrix, glPopMatrix, glMultMatrixf, glDeleteLists, glCopyTexSubImage2D, glGetString, getenv, strstr
 extern glLoadMatrixf, glColorMask, glPolygonOffset, glDrawBuffer, glReadBuffer
-extern portal_views, portal_draw_rims, draw_viewmodel
+extern portal_views, portal_draw_rims, draw_viewmodel, media_tex
 global render_rebuild_world, set_material, set_emit, model_end, u_model, u_fpos, u_fdir, u_flash, u_son
 extern phys_nb, px, py, pz, body_type, body_p0, body_active, rag_active, prop_tex
 %define GL_RENDERER 0x1F01
@@ -72,7 +72,7 @@ extern phys_nb, px, py, pz, body_type, body_p0, body_active, rag_active, prop_te
 %define GL_POLYGON_OFFSET_FILL 0x8037
 %define GL_TEXTURE0 0x84C0
 %define GL_TEXTURE1 0x84C1
-extern sign_count, sign_f, sign_x, sign_z, sign_face, sign_exit
+extern sign_count, sign_f, sign_x, sign_z, sign_face, sign_exit, sign_set, sign_set_cur
 extern p_eye_y, p_roll, player_floor, t_moving
 
 
@@ -106,7 +106,8 @@ extern p_eye_y, p_roll, player_floor, t_moving
 %define M_WHITE   12          ; vertex-coloured props
 %define M_LED     13          ; unlit: rack LEDs
 %define M_SCREEN  14          ; unlit: monitors left on
-%define NMAT      15
+%define M_GLASS   15          ; see-through walls, drawn last with blending
+%define NMAT      16
 %define NLIT      13          ; materials 0..12 go through the shader
 
 %define MAX_FIX   900
@@ -298,7 +299,7 @@ corner_v    dd 0.0, 0.0, 1.0, 1.0
 
 ; material -> texture slot (M_WHITE/M_SCREEN use white_tex, M_LED led_tex)
 mat_tex     dd TX_H, TX_C, TX_G, TX_L, TX_N, TX_CONC, TX_FLOOR, TX_FLOOR_B, TX_FLOOR_S
-            dd TX_CEIL, TX_CEIL_B, TX_RACK, -1, -2, -1
+            dd TX_CEIL, TX_CEIL_B, TX_RACK, -1, -2, -1, -1
 
 identity    dd 1.0,0.0,0.0,0.0, 0.0,1.0,0.0,0.0, 0.0,0.0,1.0,0.0, 0.0,0.0,0.0,1.0
 ; T's ragdoll as drawn: torso, neck, arms, legs (particle pairs) and widths
@@ -1922,6 +1923,10 @@ build_material:
     PROLOGUE 64
     mov r12d, ebx                       ; f (kept in r12 for helpers)
     mov [rsp+32], r15d                  ; material
+    cmp r15d, M_GLASS
+    jne .not_glass
+    GLF4 glColor4f, 0.62, 0.80, 0.88, 0.20   ; faintly blue-green, mostly clear
+.not_glass:
     xor r14d, r14d                      ; y
 .y:
     cmp r14d, MAP_H
@@ -1965,6 +1970,14 @@ build_material:
     jne .w5
     mov edx, M_N
 .w5:
+    cmp eax, 'g'                        ; glass
+    jne .w6
+    mov edx, M_GLASS
+.w6:
+    cmp eax, 'W'                        ; the media wall: drywall behind the screens
+    jne .w7
+    mov edx, M_C
+.w7:
     cmp edx, ecx
     jne .next
     ; only faces that border a non-wall cell
@@ -2947,10 +2960,8 @@ collect_fixtures:
     je .ok
     cmp ebx, 'S'
     je .ok
-    cmp ebx, '.'                        ; the atrium's roof has lights too
-    jne .nx
-    cmp r12d, NF-1
-    jne .nx
+    cmp ebx, '.'                        ; tall spaces: lights on whatever ceiling
+    jne .nx                             ; is over them (checked just below)
 .ok:
     ; no fixture where the ceiling is open
     cmp r12d, NF-1
@@ -3008,6 +3019,9 @@ collect_fixtures:
 .sign:
     cmp ebx, [sign_count]
     jge .aura
+    mov eax, [sign_set+rbx*4]           ; only this building's signs
+    cmp eax, [sign_set_cur]
+    jne .ns
     cmp dword [sign_exit+rbx*4], 0
     je .ns
     movss xmm0, [sign_x+rbx*4]
@@ -3070,23 +3084,16 @@ render_init:
     mov edi, NF*NMAT
     call glGenLists
     mov [list_base], eax
-    mov eax, [sign_count]
-    mov [signs_classic], eax
     call build_world
     call choose_render_scale
     call init_shadows
     EPILOGUE
 
-; render_rebuild_world -- after world_select: new geometry, lights and (for a
-; generated building, which has none of the real room signs) no signs
+; render_rebuild_world -- after world_select: new geometry and lights (the
+; building's own signs are picked by world_select: sign_set_cur)
 render_rebuild_world:
     PROLOGUE 16
-    mov eax, [signs_classic]
-    cmp dword [cfg_building], 0
-    je .signs
-    xor eax, eax
-.signs:
-    mov [sign_count], eax
+    call find_media_wall
     call build_world
     EPILOGUE
 
@@ -3479,6 +3486,9 @@ draw_signs:
 .s:
     cmp ebx, [sign_count]
     jge .done
+    mov eax, [sign_set+rbx*4]           ; only this building's signs
+    cmp eax, [sign_set_cur]
+    jne .n
     mov eax, [sign_exit+rbx*4]
     cmp eax, r12d
     jne .n
@@ -4150,10 +4160,238 @@ draw_scene:
     ; portal rims glow like everything else in this pass
     movss xmm0, [rsp+8]
     call portal_draw_rims
+    ; the media wall: the screens are the light
+    movss xmm0, [rsp+8]
+    call draw_media_wall
+    ; glass last: see-through, and lit like everything else
+    call draw_glass
     mov edi, GL_FOG
     call glDisable
     mov edi, GL_BLEND
     call glDisable
+    EPILOGUE
+
+; draw_glass -- every storey's glass walls, blended over what's behind them
+draw_glass:
+    PROLOGUE 16
+    xor edi, edi
+    call use_program
+    mov edi, [white_tex]
+    call bind
+    xorps xmm0, xmm0
+    call set_emit
+    xorps xmm0, xmm0
+    FLD xmm1, 0.95                      ; glossy: catches the flashlight
+    call set_material
+    mov edi, GL_BLEND
+    call glEnable
+    mov edi, GL_SRC_ALPHA
+    mov esi, GL_ONE_MINUS_SRC_ALPHA
+    call glBlendFunc
+    xor edi, edi
+    call glDepthMask
+    xor ebx, ebx
+.f:
+    cmp ebx, NF
+    jge .done
+    imul edi, ebx, NMAT
+    add edi, M_GLASS
+    add edi, [list_base]
+    call glCallList
+    inc ebx
+    jmp .f
+.done:
+    mov edi, 1
+    call glDepthMask
+    xor edi, edi
+    GL2CALL glUseProgram
+    EPILOGUE
+
+; find_media_wall -- where the building's media wall ('W' cells) is: one run
+; of wall cells, screens on its west face
+find_media_wall:
+    PROLOGUE 16
+    mov dword [mw_on], 0
+    xor ebx, ebx
+.c:
+    cmp ebx, NCELLS
+    jge .done
+    cmp byte [grid+rbx], 'W'
+    jne .n
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, MAP_W
+    div ecx                             ; eax = f*MAP_H + y, edx = x
+    mov r12d, edx
+    xor edx, edx
+    mov ecx, MAP_H
+    div ecx                             ; eax = f, edx = y
+    cmp dword [mw_on], 0
+    jne .more
+    mov dword [mw_on], 1
+    cvtsi2ss xmm0, r12d
+    mulss xmm0, [c_cell]
+    movss [mw_x], xmm0                  ; the west face
+    cvtsi2ss xmm0, eax
+    mulss xmm0, [c_fh]
+    movss [mw_y0], xmm0
+    cvtsi2ss xmm0, edx
+    mulss xmm0, [c_cell]
+    movss [mw_z0], xmm0
+.more:
+    inc edx
+    cvtsi2ss xmm0, edx
+    mulss xmm0, [c_cell]
+    movss [mw_z1], xmm0                 ; (cells come in order: the last one wins)
+.n:
+    inc ebx
+    jmp .c
+.done:
+    EPILOGUE
+
+; draw_media_wall(xmm0 = time) -- 25 TVs in a 5 x 5 grid, together one huge
+; screen: a Wireshark packet list scrolling up, each TV its own slice of it
+draw_media_wall:
+    PROLOGUE 64
+    cmp dword [mw_on], 0
+    je .done
+    FLD xmm1, 0.035
+    mulss xmm0, xmm1
+    movss [rsp+0], xmm0                 ; scroll
+    ; a black backing panel
+    mov edi, [white_tex]
+    call bind
+    GLF4 glColor4f, 0.02, 0.02, 0.025, 1.0
+    mov edi, GL_QUADS
+    call glBegin
+    movss xmm0, [mw_z0]
+    addss xmm0, [mw_z1]
+    mulss xmm0, [c_half]
+    movss [rsp+4], xmm0                 ; middle of the wall
+    FLD xmm1, -2.72
+    addss xmm0, xmm1
+    movss [rsp+8], xmm0                 ; panel left
+    FLD xmm1, 5.44
+    addss xmm0, xmm1
+    movss [rsp+12], xmm0                ; panel right
+    movss xmm0, [mw_y0]
+    FLD xmm1, 0.18
+    addss xmm0, xmm1
+    movss [rsp+16], xmm0                ; panel bottom
+    FLD xmm1, 2.98
+    addss xmm0, xmm1
+    movss [rsp+20], xmm0                ; panel top
+    movss xmm0, [mw_x]
+    FLD xmm1, -0.015
+    addss xmm0, xmm1
+    movss [rsp+24], xmm0
+    movss xmm0, [rsp+24]
+    movss xmm1, [rsp+20]
+    movss xmm2, [rsp+8]
+    call glVertex3f
+    movss xmm0, [rsp+24]
+    movss xmm1, [rsp+20]
+    movss xmm2, [rsp+12]
+    call glVertex3f
+    movss xmm0, [rsp+24]
+    movss xmm1, [rsp+16]
+    movss xmm2, [rsp+12]
+    call glVertex3f
+    movss xmm0, [rsp+24]
+    movss xmm1, [rsp+16]
+    movss xmm2, [rsp+8]
+    call glVertex3f
+    call glEnd
+    ; the screens (they glow: no fog on them)
+    mov edi, GL_FOG
+    call glDisable
+    mov edi, [media_tex]
+    call bind
+    GLF4 glColor4f, 1.0, 1.0, 1.0, 1.0
+    movss xmm0, [mw_x]
+    FLD xmm1, -0.03
+    addss xmm0, xmm1
+    movss [rsp+24], xmm0
+    mov edi, GL_QUADS
+    call glBegin
+    xor r12d, r12d                      ; row (top first)
+.row:
+    cmp r12d, 5
+    jge .rows_done
+    xor r13d, r13d                      ; column (left = north)
+.col:
+    cmp r13d, 5
+    jge .nrow
+    cvtsi2ss xmm0, r13d
+    FLD xmm1, 1.06
+    mulss xmm0, xmm1
+    addss xmm0, [rsp+8]
+    FLD xmm1, 0.06
+    addss xmm0, xmm1
+    movss [rsp+28], xmm0                ; z left
+    FLD xmm1, 1.0
+    addss xmm0, xmm1
+    movss [rsp+32], xmm0                ; z right
+    cvtsi2ss xmm0, r12d
+    FLD xmm1, -0.59
+    mulss xmm0, xmm1
+    addss xmm0, [rsp+20]
+    FLD xmm1, -0.04
+    addss xmm0, xmm1
+    movss [rsp+36], xmm0                ; y top
+    FLD xmm1, -0.55
+    addss xmm0, xmm1
+    movss [rsp+40], xmm0                ; y bottom
+    cvtsi2ss xmm0, r13d
+    FLD xmm1, 0.2
+    mulss xmm0, xmm1
+    movss [rsp+44], xmm0                ; u left
+    addss xmm0, xmm1
+    movss [rsp+48], xmm0                ; u right
+    cvtsi2ss xmm0, r12d
+    mulss xmm0, xmm1
+    addss xmm0, [rsp+0]
+    movss [rsp+52], xmm0                ; v top
+    addss xmm0, xmm1
+    movss [rsp+56], xmm0                ; v bottom
+    movss xmm0, [rsp+44]
+    movss xmm1, [rsp+52]
+    call glTexCoord2f
+    movss xmm0, [rsp+24]
+    movss xmm1, [rsp+36]
+    movss xmm2, [rsp+28]
+    call glVertex3f
+    movss xmm0, [rsp+48]
+    movss xmm1, [rsp+52]
+    call glTexCoord2f
+    movss xmm0, [rsp+24]
+    movss xmm1, [rsp+36]
+    movss xmm2, [rsp+32]
+    call glVertex3f
+    movss xmm0, [rsp+48]
+    movss xmm1, [rsp+56]
+    call glTexCoord2f
+    movss xmm0, [rsp+24]
+    movss xmm1, [rsp+40]
+    movss xmm2, [rsp+32]
+    call glVertex3f
+    movss xmm0, [rsp+44]
+    movss xmm1, [rsp+56]
+    call glTexCoord2f
+    movss xmm0, [rsp+24]
+    movss xmm1, [rsp+40]
+    movss xmm2, [rsp+28]
+    call glVertex3f
+    inc r13d
+    jmp .col
+.nrow:
+    inc r12d
+    jmp .row
+.rows_done:
+    call glEnd
+    mov edi, GL_FOG
+    call glEnable
+.done:
     EPILOGUE
 
 ; -----------------------------------------------------------------------------
@@ -4658,4 +4896,8 @@ pc_x        resd 4                      ; corners of the platform being built
 pc_z        resd 4
 pc_t        resd 4                      ; top and bottom heights
 pc_b        resd 4
-signs_classic resd 1
+mw_on       resd 1                      ; the media wall: is there one, and where
+mw_x        resd 1
+mw_y0       resd 1
+mw_z0       resd 1
+mw_z1       resd 1

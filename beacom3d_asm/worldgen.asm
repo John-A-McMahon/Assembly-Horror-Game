@@ -82,7 +82,8 @@ fdy         dd 0, 0, 1, -1
 section .bss
 alignb 4
 reach       resb NCELLS
-stk         resd NCELLS             ; maze carving stack (x | y << 8)             ; flood fill: reached from the start
+stk         resd NCELLS             ; maze carving stack (x | y << 8)
+hall        resb NCELLS             ; 1 = floor of an open hall (open_halls)             ; flood fill: reached from the start
 queue       resd NCELLS
 dcand       resd 128                ; door candidates: x | y << 8
 ndoor       resd 1
@@ -244,6 +245,10 @@ worldgen_generate:
     mov esi, '#'
     mov edx, NCELLS
     call memset
+    lea rdi, [hall]
+    xor esi, esi
+    mov edx, NCELLS
+    call memset
     xor eax, eax
     mov [safe_done], eax
     mov [safe_done+4], eax
@@ -347,6 +352,7 @@ worldgen_generate:
     mov edi, 70                         ; and room walls come down
     mov esi, 1
     call punch
+    call raise_ceilings                 ; and the ceilings go up
 .laid_out:
 
     ; ---- nothing unreachable
@@ -1012,6 +1018,7 @@ open_halls:
     dec r8d
     mov r9d, ' '
     call fill
+    call mark_hall
     ; cover: crates, tall crates and pillars, every other cell, clear of
     ; the edges -- there is always a way round
     mov r15d, [ry0]
@@ -1145,6 +1152,219 @@ punch:
 .done:
     EPILOGUE
 
+; raise_ceilings -- OPEN layout: wherever solid rock sits on top of open
+; floor, it becomes air instead, so halls and corridors are two or three
+; storeys tall and the floors above turn into balconies and ledges over them.
+; Under a ledge, sometimes a tall crate (and a step crate beside it) so you
+; can climb up to the next floor -- something T can't do.
+raise_ceilings:
+    PROLOGUE 32
+    xor r12d, r12d                      ; f (the floor being opened up)
+.f:
+    cmp r12d, NF-1
+    jge .crates
+    mov r14d, 1
+.y:
+    cmp r14d, MAP_H-2
+    jg .fn
+    mov r13d, 1
+.x:
+    cmp r13d, MAP_W-2
+    jg .yn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    je .open
+    cmp eax, '.'                        ; (already open to the floor below)
+    je .open
+    cmp eax, 'k'
+    je .open
+    cmp eax, 'K'
+    jne .xn
+.open:
+    lea edi, [r12d+1]
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, '#'
+    jne .xn
+    lea edi, [r12d+1]
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, '.'
+    call gset
+.xn:
+    inc r13d
+    jmp .x
+.yn:
+    inc r14d
+    jmp .y
+.fn:
+    inc r12d
+    jmp .f
+.crates:
+    ; climbing points: floor under a void, next to a ledge on the floor above
+    xor r12d, r12d
+.cf:
+    cmp r12d, NF-1
+    jge .done
+    mov [cur_f], r12d
+    mov r14d, 2
+.cy:
+    cmp r14d, MAP_H-3
+    jg .cfn
+    mov r13d, 2
+.cx:
+    cmp r13d, MAP_W-3
+    jg .cyn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    jne .cxn
+    mov edi, r12d                       ; only in the open halls
+    mov esi, r13d
+    mov edx, r14d
+    call cell_index
+    cmp byte [hall+rax], 0
+    je .cxn
+    lea edi, [r12d+1]
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, '.'
+    jne .cxn
+    ; open floor all round it -- crates stand alone, so there is always a
+    ; way round them (never a plugged corridor)
+    call open_neighbours
+    cmp eax, 8
+    jl .cxn
+    ; a ledge beside it upstairs?
+    xor ebx, ebx
+.ld:
+    cmp ebx, 4
+    jge .cxn
+    lea edi, [r12d+1]
+    mov esi, r13d
+    add esi, [fdx+rbx*4]
+    mov edx, r14d
+    add edx, [fdy+rbx*4]
+    call cell_at
+    cmp eax, ' '
+    je .ledge
+    inc ebx
+    jmp .ld
+.ledge:
+    mov edi, 22
+    call chance
+    test eax, eax
+    jz .cxn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, 'K'
+    call gset
+    ; a step up to it, on the side away from the ledge
+    mov esi, r13d
+    sub esi, [fdx+rbx*4]
+    mov edx, r14d
+    sub edx, [fdy+rbx*4]
+    mov [rsp+0], esi
+    mov [rsp+4], edx
+    mov edi, r12d
+    call cell_at
+    cmp eax, ' '
+    jne .cxn
+    push r13                            ; ...and it stands alone too (apart
+    push r14                            ; from the tall crate it steps up to)
+    mov r13d, [rsp+16]
+    mov r14d, [rsp+20]
+    call open_neighbours
+    pop r14
+    pop r13
+    cmp eax, 7
+    jl .cxn
+    mov edi, r12d
+    mov esi, [rsp+0]
+    mov edx, [rsp+4]
+    mov ecx, 'k'
+    call gset
+.cxn:
+    inc r13d
+    jmp .cx
+.cyn:
+    inc r14d
+    jmp .cy
+.cfn:
+    inc r12d
+    jmp .cf
+.done:
+    EPILOGUE
+
+; mark_hall -- remember the floor of the hall at rx0..ry1 (storey cur_f)
+mark_hall:
+    PROLOGUE 16
+    mov r14d, [ry0]
+    inc r14d
+.y:
+    mov eax, [ry1]
+    dec eax
+    cmp r14d, eax
+    jg .done
+    mov r13d, [rx0]
+    inc r13d
+.x:
+    mov eax, [rx1]
+    dec eax
+    cmp r13d, eax
+    jg .ny
+    mov edi, [cur_f]
+    mov esi, r13d
+    mov edx, r14d
+    call cell_index
+    mov byte [hall+rax], 1
+    inc r13d
+    jmp .x
+.ny:
+    inc r14d
+    jmp .y
+.done:
+    EPILOGUE
+
+; open_neighbours(r12d=f, r13d=x, r14d=y) -> eax = how many of the 8 cells
+; around are plain floor
+open_neighbours:
+    PROLOGUE 16
+    xor ebx, ebx                        ; count
+    mov r15d, -1                        ; dy
+.dy:
+    cmp r15d, 1
+    jg .done
+    mov dword [rsp+0], -1               ; dx
+.dx:
+    cmp dword [rsp+0], 1
+    jg .ndy
+    mov edi, r12d
+    mov esi, r13d
+    add esi, [rsp+0]
+    lea edx, [r14d+r15d]
+    call cell_at
+    cmp eax, ' '
+    jne .ndx
+    inc ebx
+.ndx:
+    inc dword [rsp+0]
+    jmp .dx
+.ndy:
+    inc r15d
+    jmp .dy
+.done:
+    mov eax, ebx
+    EPILOGUE
+
 ; flood_from_start -- walk everywhere a person can from the start cell
 ; (same storey neighbours, and up/down stairs like T's path finding); open
 ; cells that were never reached become rock
@@ -1187,9 +1407,11 @@ flood_from_start:
     mov edx, r13d
     call cell_at
     cmp eax, '.'
-    je .shaft
+    je .shaft_up
     test byte [char_class+rax], CF_OPEN
     jz .up
+    call .solid_furniture               ; desks and crates: go round, like T
+    jz .ndir
     mov edi, [rsp+8]
     mov esi, r12d
     mov edx, r13d
@@ -1224,6 +1446,34 @@ flood_from_start:
     call cell_index
     call .visit
     jmp .ndir
+.shaft_up:
+    ; open air this way -- but a stair's top step still leads up past it
+    ; (tall ceilings can leave a void right beside the top of a stair)
+    mov ecx, [rsp+0]
+    movzx eax, byte [grid+rcx]
+    test byte [char_class+rax], CF_STAIR
+    jz .shaft
+    cmp byte [st_top+rcx], 1
+    jne .shaft
+    movsx eax, byte [st_dx+rcx]
+    cmp eax, [fdx+rbx*4]
+    jne .shaft
+    movsx eax, byte [st_dy+rcx]
+    cmp eax, [fdy+rbx*4]
+    jne .shaft
+    mov edi, [rsp+8]
+    inc edi
+    mov esi, r12d
+    mov edx, r13d
+    call cell_at
+    test byte [char_class+rax], CF_OPEN
+    jz .shaft
+    mov edi, [rsp+8]
+    inc edi
+    mov esi, r12d
+    mov edx, r13d
+    call cell_index
+    call .visit
 .shaft:
     ; a landing beside a shaft leads down onto the top step below it
     mov edi, [rsp+8]
@@ -1255,6 +1505,8 @@ flood_from_start:
     movzx eax, byte [grid+rcx]
     cmp eax, '.'
     je .sn
+    call .solid_furniture               ; (keep the furniture itself)
+    jz .sn
     test byte [char_class+rax], CF_OPEN
     jz .sn
     mov byte [grid+rcx], '#'
@@ -1263,6 +1515,15 @@ flood_from_start:
     jmp .s
 .done:
     EPILOGUE
+; .solid_furniture(eax=char) -> ZF set for a desk or crate. leaf
+.solid_furniture:
+    cmp eax, 'd'
+    je .sf
+    cmp eax, 'k'
+    je .sf
+    cmp eax, 'K'
+.sf:
+    ret
 ; .visit(eax=id) -- queue it if new (a local helper: uses r15, the tail)
 .visit:
     cmp byte [reach+rax], 0

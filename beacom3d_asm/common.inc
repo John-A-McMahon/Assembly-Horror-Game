@@ -58,6 +58,12 @@ section .rodata
 %define LK_DROP     1
 %define LK_LADDER   2
 %define MAX_PLAT    1024                   ; ramps, bridges, desks, crates
+; buildings (the Building setting) and whose data they use
+%define BLD_REAL      0                    ; the Beacom Institute of Technology
+%define BLD_GENERATED 1                    ; built from the seed
+%define BLD_ORIGINAL  2                    ; the original game's map
+%define SET_ORIGINAL  0
+%define SET_REAL      1
 %define PS_CONCRETE 0                      ; platform styles: how it's drawn
 %define PS_CRATE    1
 %define PS_HIDDEN   2                      ; (desks: render.asm draws them itself)
@@ -290,7 +296,7 @@ extern rng_seed, rng_next
 extern nav_x, nav_y, nav_z, nav_count, link_head, link_next, link_to, link_type, nav_t_mask
 extern node_walkable, line_of_sight_3d, sound_occlusion, dist3
 extern plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
-extern plat_style
+extern plat_style, real_grid, cur_set, start_f, start_x, start_y, start_yaw
 %endif
 
 %ifndef MODULE_AI

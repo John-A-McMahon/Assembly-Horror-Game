@@ -25,10 +25,12 @@ global node_center, node_at_pos, st_dx, st_dy, st_len, st_top, st_edge, rand01
 global rng_seed, rng_next
 global nav_x, nav_y, nav_z, nav_count, link_head, link_next, link_to, link_type, nav_t_mask
 global node_walkable, line_of_sight_3d, sound_occlusion, dist3, link_count
-global classic_grid, compute_stairs, world_select
+global classic_grid, compute_stairs, world_select, real_grid, cur_set
+global start_f, start_x, start_y, start_yaw
+extern sign_set_cur
 extern worldgen_generate
 global plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
-global plat_style
+global plat_style, plat_inside, plat_height
 
 %define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
 %define XN(i) (NCELLS + (i))
@@ -44,11 +46,11 @@ section .data
 ; Walk off any edge and you land in the basement (loudly).
 ;
 ; platform: x0, x1, z0, z1, height at the low end, height at the high end,
-;           slope axis (0 flat, 1 along X, 2 along Z), slab thickness
+;           slope axis (0 flat, 1 along X, 2 along Z), slab thickness, style
 plat_def:
-    dd 66.0, 67.4, 40.0, 46.0, 4.8, 3.2, 2, 0.2     ; ramp A
-    dd 66.0, 72.0, 38.6, 40.0, 4.8, 4.8, 0, 0.2     ; the bridge
-    dd 70.6, 72.0, 40.0, 46.0, 4.8, 6.4, 2, 0.2     ; ramp B
+    dd 66.0, 67.4, 40.0, 46.0, 4.8, 3.2, 2, 0.2, PS_CONCRETE    ; ramp A
+    dd 66.0, 72.0, 38.6, 40.0, 4.8, 4.8, 0, 0.2, PS_CONCRETE    ; the bridge
+    dd 70.6, 72.0, 40.0, 46.0, 4.8, 6.4, 2, 0.2, PS_CONCRETE    ; ramp B
 %define NPLAT_DEF 3
 
 ; free waypoints (world X, feet Y, Z): node ids XN(0), XN(1), ...
@@ -81,6 +83,86 @@ block_kinds:
     dd 'K', 0.80, 0.80, 1.90, PS_CRATE      ; tall crate stack
 %define NBLOCK_KINDS 3
 
+; -----------------------------------------------------------------------------
+; The real Beacom Institute of Technology (maps/beacom/, tools/beacom_map.js)
+;
+; The grand staircase at the south end of the collaboration space: wide
+; wooden steps that double as bleachers, rising south from the 1st floor
+; (y 3.2) to a stage halfway up (y 4.8), then on up to the 2nd floor (y 6.4)
+; at the south corridor (z 46). 16 m wide (world X 48..64 = grid x 24..31).
+; Every step is solid down to the floor; the floor cells under it are 'b'.
+plat_real:
+    dd 48.0, 64.0, 40.0, 40.5, 3.6, 3.6, 0, 0.4, PS_CRATE    ; steps up to the stage
+    dd 48.0, 64.0, 40.5, 41.0, 4.0, 4.0, 0, 0.8, PS_CRATE
+    dd 48.0, 64.0, 41.0, 41.5, 4.4, 4.4, 0, 1.2, PS_CRATE
+    dd 48.0, 64.0, 41.5, 42.0, 4.8, 4.8, 0, 1.6, PS_CRATE
+    dd 48.0, 64.0, 42.0, 44.0, 4.8, 4.8, 0, 1.6, PS_CRATE    ; the stage, halfway up
+    dd 48.0, 64.0, 44.0, 44.5, 5.2, 5.2, 0, 2.0, PS_CRATE    ; on up to the 2nd floor
+    dd 48.0, 64.0, 44.5, 45.0, 5.6, 5.6, 0, 2.4, PS_CRATE
+    dd 48.0, 64.0, 45.0, 45.5, 6.0, 6.0, 0, 2.8, PS_CRATE
+    dd 48.0, 64.0, 45.5, 46.0, 6.4, 6.4, 0, 3.2, PS_CRATE
+%define NPLAT_REAL 9
+
+; T's way up the grand staircase: five lanes across it (so wherever you are
+; on the steps, a waypoint is near you), each foot -> low steps -> stage ->
+; high steps -> 2nd floor, and the stage joins the lanes sideways
+%macro STAIR_LANE 1   ; world X
+    dd %1, 4.0, 40.75                   ; the low steps
+    dd %1, 4.8, 43.0                    ; the stage
+    dd %1, 5.6, 44.75                   ; the high steps
+%endmacro
+xnode_real:
+    STAIR_LANE 49.0
+    STAIR_LANE 53.0
+    STAIR_LANE 57.0
+    STAIR_LANE 61.0
+    STAIR_LANE 63.0
+%define NXNODE_REAL 15
+%macro LANE_LINKS 2   ; grid x, first waypoint
+    dd NODE(1,%1,19), XN(%2), LK_WALK
+    dd XN(%2), XN(%2+1), LK_WALK
+    dd XN(%2+1), XN(%2+2), LK_WALK
+    dd XN(%2+2), NODE(2,%1,23), LK_WALK
+%endmacro
+xlink_real:
+    LANE_LINKS 24, 0
+    LANE_LINKS 26, 3
+    LANE_LINKS 28, 6
+    LANE_LINKS 30, 9
+    LANE_LINKS 31, 12
+    dd XN(1), XN(4), LK_WALK            ; across the stage
+    dd XN(4), XN(7), LK_WALK
+    dd XN(7), XN(10), LK_WALK
+    dd XN(10), XN(13), LK_WALK
+%define NXLINK_REAL 24
+
+; ziplines: A (x, y, z) -> B, high end first
+zip_original:
+    dd 111.0, 2.95, 53.0,   7.0, 2.55, 53.0     ; basement corridor
+    dd 7.0, 6.15, 29.0,     111.0, 5.75, 29.0   ; ground-floor corridor
+    dd 7.0, 9.35, 5.0,      111.0, 8.95, 5.0    ; 2nd-floor corridor
+    dd 85.0, 9.35, 37.0,    63.0, 5.75, 37.0    ; down across the atrium
+zip_real:
+    ; from the 2nd-floor north balcony, down across the collaboration space
+    ; to the stage on the grand staircase (not real -- but it should be)
+    dd 45.0, 9.35, 17.0,    50.0, 7.35, 43.0
+
+; where you start: storey, grid x, grid y, facing (yaw)
+;   original: the first room; real: inside the glass entry, facing the media wall
+set_start   dd 1, 1, 1, -2.3561945
+            dd 1, 22, 15, -1.5707963
+
+; per building set (SET_ORIGINAL, SET_REAL)
+align 8
+set_plat    dq plat_def, plat_real
+set_xnode   dq xnode_def, xnode_real
+set_xlink   dq xlink_def, xlink_real
+set_zip     dq zip_original, zip_real
+set_plat_n  dd NPLAT_DEF, NPLAT_REAL
+set_xnode_n dd NXNODE_DEF, NXNODE_REAL
+set_xlink_n dd NXLINK_DEF, NXLINK_REAL
+set_zip_n   dd 4, 1
+
 c_hear_slab dd 6.0        ; a floor/ceiling slab muffles sound like 6m of air
 c_hear_wall dd 0.75       ; ...each half metre of solid wall like 0.75m
 c_los3_step dd 0.25
@@ -90,11 +172,15 @@ c_xn_dy     dd 0.9
 ; the four grid directions, in ladder_dir order: +x, -x, +y, -y
 dir4_dx     dd 1, -1, 0, 0
 dir4_dy     dd 0, 0, 1, -1
-map_name0   db "maps/basement.txt",0
-map_name1   db "maps/ground.txt",0
-map_name2   db "maps/second.txt",0
+map_name0   db "maps/original/basement.txt",0
+map_name1   db "maps/original/ground.txt",0
+map_name2   db "maps/original/second.txt",0
+map_real0   db "maps/beacom/basement.txt",0
+map_real1   db "maps/beacom/ground.txt",0
+map_real2   db "maps/beacom/second.txt",0
 align 8
 map_names   dq map_name0, map_name1, map_name2
+map_names_real dq map_real0, map_real1, map_real2
 mode_r      db "r",0
 err_map     db "Could not open %s -- run the game from the beacom3d_asm directory.",10,0
 
@@ -104,7 +190,13 @@ c_los_step  dd 0.5        ; line-of-sight sample spacing (world units)
 
 section .bss
 grid        resb NCELLS
-classic_grid resb NCELLS  ; the real Beacom, as loaded from maps/
+classic_grid resb NCELLS  ; the original game's map (maps/original/)
+real_grid   resb NCELLS   ; the real Beacom Institute of Technology (maps/beacom/)
+cur_set     resd 1        ; SET_ORIGINAL / SET_REAL: whose platforms, nav, zips...
+start_f     resd 1        ; where you start in this building
+start_x     resd 1
+start_y     resd 1
+start_yaw   resd 1
 char_class  resb 256
 ; per-cell stair info (only meaningful where the cell is a stair)
 st_dx       resb NCELLS   ; signed direction the stair rises (+1/-1/0)
@@ -252,24 +344,47 @@ world_init:
     mov byte [rbx+'B'], CF_SIGHT
     mov byte [rbx+'u'], CF_OPEN | CF_TWALK | CF_FLAT | CF_SIGHT   ; foot of a ladder
 
+    ; glass: a wall you can see through; the media wall; the floor under the
+    ; grand staircase (solid steps sit on it: nothing spawns there)
+    mov byte [rbx+'g'], CF_WALL | CF_SIGHT
+    mov byte [rbx+'W'], CF_WALL
+    mov byte [rbx+'b'], CF_OPEN | CF_FLAT | CF_SIGHT
+
+    lea rdi, [map_names_real]
+    call load_maps
+    lea rdi, [real_grid]
+    lea rsi, [grid]
+    mov edx, NCELLS
+    call memcpy
+    lea rdi, [map_names]
     call load_maps
     lea rdi, [classic_grid]
     lea rsi, [grid]
     mov edx, NCELLS
     call memcpy
-    call world_analyse
+    mov edi, BLD_ORIGINAL
+    xor esi, esi
+    call world_select
     EPILOGUE
 
 ; -----------------------------------------------------------------------------
-; world_select(edi = 0 the real Beacom / 1 generated, esi = seed) -- put that
-; building in grid and re-derive everything from it
+; world_select(edi = BLD_REAL / BLD_GENERATED / BLD_ORIGINAL, esi = seed) --
+; put that building in grid and re-derive everything from it: its stairs,
+; platforms, nav graph, spawn list, ziplines, start and signs
 ; -----------------------------------------------------------------------------
 world_select:
     PROLOGUE 16
-    test edi, edi
-    jnz .generate
-    lea rdi, [grid]
+    mov ebx, edi
+    mov dword [cur_set], SET_ORIGINAL   ; generated buildings keep its landmarks
+    cmp ebx, BLD_GENERATED
+    je .generate
     lea rsi, [classic_grid]
+    cmp ebx, BLD_REAL
+    jne .copy
+    mov dword [cur_set], SET_REAL
+    lea rsi, [real_grid]
+.copy:
+    lea rdi, [grid]
     mov edx, NCELLS
     call memcpy
     jmp .analyse
@@ -278,6 +393,46 @@ world_select:
     call worldgen_generate
 .analyse:
     call world_analyse
+    ; this building's ziplines, start and signs
+    mov eax, [cur_set]
+    mov ecx, [set_zip_n+rax*4]
+    mov [zip_count], ecx
+    mov rsi, [set_zip+rax*8]
+    xor edx, edx
+.zip:
+    cmp edx, ecx
+    jge .zips_done
+    imul r8d, edx, 24
+    mov r9d, [rsi+r8+0]
+    mov [zip_ax+rdx*4], r9d
+    mov r9d, [rsi+r8+4]
+    mov [zip_ay+rdx*4], r9d
+    mov r9d, [rsi+r8+8]
+    mov [zip_az+rdx*4], r9d
+    mov r9d, [rsi+r8+12]
+    mov [zip_bx+rdx*4], r9d
+    mov r9d, [rsi+r8+16]
+    mov [zip_by+rdx*4], r9d
+    mov r9d, [rsi+r8+20]
+    mov [zip_bz+rdx*4], r9d
+    inc edx
+    jmp .zip
+.zips_done:
+    imul ecx, eax, 16
+    lea rsi, [set_start+rcx]
+    mov edx, [rsi+0]
+    mov [start_f], edx
+    mov edx, [rsi+4]
+    mov [start_x], edx
+    mov edx, [rsi+8]
+    mov [start_y], edx
+    mov edx, [rsi+12]
+    mov [start_yaw], edx
+    mov [sign_set_cur], eax             ; its room signs...
+    cmp ebx, BLD_GENERATED
+    jne .signs
+    mov dword [sign_set_cur], -1        ; ...a generated building has none
+.signs:
     EPILOGUE
 
 ; world_analyse -- stairs, platforms, the nav graph and the spawn list
@@ -306,23 +461,24 @@ world_analyse:
     EPILOGUE
 
 ; -----------------------------------------------------------------------------
-; load_maps() -- read maps/*.txt, 31 rows of 59 chars each. Line endings may be
+; load_maps(rdi = file names) -- read 3 map files, 31 rows of 59 chars each. Line endings may be
 ; LF or CRLF (a Windows checkout converts them), so after each row we skip
 ; everything up to and including '\n' -- same trick as doom.asm.
 ; -----------------------------------------------------------------------------
 load_maps:
     PROLOGUE 16
+    mov r15, rdi                        ; r15 = the three file names
     xor r12d, r12d                      ; r12 = floor
 .floor_loop:
     cmp r12d, NF
     jge .done
-    mov rdi, [map_names+r12*8]
+    mov rdi, [r15+r12*8]
     lea rsi, [mode_r]
     call fopen
     test rax, rax
     jnz .opened
     lea rdi, [err_map]
-    mov rsi, [map_names+r12*8]
+    mov rsi, [r15+r12*8]
     xor eax, eax
     call printf
     mov edi, 1
@@ -762,12 +918,14 @@ grid_platforms:
 .done:
     EPILOGUE
 
-; load_platforms() -- copy plat_def into the platform arrays
+; load_platforms() -- copy the building's authored platforms into the arrays
 load_platforms:
+    mov eax, [cur_set]
+    mov rdx, [set_plat+rax*8]
+    mov r8d, [set_plat_n+rax*4]
     xor ecx, ecx
-    lea rdx, [plat_def]
 .p:
-    cmp ecx, NPLAT_DEF
+    cmp ecx, r8d
     jge .done
     mov eax, [rdx+0]
     mov [plat_x0+rcx*4], eax
@@ -785,8 +943,9 @@ load_platforms:
     mov [plat_axis+rcx*4], eax
     mov eax, [rdx+28]
     mov [plat_thick+rcx*4], eax
-    mov dword [plat_style+rcx*4], PS_CONCRETE
-    add rdx, 32
+    mov eax, [rdx+32]
+    mov [plat_style+rcx*4], eax
+    add rdx, 36
     inc ecx
     jmp .p
 .done:
@@ -1081,10 +1240,12 @@ build_nav:
     inc ebx
     jmp .grid
 .grid_done:
+    mov eax, [cur_set]
+    mov rdx, [set_xnode+rax*8]
+    mov r9d, [set_xnode_n+rax*4]
     xor ecx, ecx
-    lea rdx, [xnode_def]
 .xn:
-    cmp ecx, NXNODE_DEF
+    cmp ecx, r9d
     jge .xn_done
     lea eax, [rcx+NCELLS]
     mov r8d, [rdx]
@@ -1097,19 +1258,23 @@ build_nav:
     inc ecx
     jmp .xn
 .xn_done:
-    mov dword [nav_count], NCELLS + NXNODE_DEF
+    lea eax, [r9d+NCELLS]
+    mov [nav_count], eax
     lea rdi, [link_head]
     mov ecx, NNODES
     mov eax, -1
     rep stosd
     mov dword [link_count], 0
     mov dword [nav_t_mask], (1 << LK_WALK) | (1 << LK_DROP)   ; T can't climb (yet)
+    mov eax, [cur_set]
+    mov r13, [set_xlink+rax*8]
+    mov r14d, [set_xlink_n+rax*4]
     xor ebx, ebx
 .xl:
-    cmp ebx, NXLINK_DEF
+    cmp ebx, r14d
     jge .xl_done
     imul eax, ebx, 12
-    lea r12, [xlink_def+rax]
+    lea r12, [r13+rax]
     mov edi, [r12]
     mov esi, [r12+4]
     mov edx, [r12+8]

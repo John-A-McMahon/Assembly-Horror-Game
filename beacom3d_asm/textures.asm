@@ -14,8 +14,8 @@
 global textures_init, make_text_texture, tex_ids, face_tex, white_tex, sign_tex, label_tex
 extern glTexParameterf
 global grain_tex, radial_tex, led_tex, tt_w, tt_h, font_hud, font_small, font_big
-global prop_tex, skin_tex, cloth_tex
-global sign_count, sign_f, sign_x, sign_z, sign_face, sign_exit
+global prop_tex, skin_tex, cloth_tex, media_tex
+global sign_count, sign_f, sign_x, sign_z, sign_face, sign_exit, sign_set, sign_set_cur
 
 %define RGB(r,g,b) (0xFF000000 | ((b)<<16) | ((g)<<8) | (r))
 
@@ -35,7 +35,8 @@ global sign_count, sign_f, sign_x, sign_z, sign_face, sign_exit
 %define NUM_TX     12
 
 %define CANVAS_MAX (256*512)
-%define NSIGNS 30
+%define NSIGNS_ORIGINAL 30
+%define NSIGNS (NSIGNS_ORIGINAL + 18)       ; + the real Beacom's
 
 section .data
 face_file   db "../T_Sprite.jpeg",0
@@ -82,21 +83,50 @@ sg26 db "STAIRS ^ 1",0
 sg27 db "STAIRS ^ 1",0
 sg28 db "MECHANICAL",0
 sg29 db "SAFE ROOM",0
+; the real Beacom Institute of Technology (room numbers from DSU's own pages)
+sgr0 db "BEACOM INSTITUTE",0
+sgr1 db "ROOM 117",0
+sgr2 db "ROOM 112",0
+sgr3 db "ROOM 114",0
+sgr4 db "RESTROOM",0
+sgr5 db "SUB-LEVEL v",0
+sgr6 db "GAME DESIGN LAB",0
+sgr7 db "ANIMATION LAB",0
+sgr8 db "STAIRS ^ 2",0
+sgr9 db "ROOM 231",0
+sgr10 db "ACADEMIC SERVER ROOM",0
+sgr11 db "ROOM 233",0
+sgr12 db "CYBER OPS",0
+sgr13 db "ROOM 213",0
+sgr14 db "BEACOM COLLEGE OFFICE",0
+sgr15 db "ROOM 235",0
+sgr16 db "STAIRS v 1",0
+sgr17 db "ELECTRICAL",0
 align 8
 sign_text   dq sg0,sg1,sg2,sg3,sg4,sg5,sg6,sg7,sg8,sg9,sg10,sg11,sg12,sg13,sg14
             dq sg15,sg16,sg17,sg18,sg19,sg20,sg21,sg22,sg23,sg24,sg25,sg26,sg27,sg28,sg29
+            dq sgr0,sgr1,sgr2,sgr3,sgr4,sgr5,sgr6,sgr7,sgr8,sgr9,sgr10,sgr11,sgr12,sgr13,sgr14,sgr15,sgr16,sgr17
 sign_count  dd NSIGNS
 sign_f      dd 1,1,1,1,1,1,1,1,1,1,1,1, 1,1,1,1, 2,2,2,2,2,2,2,2,2, 0,0,0,0,0
+            dd 1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,0
 sign_x      dd 2.0,10.0,10.0,33.0,33.0,55.0,55.0,33.0,33.0,17.0,5.0,50.0
             dd 19.5,42.5,40.5,28.0
             dd 5.0,13.0,30.5,51.0,19.5,14.0,6.0,38.0,50.0
             dd 16.5,42.5,40.5,29.0,55.0
+            dd 20.55,28.55,30.45,30.45,34.45,34.45,24.0,31.0,37.5,24.0,30.0,35.0,30.55,24.0,30.0,34.0,36.0,13.0
 sign_z      dd 2.0,3.0,9.0,3.0,9.0,3.0,9.0,21.0,26.0,26.0,21.0,20.0
             dd 15.0,15.0,16.0,19.5
             dd 3.0,15.0,15.0,15.0,3.0,21.0,15.0,15.0,15.0
             dd 3.0,3.0,27.0,15.0,15.0
+            dd 15.0,4.0,2.0,6.0,10.0,12.0,23.45,23.45,23.45,7.55,6.55,7.55,14.0,23.45,23.45,23.45,23.45,16.45
 sign_face   dd 0,0,0,0,0,0,0,0,0,0,0,0, 1,1,1,0, 0,1,1,1,1,0,1,1,0, 1,1,1,0,0
+            dd 1,1,1,1,1,1,0,0,0,0,0,0,1,0,0,0,0,0
 sign_exit   dd 0,0,0,0,0,0,0,0,0,0,0,0, 1,1,1,1, 0,0,0,0,1,1,0,0,0, 0,1,1,0,0
+            dd 0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,1,0
+; which building each sign belongs to (SET_ORIGINAL / SET_REAL)
+sign_set    times NSIGNS_ORIGINAL dd SET_ORIGINAL
+            times 18 dd SET_REAL
+sign_set_cur dd SET_ORIGINAL          ; world_select: the building's set, -1 none
 
 lbl_pcap    db ".pcap",0
 lbl_deauth  db "DEAUTH",0
@@ -107,6 +137,15 @@ lbl_box     db "FRAGILE",0
 lbl_sign    db "CAUTION",10,10,"WET",10,"FLOOR",0
 lbl_compass db "N",0
 lbl_portal  db "PORTAL",0
+
+section .data
+; Wireshark-ish row colours (weighted by how often they turn up)
+media_pal   dd RGB(210,208,240), RGB(210,208,240), RGB(210,208,240), RGB(210,208,240)
+            dd RGB(210,208,240), RGB(196,222,240), RGB(196,222,240), RGB(196,222,240)
+            dd RGB(210,238,180), RGB(210,238,180), RGB(236,226,196), RGB(196,222,240)
+            dd RGB(24,40,48), RGB(24,40,48), RGB(170,20,20), RGB(210,208,240)
+media_colx  dd 3, 22, 52, 104, 156, 180     ; No. Time Source Destination Protocol Info
+media_colw  dd 12, 20, 38, 38, 14, 70
 
 section .bss
 alignb 16
@@ -131,6 +170,7 @@ font_label  resq 1
 tmp_id      resd 1
 skin_tex    resd 1
 cloth_tex   resd 1
+media_tex   resd 1
 
 section .text
 
@@ -817,6 +857,60 @@ tex_skin:
     call blotch
     dec ebx
     jnz .pale
+    mov edi, 1
+    call upload
+    EPILOGUE
+
+; the media wall: a Wireshark packet list -- a header bar, then rows in
+; Wireshark's colouring (TCP lavender, UDP pale blue, HTTP pale green, ARP
+; cream, the odd bad TCP in black and a red RST), each row with its columns
+; of "text"
+tex_media:
+    PROLOGUE 16
+    mov edi, 256
+    mov esi, 256
+    call canvas
+    xor edi, edi
+    xor esi, esi
+    mov edx, 256
+    mov ecx, 256
+    mov r8d, RGB(10,12,18)
+    call fill_rect
+    mov r12d, 2                         ; y of the row
+.row:
+    cmp r12d, 250
+    jge .rows_done
+    mov edi, 16
+    call rand_n
+    mov r13d, [media_pal+rax*4]
+    xor edi, edi
+    mov esi, r12d
+    mov edx, 256
+    mov ecx, 7
+    mov r8d, r13d
+    call fill_rect
+    xor ebx, ebx
+.col:
+    cmp ebx, 6
+    jge .nrow
+    mov edi, [media_colw+rbx*4]
+    call rand_n
+    lea edx, [rax+4]
+    mov edi, [media_colx+rbx*4]
+    lea esi, [r12d+2]
+    mov ecx, 3
+    mov r8d, RGB(40,40,52)
+    cmp r13d, RGB(24,40,48)             ; bad TCP: red text on black
+    jne .ink
+    mov r8d, RGB(230,60,60)
+.ink:
+    call fill_rect
+    inc ebx
+    jmp .col
+.nrow:
+    add r12d, 8
+    jmp .row
+.rows_done:
     mov edi, 1
     call upload
     EPILOGUE
@@ -1704,6 +1798,8 @@ textures_init:
     mov [skin_tex], eax
     call tex_cloth
     mov [cloth_tex], eax
+    call tex_media
+    mov [media_tex], eax
 
     ; ---- fonts
     call TTF_Init
