@@ -17,14 +17,16 @@
 ;         connection finally drops and he reappears somewhere far away.
 ;
 ; You shove props just by walking into them; when one hits the floor or a
-; wall hard it clatters, and that goes on the noise meter.
+; wall hard it clatters, and that goes on the noise meter. Boxes are also
+; something to climb: props_top lets you stand on them (and mantle onto
+; them), and you stop shoving a box once you're standing on top of it.
 ; =============================================================================
 %define MODULE_PHYSICS
 %include "common.inc"
 
 global physics_reset, physics_spawn_props, physics_update, physics_ragdoll
 global phys_np, phys_nb, px, py, pz, body_type, body_p0, body_np, body_active
-global rag_active, rag_body, rag_time, add_box
+global rag_active, rag_body, rag_time, add_box, props_top
 
 extern random_node, enemy_deauth, snd_clatter
 
@@ -69,6 +71,7 @@ rag_bones   dd 0,1, 1,2, 1,3, 1,4, 2,5, 2,6, 0,2, 5,6, 3,2, 4,2
 %define NBONES 10
 
 section .bss
+bb          resd 5                  ; body_bounds output
 px          resd MAX_P
 py          resd MAX_P
 pz          resd MAX_P
@@ -521,6 +524,86 @@ relax:
 .done:
     EPILOGUE
 
+; body_bounds(edi = body) -> bb = x0, x1, z0, z1, top (of its particles)
+body_bounds:
+    mov eax, [body_p0+rdi*4]
+    mov ecx, eax
+    add ecx, [body_np+rdi*4]
+    movss xmm0, [px+rax*4]
+    movaps xmm1, xmm0
+    movss xmm2, [pz+rax*4]
+    movaps xmm3, xmm2
+    movss xmm4, [py+rax*4]
+.p:
+    inc eax
+    cmp eax, ecx
+    jge .done
+    minss xmm0, [px+rax*4]
+    maxss xmm1, [px+rax*4]
+    minss xmm2, [pz+rax*4]
+    maxss xmm3, [pz+rax*4]
+    maxss xmm4, [py+rax*4]
+    jmp .p
+.done:
+    movss [bb+0], xmm0
+    movss [bb+4], xmm1
+    movss [bb+8], xmm2
+    movss [bb+12], xmm3
+    movss [bb+16], xmm4
+    ret
+
+; props_top(xmm0=x, xmm1=z, xmm2=limit) -> xmm0 = the top of the highest box
+; under that point that isn't above the limit, or -1e30. (A box's footprint
+; is its particles' bounding rectangle pulled in a little, so a tipped box is
+; a slightly smaller step.)
+props_top:
+    PROLOGUE 32
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    mov eax, [c_neg_big]
+    mov [rsp+12], eax
+    xor ebx, ebx
+.b:
+    cmp ebx, [phys_nb]
+    jge .done
+    cmp dword [body_active+rbx*4], 0
+    je .n
+    cmp dword [body_type+rbx*4], B_BOX
+    jne .n
+    mov edi, ebx
+    call body_bounds
+    FLD xmm5, 0.06
+    movss xmm0, [rsp+0]
+    movss xmm1, [bb+0]
+    addss xmm1, xmm5
+    comiss xmm0, xmm1
+    jb .n
+    movss xmm1, [bb+4]
+    subss xmm1, xmm5
+    comiss xmm0, xmm1
+    ja .n
+    movss xmm0, [rsp+4]
+    movss xmm1, [bb+8]
+    addss xmm1, xmm5
+    comiss xmm0, xmm1
+    jb .n
+    movss xmm1, [bb+12]
+    subss xmm1, xmm5
+    comiss xmm0, xmm1
+    ja .n
+    movss xmm0, [bb+16]
+    comiss xmm0, [rsp+8]
+    ja .n
+    maxss xmm0, [rsp+12]
+    movss [rsp+12], xmm0
+.n:
+    inc ebx
+    jmp .b
+.done:
+    movss xmm0, [rsp+12]
+    EPILOGUE
+
 ; blocked(xmm0=x, xmm1=y, xmm2=z) -> eax 1 if that point is inside a wall
 blocked:
     PROLOGUE 16
@@ -553,6 +636,29 @@ collide:
     jge .done
     cmp dword [body_active+r12*4], 0
     je .nb
+    ; standing on this box? then you don't push it around
+    mov dword [rsp+0], 0
+    cmp dword [body_type+r12*4], B_BOX
+    jne .not_stood
+    mov edi, r12d
+    call body_bounds
+    movss xmm0, [p_x]
+    comiss xmm0, [bb+0]
+    jb .not_stood
+    comiss xmm0, [bb+4]
+    ja .not_stood
+    movss xmm0, [p_z]
+    comiss xmm0, [bb+8]
+    jb .not_stood
+    comiss xmm0, [bb+12]
+    ja .not_stood
+    movss xmm0, [bb+16]
+    FLD xmm1, 0.15
+    subss xmm0, xmm1
+    comiss xmm0, [p_y]
+    ja .not_stood
+    mov dword [rsp+0], 1
+.not_stood:
     mov ebx, [body_p0+r12*4]
     mov r13d, ebx
     add r13d, [body_np+r12*4]
@@ -637,6 +743,8 @@ collide:
     ; -- the player shoves anything inside his radius (props only)
     cmp dword [body_type+r12*4], B_RAG
     je .np
+    cmp dword [rsp+0], 0
+    jne .np
     movss xmm0, [py+rbx*4]
     subss xmm0, [p_y]
     subss xmm0, [c_body_mid]

@@ -17,8 +17,8 @@
 ##   #C  R  R  R  R  R    C#  #       #######NSSSSSSN#   ##
 ##   #C  R  R  R  R  R    C#  #       #######NSSSSSSN#   ##
 ##   #C  R  R  R  R  R    C#  #       #######NSSSSSSN#   ##
-##   #C  R  R  R  R  R    C#  #       #######NSSSSSSN#   ##
-##   #C  R  R  R  R  R    C#    P   P ##^^###NSSSSSSN#   ##
+##   #C  R  R  R  R  R    C#  #    K  #######NSSSSSSN#   ##
+##   #C  R  R  R  R  R    C#    P  kP ##^^###NSSSSSSN#   ##
 ##   #C                   C#  #       ##^^###NNNNNNNN#   ##
 ##u  #C                   C#  #       ##^^############   ##
 ##   #CCCCC CCCCCCCCCCCCCCC#  #### #####^^############   ##

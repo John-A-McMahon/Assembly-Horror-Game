@@ -20,7 +20,7 @@
 global audio_init, snd_footstep, snd_tstep, snd_heartbeat, snd_pickup, snd_deauth
 global snd_noise_alert, snd_spotted, snd_thunder, snd_jumpscare, snd_win, snd_set_t
 global snd_set_floor, snd_mute, audio_cb, snd_fanfare, snd_clatter, snd_clank, snd_zip
-global snd_portal_open, snd_portal_fizzle, snd_portal_enter
+global snd_portal_open, snd_portal_fizzle, snd_portal_enter, snd_slide
 %ifdef WIN64
 extern audio_cb_win64
 %endif
@@ -791,6 +791,13 @@ snd_portal_enter:
     PROLOGUE 16
     BURST 350.0, 0.7, 0.45, 0.45, FT_BP, 0, 0.0, 0.05
     TONE 900.0, 300.0, 0.4, 0.07, W_SINE, 0.0
+    EPILOGUE
+
+; a slide: shoes and jeans scraping along the floor
+snd_slide:
+    PROLOGUE 16
+    BURST 700.0, 0.9, 0.55, 0.35, FT_BP, 0, 0.0, 0.03
+    BURST 2600.0, 1.1, 0.35, 0.12, FT_BP, 0, 0.05, 0.02
     EPILOGUE
 
 ; the "you found a dungeon item" fanfare

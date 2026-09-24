@@ -6,7 +6,7 @@
 #   make shots      render test screenshots into shots/ (needs xvfb)
 
 NAME = beacom3d
-SRCS = main.asm world.asm ai.asm player.asm render.asm textures.asm hud.asm audio.asm noise.asm physics.asm traverse.asm portal.asm settings.asm worldgen.asm hands.asm
+SRCS = main.asm world.asm ai.asm player.asm render.asm textures.asm hud.asm audio.asm noise.asm physics.asm traverse.asm portal.asm settings.asm worldgen.asm hands.asm parkour.asm
 OBJS = $(SRCS:.asm=.o)
 
 all: $(NAME)

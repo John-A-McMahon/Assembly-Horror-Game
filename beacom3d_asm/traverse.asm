@@ -20,7 +20,7 @@ global traverse_reset, traverse_update, traverse_try_grab, ladder_dir
 global p_mode, trav_prompt, trav_roll, trav_shake, trav_fov, climb_phase
 global zip_count, zip_ax, zip_ay, zip_az, zip_bx, zip_by, zip_bz, zip_active, zip_t
 
-extern p_vy, p_on_ground, snd_clank, snd_zip
+extern p_vy, p_on_ground, snd_clank, snd_zip, parkour_update
 
 %define MODE_WALK   0
 %define MODE_LADDER 1
@@ -601,6 +601,8 @@ traverse_update:
     je .ladder
     cmp eax, MODE_ZIP
     je .zip
+    cmp eax, 3                          ; mantling / vaulting (parkour.asm)
+    je .parkour
     xor eax, eax
     mov [trav_roll], eax
     mov [trav_shake], eax
@@ -616,6 +618,11 @@ traverse_update:
     mov dword [trav_prompt], -1
     movss xmm0, [rsp+0]
     call ride
+    EPILOGUE
+.parkour:
+    mov dword [trav_prompt], -1
+    movss xmm0, [rsp+0]
+    call parkour_update
     EPILOGUE
 
 section .bss

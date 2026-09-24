@@ -23,7 +23,7 @@ global menu_wheel, menu_draw, menu_reset
 global cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_ladders
 global cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
 global cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
-global cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain
+global cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
 
 extern invert_y, show_fps, shadows_on, shadows_ok, render_scale
 extern draw_text, draw_rect, font_hud, font_small, font_big, tt_w, tt_h, glDeleteTextures
@@ -57,6 +57,7 @@ section .data
 ; ---- the settings themselves (defaults) ----------------------------------------
 align 4
 cfg_building    dd 0            ; 0 the real Beacom maps, 1 generated from the seed
+cfg_layout      dd 1            ; generated: 0 maze, 1 classic, 2 open
 cfg_t_speed     dd 100
 cfg_t_hear      dd 100
 cfg_t_vision    dd 100
@@ -86,6 +87,7 @@ cfg_grain       dd 50           ; film grain over the whole picture
 ; ---- labels -----------------------------------------------------------------
 h_run       db "CUSTOM RUN           (* = applies when you restart)",0
 l_building  db "Building *",0
+l_layout    db "Generated layout *",0
 l_t_speed   db "T speed",0
 l_t_hear    db "T hearing",0
 l_t_vision  db "T vision",0
@@ -127,6 +129,7 @@ a_quit      db "> QUIT TO THE TERMINAL",0
 
 ; ---- keys in the settings file ------------------------------------------------
 k_building  db "building",0
+k_layout    db "layout",0
 k_t_speed   db "t_speed",0
 k_t_hear    db "t_hearing",0
 k_t_vision  db "t_vision",0
@@ -162,6 +165,9 @@ s_off       db "OFF",0
 s_on        db "ON",0
 s_classic   db "THE REAL BEACOM",0
 s_generated db "GENERATED FROM THE SEED",0
+s_maze      db "MAZE (tight, twisty)",0
+s_classic2  db "CLASSIC",0
+s_open      db "OPEN (sightlines, cover)",0
 s_hidden    db "HIDDEN IN THE BUILDING",0
 s_start_w   db "START WITH THEM",0
 s_start_it  db "START WITH IT",0
@@ -174,6 +180,7 @@ s_third     db "1/3 (fastest)",0
 align 8
 n_offon     dq s_off, s_on
 n_building  dq s_classic, s_generated
+n_layout    dq s_maze, s_classic2, s_open
 n_map       dq s_hidden, s_start_w
 n_portal    dq s_hidden, s_start_it, s_none
 n_crouch    dq s_hold, s_toggle
@@ -182,6 +189,7 @@ n_scale     dq s_full, s_half, s_third
 rows:
     ROW h_run,       0,           0,              T_HEADER, 0, 0, 0, 0
     ROW l_building,  k_building,  cfg_building,   T_CHOICE, 0, 1, 1, n_building
+    ROW l_layout,    k_layout,    cfg_layout,     T_CHOICE, 0, 2, 1, n_layout
     ROW l_t_speed,   k_t_speed,   cfg_t_speed,    T_PCT,   40, 250, 10, 0
     ROW l_t_hear,    k_t_hear,    cfg_t_hear,     T_PCT,   25, 300, 25, 0
     ROW l_t_vision,  k_t_vision,  cfg_t_vision,   T_PCT,   25, 300, 25, 0

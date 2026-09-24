@@ -8,6 +8,9 @@
 ;   * collision against the grid, one axis at a time in 5cm sub-steps so you
 ;     slide along walls and can't tunnel through them
 ;   * flashlight battery: drains while on, recharges while off, flickers low
+;   * slide: crouch while sprinting -- a fast, low, noisy slide that slows
+;     down; jump out of it any time. SPACE at a ledge mantles or vaults
+;     (parkour.asm).
 ; =============================================================================
 %define MODULE_PLAYER
 %include "common.inc"
@@ -16,7 +19,7 @@ global player_spawn, player_update, player_look, player_floor, player_in_safe
 global p_x, p_y, p_z, p_yaw, p_pitch, p_stamina, p_battery, p_flash_on, p_crouch
 global p_exhausted, p_eye_y, p_step_event, p_flash_level, keys_down, p_roll, p_sprint
 global p_vy, p_on_ground, p_bob
-extern p_mode, trav_roll, trav_shake
+extern p_mode, trav_roll, trav_shake, player_ground, parkour_try, snd_slide
 
 ; keys_down[] slots, filled by main.asm from SDL_GetKeyboardState
 %define K_FWD    0
@@ -75,6 +78,11 @@ c_pitch_min  dd -1.5
 c_head_r     dd 0.16
 c_head_extra dd 0.1
 c_start_yaw  dd -2.3561945    ; -3/4 pi: face into the first room
+c_slide_time dd 0.85          ; seconds
+c_slide_v0   dd 8.2           ; speed at the start of a slide...
+c_slide_v1   dd 2.6           ; ...and at the end
+c_slide_roll dd 0.05
+c_noise_slide dd 0.16
 
 section .bss
 p_x          resd 1           ; feet position (world units)
@@ -99,6 +107,10 @@ p_roll       resd 1           ; out: camera roll from bob
 p_step_event resd 1           ; out: 0 none, 1 quiet step, 2 step, 3 loud step, 4 jump
 p_flash_level resd 1          ; out: 0..1 flashlight brightness
 keys_down    resb 16
+slide_t      resd 1           ; seconds of slide left
+slide_dx     resd 1           ; its direction
+slide_dz     resd 1
+crouch_prev  resd 1
 
 section .text
 
@@ -208,7 +220,7 @@ try_move:
     movss [rsp+4], xmm1
     movss xmm2, [p_y]
     movss xmm3, [c_step_up]
-    call ground_height
+    call player_ground                  ; (the building, or a box you're on)
     maxss xmm0, [p_y]                   ; feet = max(y, ground)
     movaps xmm2, xmm0
     call body_height
@@ -321,6 +333,38 @@ player_update:
     ; ---- crouch / sprint / stamina
     movzx eax, byte [keys_down+K_CROUCH]
     mov [p_crouch], eax
+    ; slide: crouch pressed while sprinting on the ground
+    movss xmm0, [slide_t]
+    comiss xmm0, [c_zero]
+    ja .sliding
+    test eax, eax
+    jz .no_slide
+    cmp dword [crouch_prev], 0
+    jne .no_slide
+    cmp dword [p_sprint], 0
+    je .no_slide
+    cmp dword [p_on_ground], 0
+    je .no_slide
+    cmp dword [p_mode], 0
+    jne .no_slide
+    mov eax, [c_slide_time]
+    mov [slide_t], eax
+    movss xmm0, [p_yaw]
+    call sinf
+    xorps xmm0, [c_sign_mask]
+    movss [slide_dx], xmm0
+    movss xmm0, [p_yaw]
+    call cosf
+    xorps xmm0, [c_sign_mask]
+    movss [slide_dz], xmm0
+    movss xmm0, [c_noise_slide]
+    call noise_add
+    call snd_slide
+.sliding:
+    mov dword [p_crouch], 1             ; low: under things, harder to see
+.no_slide:
+    movzx eax, byte [keys_down+K_CROUCH]
+    mov [crouch_prev], eax
     xor ecx, ecx                        ; ecx = wants to sprint
     cmp byte [keys_down+K_SPRINT], 0
     je .no_want
@@ -383,6 +427,33 @@ player_update:
     cmp dword [p_mode], 0
     jne .battery
 
+    ; ---- sliding: the slide moves you, not the keys
+    movss xmm0, [slide_t]
+    comiss xmm0, [c_zero]
+    jbe .walking
+    cmp byte [keys_down+K_JUMP], 0
+    je .slide_go
+    mov dword [slide_t], 0              ; jump out of it
+    mov dword [p_crouch], 0
+    jmp .no_move
+.slide_go:
+    ; speed falls from v0 to v1 over the slide
+    movss xmm1, [c_slide_v0]
+    subss xmm1, [c_slide_v1]
+    mulss xmm1, xmm0
+    divss xmm1, [c_slide_time]
+    addss xmm1, [c_slide_v1]
+    mulss xmm1, [rsp+0]
+    subss xmm0, [rsp+0]
+    maxss xmm0, [c_zero]
+    movss [slide_t], xmm0
+    movss xmm0, [slide_dx]
+    mulss xmm0, xmm1
+    movss xmm2, [slide_dz]
+    mulss xmm1, xmm2
+    call slide
+    jmp .no_move
+.walking:
     ; ---- horizontal movement
     cmp dword [p_moving], 0
     je .no_move
@@ -453,9 +524,12 @@ player_update:
     call snd_footstep
 .no_move:
 
-    ; ---- jump
+    ; ---- jump -- or, at a ledge, mantle / vault (parkour.asm)
     cmp byte [keys_down+K_JUMP], 0
     je .no_jump
+    call parkour_try
+    test eax, eax
+    jnz .battery                        ; the move takes over from here
     cmp dword [p_on_ground], 0
     je .no_jump
     cmp dword [p_crouch], 0
@@ -482,7 +556,7 @@ player_update:
     movss xmm0, [p_x]
     movss xmm1, [p_z]
     movss xmm3, [c_step_up]
-    call ground_height
+    call player_ground                  ; (the building, or a box you're on)
     movss [rsp+36], xmm0                ; g
     movss xmm1, [rsp+32]
     comiss xmm1, xmm0
@@ -638,7 +712,11 @@ player_update:
     call sinf
     mulss xmm0, [rsp+56]
     mulss xmm0, [c_roll_k]
-    movss xmm1, [trav_roll]             ; zipline sway
+    movss xmm1, [trav_roll]             ; zipline sway, parkour lean
+    movss xmm2, [slide_t]               ; ...and the lean into a slide
+    mulss xmm2, [c_slide_roll]
+    divss xmm2, [c_slide_time]
+    addss xmm1, xmm2
     PCT xmm2, cfg_shake
     mulss xmm1, xmm2
     addss xmm0, xmm1

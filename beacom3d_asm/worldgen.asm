@@ -17,17 +17,27 @@
 ;      server racks, gyms with pillars and offices, each with a door onto a
 ;      corridor. One small room per floor becomes a safe room; one basement
 ;      room gets Y's cage.
-;   6. a flood fill from the start walls up anything you couldn't reach, so
+;   6. the layout setting (cfg_layout) reshapes what's left:
+;        MAZE    fewer, smaller rooms; the leftover rock is carved into
+;                winding one-cell maze passages (a depth-first maze) that
+;                join the halls in several places
+;        CLASSIC rooms off corridors, as above
+;        OPEN    bigger rooms, open halls with crates and pillars for cover,
+;                and many walls knocked through into open-plan space
+;   7. a flood fill from the start walls up anything you couldn't reach, so
 ;      nothing can ever spawn somewhere unreachable.
 ; =============================================================================
 %define MODULE_WORLDGEN
 %include "common.inc"
 
 global worldgen_generate
+extern cfg_layout
 
 extern classic_grid, compute_stairs
 
-%define ROOM_TRIES 5000
+%define LAYOUT_MAZE    0
+%define LAYOUT_CLASSIC 1
+%define LAYOUT_OPEN    2
 %define TH_PLAIN   0
 %define TH_DESKS   1
 %define TH_RACKS   2
@@ -59,13 +69,20 @@ zones:
     dd 4, 12, 5, 25,    16, 26, 5, 25,    44, 54, 5, 25,    0, 0, 0, 0     ; basement
     dd 8, 14, 2, 28,    18, 26, 2, 13,    46, 54, 2, 13,    18, 26, 17, 28 ; ground
     dd 6, 14, 5, 28,    20, 26, 5, 14,    48, 54, 5, 28,    0, 0, 0, 0     ; 2nd
+; per layout (maze, classic, open): room attempts and room sizes
+lay_tries   dd 1500, 5000, 5000
+lay_wmin    dd 5, 5, 9
+lay_wmax    dd 10, 15, 17
+lay_hmin    dd 5, 5, 7
+lay_hmax    dd 8, 11, 11
 ; flood fill directions
 fdx         dd 1, -1, 0, 0
 fdy         dd 0, 0, 1, -1
 
 section .bss
 alignb 4
-reach       resb NCELLS             ; flood fill: reached from the start
+reach       resb NCELLS
+stk         resd NCELLS             ; maze carving stack (x | y << 8)             ; flood fill: reached from the start
 queue       resd NCELLS
 dcand       resd 128                ; door candidates: x | y << 8
 ndoor       resd 1
@@ -292,13 +309,19 @@ worldgen_generate:
     mov edi, 1
     call place_stairs
 
+    ; ---- maze layout: the rock becomes maze first, rooms take what is left
+    cmp dword [cfg_layout], LAYOUT_MAZE
+    jne .rooms
+    call carve_mazes
+.rooms:
     ; ---- rooms
     xor r12d, r12d
 .rf:
     cmp r12d, NF
     jge .rooms_done
     mov [cur_f], r12d
-    mov r13d, ROOM_TRIES
+    mov eax, [cfg_layout]
+    mov r13d, [lay_tries+rax*4]
 .rt:
     call try_room
     dec r13d
@@ -306,6 +329,25 @@ worldgen_generate:
     inc r12d
     jmp .rf
 .rooms_done:
+
+    ; ---- the layout
+    cmp dword [cfg_layout], LAYOUT_MAZE
+    jne .not_maze
+    mov edi, 12                         ; maze pockets join the halls here and there
+    xor esi, esi
+    call punch
+    jmp .laid_out
+.not_maze:
+    cmp dword [cfg_layout], LAYOUT_OPEN
+    jne .laid_out
+    call open_halls
+    mov edi, 40                         ; halls open onto everything around them
+    xor esi, esi
+    call punch
+    mov edi, 70                         ; and room walls come down
+    mov esi, 1
+    call punch
+.laid_out:
 
     ; ---- nothing unreachable
     call compute_stairs
@@ -425,12 +467,14 @@ place_stairs:
 try_room:
     PROLOGUE 32
     ; [rsp+0] w  [rsp+4] h
-    mov edi, 5
-    mov esi, 15
+    mov ebx, [cfg_layout]
+    mov edi, [lay_wmin+rbx*4]
+    mov esi, [lay_wmax+rbx*4]
     call rand_range
     mov [rsp+0], eax
-    mov edi, 5
-    mov esi, 11
+    mov ebx, [cfg_layout]
+    mov edi, [lay_hmin+rbx*4]
+    mov esi, [lay_hmax+rbx*4]
     call rand_range
     mov [rsp+4], eax
     mov edi, 1
@@ -759,6 +803,345 @@ furnish:
 .pny:
     add r13d, 3
     jmp .py
+.done:
+    EPILOGUE
+
+; ---- layouts --------------------------------------------------------------
+
+; chance(edi = percent) -> eax 1 that often
+chance:
+    PROLOGUE 16
+    mov ebx, edi
+    xor edi, edi
+    mov esi, 99
+    call rand_range
+    xor ecx, ecx
+    cmp eax, ebx
+    setl cl
+    mov eax, ecx
+    EPILOGUE
+
+; rock_around(edi=f, esi=x, edx=y) -> eax 1 if the cell and all 8 around it
+; are solid rock (and it keeps off the outer wall)
+rock_around:
+    PROLOGUE 16
+    cmp esi, 2
+    jl .no
+    cmp esi, MAP_W-3
+    jg .no
+    cmp edx, 2
+    jl .no
+    cmp edx, MAP_H-3
+    jg .no
+    lea ecx, [rsi+1]
+    lea r8d, [rdx+1]
+    dec esi
+    dec edx
+    call all_rock
+    EPILOGUE
+.no:
+    xor eax, eax
+    EPILOGUE
+
+; carve_mazes -- in every pocket of rock left over, a depth-first maze on the
+; odd grid: passages one cell wide with rock between them (and a one-cell
+; skin of rock round each pocket, which punch later opens in places)
+carve_mazes:
+    PROLOGUE 32
+    xor r12d, r12d                      ; f
+.f:
+    cmp r12d, NF
+    jge .done
+    mov [cur_f], r12d
+    mov r14d, 3                         ; y (odd)
+.y:
+    cmp r14d, MAP_H-3
+    jg .fn
+    mov r13d, 3                         ; x (odd)
+.x:
+    cmp r13d, MAP_W-3
+    jg .yn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call rock_around
+    test eax, eax
+    jz .xn
+    mov edi, r13d
+    mov esi, r14d
+    call maze_from
+.xn:
+    add r13d, 2
+    jmp .x
+.yn:
+    add r14d, 2
+    jmp .y
+.fn:
+    inc r12d
+    jmp .f
+.done:
+    EPILOGUE
+
+; maze_from(edi=x, esi=y) -- carve one maze starting here (storey cur_f)
+maze_from:
+    PROLOGUE 32
+    mov r12d, edi
+    mov r13d, esi
+    mov edi, [cur_f]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, ' '
+    call gset
+    mov ecx, r13d
+    shl ecx, 8
+    or ecx, r12d
+    mov [stk], ecx
+    mov r15d, 1                         ; stack depth
+.top:
+    test r15d, r15d
+    jz .done
+    mov eax, [stk+r15*4-4]
+    movzx r12d, al                      ; x
+    shr eax, 8
+    mov r13d, eax                       ; y
+    xor edi, edi
+    mov esi, 3
+    call rand_range
+    mov r14d, eax                       ; first direction to try
+    xor ebx, ebx
+.dir:
+    cmp ebx, 4
+    jge .pop
+    lea eax, [r14d+ebx]
+    and eax, 3
+    mov ecx, [fdx+rax*4]
+    mov edx, [fdy+rax*4]
+    mov [rsp+0], ecx
+    mov [rsp+4], edx
+    lea esi, [r12d+ecx*2]               ; two cells on
+    lea edx, [r13d+edx*2]
+    mov [rsp+8], esi
+    mov [rsp+12], edx
+    mov edi, [cur_f]
+    call rock_around
+    test eax, eax
+    jz .ndir
+    ; carve the cell between and the next one, and go on from there
+    mov esi, r12d
+    add esi, [rsp+0]
+    mov edx, r13d
+    add edx, [rsp+4]
+    mov edi, [cur_f]
+    mov ecx, ' '
+    call gset
+    mov edi, [cur_f]
+    mov esi, [rsp+8]
+    mov edx, [rsp+12]
+    mov ecx, ' '
+    call gset
+    mov ecx, [rsp+12]
+    shl ecx, 8
+    or ecx, [rsp+8]
+    cmp r15d, NCELLS
+    jge .done
+    mov [stk+r15*4], ecx
+    inc r15d
+    jmp .top
+.ndir:
+    inc ebx
+    jmp .dir
+.pop:
+    dec r15d
+    jmp .top
+.done:
+    EPILOGUE
+
+; open_halls -- big rooms with no walls, cover scattered through them
+open_halls:
+    PROLOGUE 32
+    xor r12d, r12d
+.f:
+    cmp r12d, NF
+    jge .done
+    mov [cur_f], r12d
+    mov r13d, 600
+.try:
+    dec r13d
+    js .fn
+    mov edi, 7
+    mov esi, 16
+    call rand_range
+    mov [rsp+0], eax
+    mov edi, 6
+    mov esi, 11
+    call rand_range
+    mov [rsp+4], eax
+    mov edi, 1
+    mov esi, MAP_W-1
+    sub esi, [rsp+0]
+    call rand_range
+    mov [rx0], eax
+    add eax, [rsp+0]
+    dec eax
+    mov [rx1], eax
+    mov edi, 1
+    mov esi, MAP_H-1
+    sub esi, [rsp+4]
+    call rand_range
+    mov [ry0], eax
+    add eax, [rsp+4]
+    dec eax
+    mov [ry1], eax
+    mov edi, [cur_f]
+    mov esi, [rx0]
+    mov edx, [ry0]
+    mov ecx, [rx1]
+    mov r8d, [ry1]
+    call all_rock
+    test eax, eax
+    jz .try
+    ; the floor (a skin of rock stays round it until punch opens it)
+    mov edi, [cur_f]
+    mov esi, [rx0]
+    inc esi
+    mov edx, [ry0]
+    inc edx
+    mov ecx, [rx1]
+    dec ecx
+    mov r8d, [ry1]
+    dec r8d
+    mov r9d, ' '
+    call fill
+    ; cover: crates, tall crates and pillars, every other cell, clear of
+    ; the edges -- there is always a way round
+    mov r15d, [ry0]
+    add r15d, 2
+.cy:
+    mov eax, [ry1]
+    sub eax, 2
+    cmp r15d, eax
+    jg .try
+    mov r14d, [rx0]
+    add r14d, 2
+.cx:
+    mov eax, [rx1]
+    sub eax, 2
+    cmp r14d, eax
+    jg .cny
+    mov edi, 14
+    call chance
+    test eax, eax
+    jz .cnx
+    xor edi, edi
+    mov esi, 9
+    call rand_range
+    mov ecx, 'k'
+    cmp eax, 5
+    jl .put
+    mov ecx, 'K'
+    cmp eax, 8
+    jl .put
+    mov ecx, 'P'
+.put:
+    mov edi, [cur_f]
+    mov esi, r14d
+    mov edx, r15d
+    call gset
+.cnx:
+    add r14d, 2
+    jmp .cx
+.cny:
+    add r15d, 2
+    jmp .cy
+.fn:
+    inc r12d
+    jmp .f
+.done:
+    EPILOGUE
+
+; punch(edi = percent, esi = 0 rock / 1 room walls) -- knock through walls
+; that have plain floor on both sides (never safe-room walls, never into a
+; shaft or onto a stair)
+punch:
+    PROLOGUE 32
+    mov [rsp+0], edi
+    mov [rsp+4], esi
+    xor r12d, r12d
+.f:
+    cmp r12d, NF
+    jge .done
+    mov r14d, 1
+.y:
+    cmp r14d, MAP_H-2
+    jg .fn
+    mov r13d, 1
+.x:
+    cmp r13d, MAP_W-2
+    jg .yn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp dword [rsp+4], 0
+    jne .walls
+    cmp eax, '#'
+    jne .xn
+    jmp .sides
+.walls:
+    cmp eax, 'C'
+    je .sides
+    cmp eax, 'H'
+    je .sides
+    cmp eax, 'G'
+    je .sides
+    cmp eax, 'L'
+    jne .xn
+.sides:
+    ; floor left and right, or above and below?
+    mov edi, r12d
+    lea esi, [r13d-1]
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    jne .vertical
+    mov edi, r12d
+    lea esi, [r13d+1]
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    je .maybe
+.vertical:
+    mov edi, r12d
+    mov esi, r13d
+    lea edx, [r14d-1]
+    call cell_at
+    cmp eax, ' '
+    jne .xn
+    mov edi, r12d
+    mov esi, r13d
+    lea edx, [r14d+1]
+    call cell_at
+    cmp eax, ' '
+    jne .xn
+.maybe:
+    mov edi, [rsp+0]
+    call chance
+    test eax, eax
+    jz .xn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    mov ecx, ' '
+    call gset
+.xn:
+    inc r13d
+    jmp .x
+.yn:
+    inc r14d
+    jmp .y
+.fn:
+    inc r12d
+    jmp .f
 .done:
     EPILOGUE
 

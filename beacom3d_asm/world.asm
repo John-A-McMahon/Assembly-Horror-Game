@@ -8,6 +8,8 @@
 ;
 ; Map legend (same as board.txt, plus the 3D additions):
 ;   ' ' floor      S safe-room floor (T can never enter)
+;   d  desk (waist high: stand on it, vault it)
+;   k  crate, K  tall crate stack (climb them: mantle up)
 ;   #  concrete    H hallway block   C classroom wall   G gym wall
 ;   L  library     N safe-room wall  d desk   R server rack   P pillar
 ;   Y  Y's cage    B B, the lord of networking
@@ -26,6 +28,7 @@ global node_walkable, line_of_sight_3d, sound_occlusion, dist3, link_count
 global classic_grid, compute_stairs, world_select
 extern worldgen_generate
 global plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
+global plat_style
 
 %define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
 %define XN(i) (NCELLS + (i))
@@ -70,6 +73,13 @@ xlink_def:
     dd XN(6), NODE(2,35,23), LK_WALK    ; ramp B -> server room
     dd XN(3), NODE(0,34,19), LK_DROP    ; off the bridge into the basement
 %define NXLINK_DEF 9
+
+; blocks standing in grid cells: char, half width X, half depth Z, height, style
+block_kinds:
+    dd 'd', 0.75, 0.40, 0.77, PS_HIDDEN     ; desk (render.asm draws the desk itself)
+    dd 'k', 0.80, 0.80, 1.00, PS_CRATE      ; crate
+    dd 'K', 0.80, 0.80, 1.90, PS_CRATE      ; tall crate stack
+%define NBLOCK_KINDS 3
 
 c_hear_slab dd 6.0        ; a floor/ceiling slab muffles sound like 6m of air
 c_hear_wall dd 0.75       ; ...each half metre of solid wall like 0.75m
@@ -127,6 +137,7 @@ plat_ya     resd MAX_PLAT
 plat_yb     resd MAX_PLAT
 plat_axis   resd MAX_PLAT
 plat_thick  resd MAX_PLAT
+plat_style  resd MAX_PLAT
 
 section .text
 
@@ -233,7 +244,11 @@ world_init:
     mov byte [rbx+'v'], CF_STAIR | CF_OPEN | CF_TWALK | CF_SIGHT
     mov byte [rbx+'<'], CF_STAIR | CF_OPEN | CF_TWALK | CF_SIGHT
     mov byte [rbx+'>'], CF_STAIR | CF_OPEN | CF_TWALK | CF_SIGHT
-    mov byte [rbx+'d'], CF_SIGHT            ; desks are low: you can see over them
+    ; desks and crates: floor you can walk round, with a solid block on it
+    ; (grid_platforms) that you can stand on, mantle onto and vault over
+    mov byte [rbx+'d'], CF_OPEN | CF_FLAT | CF_SIGHT
+    mov byte [rbx+'k'], CF_OPEN | CF_FLAT | CF_SIGHT
+    mov byte [rbx+'K'], CF_OPEN | CF_FLAT | CF_SIGHT
     mov byte [rbx+'B'], CF_SIGHT
     mov byte [rbx+'u'], CF_OPEN | CF_TWALK | CF_FLAT | CF_SIGHT   ; foot of a ladder
 
@@ -270,6 +285,7 @@ world_analyse:
     PROLOGUE 16
     call compute_stairs
     call load_platforms
+    call grid_platforms
     call build_nav
 
     ; ---- open_cells = every ' ' cell (spawn points for items and T)
@@ -672,6 +688,80 @@ plat_height:
     movaps xmm0, xmm2
     ret
 
+; grid_platforms() -- every desk and crate in the maps becomes a solid block
+; standing on the floor of its cell (see block_kinds)
+grid_platforms:
+    PROLOGUE 32
+    xor r12d, r12d                      ; f
+.f:
+    cmp r12d, NF
+    jge .done
+    xor r14d, r14d                      ; y
+.y:
+    cmp r14d, MAP_H
+    jge .fn
+    xor r13d, r13d                      ; x
+.x:
+    cmp r13d, MAP_W
+    jge .yn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    xor ebx, ebx
+.kind:
+    cmp ebx, NBLOCK_KINDS
+    jge .next
+    imul ecx, ebx, 20
+    cmp eax, [block_kinds+rcx]
+    je .found
+    inc ebx
+    jmp .kind
+.found:
+    mov ecx, [plat_count]
+    cmp ecx, MAX_PLAT
+    jge .done
+    imul eax, ebx, 20
+    lea rsi, [block_kinds+rax]
+    cvtsi2ss xmm0, r13d
+    addss xmm0, [c_half]
+    mulss xmm0, [c_cell]                ; centre X
+    movaps xmm1, xmm0
+    subss xmm0, [rsi+4]
+    movss [plat_x0+rcx*4], xmm0
+    addss xmm1, [rsi+4]
+    movss [plat_x1+rcx*4], xmm1
+    cvtsi2ss xmm0, r14d
+    addss xmm0, [c_half]
+    mulss xmm0, [c_cell]                ; centre Z
+    movaps xmm1, xmm0
+    subss xmm0, [rsi+8]
+    movss [plat_z0+rcx*4], xmm0
+    addss xmm1, [rsi+8]
+    movss [plat_z1+rcx*4], xmm1
+    cvtsi2ss xmm0, r12d
+    mulss xmm0, [c_fh]
+    addss xmm0, [rsi+12]                ; top
+    movss [plat_ya+rcx*4], xmm0
+    movss [plat_yb+rcx*4], xmm0
+    mov dword [plat_axis+rcx*4], 0
+    mov eax, [rsi+12]
+    mov [plat_thick+rcx*4], eax
+    mov eax, [rsi+16]
+    mov [plat_style+rcx*4], eax
+    inc dword [plat_count]
+.next:
+    inc r13d
+    jmp .x
+.yn:
+    inc r14d
+    jmp .y
+.fn:
+    inc r12d
+    jmp .f
+.done:
+    EPILOGUE
+
 ; load_platforms() -- copy plat_def into the platform arrays
 load_platforms:
     xor ecx, ecx
@@ -695,6 +785,7 @@ load_platforms:
     mov [plat_axis+rcx*4], eax
     mov eax, [rdx+28]
     mov [plat_thick+rcx*4], eax
+    mov dword [plat_style+rcx*4], PS_CONCRETE
     add rdx, 32
     inc ecx
     jmp .p

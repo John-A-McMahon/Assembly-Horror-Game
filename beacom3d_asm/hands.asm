@@ -1151,6 +1151,8 @@ draw_viewmodel:
     je .zip
     cmp dword [p_mode], 1
     je .ladder
+    cmp dword [p_mode], 3               ; mantling/vaulting: plant it on the edge
+    je .ladder
     cmp dword [have_portal], 0
     jne .gun
     jmp .done

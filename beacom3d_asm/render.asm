@@ -2161,21 +2161,34 @@ build_material:
     inc r14d
     jmp .y
 .done:
-    ; ramps and platforms (world.asm) are bare concrete
+    ; ramps and bridges (world.asm) are bare concrete, crates are wood
     cmp dword [rsp+32], M_FLOOR_B
-    jne .out
+    jne .not_conc
+    mov edi, PS_CONCRETE
     call build_platforms
+.not_conc:
+    cmp dword [rsp+32], M_WHITE
+    jne .out
+    GLF3 glColor3f, 0.55, 0.42, 0.26
+    mov edi, PS_CRATE
+    call build_platforms
+    GLF3 glColor3f, 1.0, 1.0, 1.0
 .out:
     EPILOGUE
 
-; build_platforms(r12d = storey) -- every platform whose low end is on this
-; storey, as a (possibly sloped) slab: top, bottom and four sides
+; build_platforms(r12d = storey, edi = style) -- every platform of that style
+; whose low end is on this storey, as a (possibly sloped) slab: top,
+; bottom and four sides
 build_platforms:
     PROLOGUE 32
+    mov [rsp+8], edi
     xor ebx, ebx
 .p:
     cmp ebx, [plat_count]
     jge .done
+    mov eax, [plat_style+rbx*4]
+    cmp eax, [rsp+8]
+    jne .n
     movss xmm0, [plat_ya+rbx*4]
     minss xmm0, [plat_yb+rbx*4]
     call floor_of_height

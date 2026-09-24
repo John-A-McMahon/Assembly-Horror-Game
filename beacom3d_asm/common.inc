@@ -57,7 +57,10 @@ section .rodata
 %define LK_WALK     0
 %define LK_DROP     1
 %define LK_LADDER   2
-%define MAX_PLAT    16                     ; walkable platforms and ramps
+%define MAX_PLAT    1024                   ; ramps, bridges, desks, crates
+%define PS_CONCRETE 0                      ; platform styles: how it's drawn
+%define PS_CRATE    1
+%define PS_HIDDEN   2                      ; (desks: render.asm draws them itself)
 %define VIS_FLOORS  (NF-1)                 ; storeys drawn above/below yours (all of them)
 
 ; character classes (bit flags in char_class[], see world.asm)
@@ -287,6 +290,7 @@ extern rng_seed, rng_next
 extern nav_x, nav_y, nav_z, nav_count, link_head, link_next, link_to, link_type, nav_t_mask
 extern node_walkable, line_of_sight_3d, sound_occlusion, dist3
 extern plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
+extern plat_style
 %endif
 
 %ifndef MODULE_AI
@@ -345,7 +349,7 @@ extern menu_wheel, menu_draw, menu_reset
 extern cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_ladders
 extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
 extern cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
-extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain
+extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
 %endif
 
 ; PCT xmm, cfg_var -- xmm = cfg_var / 100 (clobbers nothing else)

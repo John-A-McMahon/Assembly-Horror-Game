@@ -138,8 +138,9 @@ tools/dbuild.sh win      # Windows beacom3d.exe
 | Mouse (or left/right arrows) | look / turn |
 | I | invert vertical mouse look |
 | Shift | sprint (drains stamina, loud) |
+| Shift + C (while sprinting) | slide: fast, low and noisy; Space jumps out of it |
 | C / Ctrl | crouch (slow, quiet, harder for T to see) |
-| Space | jump |
+| Space | jump -- or, facing a ledge, **mantle** up (desks, crates, boxes, ledges up to ~2 m); sprinting at something waist-high, **vault** it |
 | F | flashlight (battery drains; T sees it from far away) |
 | E | pick up / talk to B / grab a zipline |
 | Q / right mouse | fire a deauth packet (stuns T and teleports him away) |
@@ -165,6 +166,7 @@ tested seeds), so no seed spawn-camps you.
 Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
 
 * **Custom run** — building (the real Beacom or **generated from the seed**),
+  generated layout (**maze / classic / open**),
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
   deauth packets, start with the map + compass, portal gun hidden / in hand / off
@@ -186,6 +188,34 @@ gyms, offices, a safe room per floor, Y's cage — so every seed is a new
 night. The same seed always gives the same building on every platform. The
 atrium, the 2nd-floor server room and B's library are kept as landmarks,
 and a flood fill guarantees every spot is reachable from the start.
+
+### Parkour
+
+Desks, crates and cardboard boxes are solid now, and you can climb them.
+Walk into a desk and it stops you; press **Space** facing it and you pull
+yourself up onto it; sprint at it and press **Space** and you vault clean over.
+Anything with room on top up to about 2 m above your feet can be mantled,
+including in mid-air (jump, then catch the ledge). **Sprint + crouch** is a
+slide. T can't mantle, vault or climb -- a desk between you is a real
+obstacle for him, and in the pit under the atrium a crate and a tall crate
+stack let you climb up onto the ground-floor balcony where he can't follow.
+
+### Generated layouts
+
+With *Building* set to generated, *Generated layout* picks the building's
+character:
+
+* **Maze** -- fewer rooms; the solid rock is carved into winding one-cell maze
+  passages full of dead ends and corners. Tense and close: you hear T long
+  before you see him.
+* **Classic** -- rooms off corridors, like the real Beacom.
+* **Open** -- bigger rooms with most walls knocked through, open halls with
+  crates and pillars for cover. Long sightlines both ways: stealth is about
+  breaking line of sight.
+
+Every layout is checked the same way (every spot reachable, all stairwells,
+no duplicate buildings, T starting far away) -- `BEACOM_GENSWEEP` runs the
+sweep on all three.
 
 ### The Stack (the atrium)
 
@@ -211,7 +241,9 @@ follow you down into the atrium. He still can't climb ladders.
 | `main.asm` | terminal intro/seed prompt/lolcat endings, window, input, game loop, items, B, easter eggs, `--shot`/`--selftest` |
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
-| `worldgen.asm` | the seeded building generator |
+| `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
+| `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
+| `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, sleeve |
 | `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |
 | `player.asm` | first-person controller: mouselook, movement, gravity, stairs, stamina, flashlight battery |
 | `ai.asm` | T: BFS over the 3D nav graph, 3D sight, occluded hearing, wander / investigate / chase |

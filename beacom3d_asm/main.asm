@@ -86,10 +86,23 @@ st_zip2_fmt db "[selftest] atrium zipline: grabbed=%d, ended on floor %d at x=%.
 st_los_fmt  db "[selftest] 3D sight from the basement: up the atrium=%d (expect 1), through a solid floor=%d (expect 0)",10,0
 st_snd_fmt  db "[selftest] sound occlusion over 2 storeys: open atrium=%.1f (expect 0), two slabs=%.1f (expect 12)",10,0
 st_nav_up   db "[selftest] nav ground balcony -> 2nd floor via ramps: found=%d, %d nodes (expect <= 10)",10,0
-st_nav_drop db "[selftest] nav 2nd floor -> basement off the ledge: found=%d, %d nodes (expect 3)",10,0
+st_nav_drop db "[selftest] nav 2nd floor -> basement off the ledge: found=%d, %d nodes (expect <= 5)",10,0
 st_bridge_ok db "[selftest] T came up the ramps and caught you on the bridge after %.1fs (T at y=%.2f) -- PASS",10,0
 st_bridge_fail db "[selftest] T never reached you on the bridge -- FAIL",10,0
 st_gen_fmt  db "[selftest] generated Beacom, seed %2d: %4d open cells, %2d stair cells, %d/40 random spots unreachable (expect 0)",10,0
+st_pk_desk  db "parkour: walk into a desk (blocked, z~15.7)",0
+st_pk_mantle db "parkour: mantle onto the desk (y~7.17)",0
+st_pk_vault db "parkour: sprint-vault the desk (z<14.6)",0
+st_pk_slide db "[selftest] parkour: a slide covered %.2f m in 0.85 s (crouch-walking: 1.45 m)",10,0
+st_pk_crates db "parkour: up the crates in the pit (y~1.9)",0
+st_pk_balcony db "parkour: mantle onto the balcony (y 3.2)",0
+st_pk_box   db "parkour: stand on a cardboard box (y~3.7)",0
+st_layout_fmt db "[selftest] ---- generated layout: %s ----",10,0
+lay_n0      db "MAZE",0
+lay_n1      db "CLASSIC",0
+lay_n2      db "OPEN",0
+align 8
+layout_names dq lay_n0, lay_n1, lay_n2
 st_row_fmt  db "%.59s",10,0
 env_gensweep db "BEACOM_GENSWEEP",0
 st_sweep_fmt db "[selftest] seed sweep 1..%d: seeds missing a stairwell %d, storeys without open floor %d, seeds with unreachable spots %d (%d cells)",10,0
@@ -113,7 +126,7 @@ mkdir_shots db "mkdir -p shots",0
 
 ; ---- in-game messages (strings carried over from the originals) ----
 m_seed      db "Seed %d. Find 3 wireshark packet captures -- one on every floor -- and bring them to B.",0
-m_generated db "This is not the Beacom you know. Seed %d built it tonight -- the atrium, the server room and B's library are the only places that stayed put.",0
+m_generated db "This is not the Beacom you know. Seed %d built it tonight -- the atrium, the server room and B's library are the only places that stayed put. (Esc -> Generated layout: maze / classic / open.)",0
 m_controls  db "WASD move - mouse or arrow keys look - SHIFT sprint - C crouch - SPACE jump - F flashlight - E grab - Q deauth - M map - I invert mouse - F3 fps - F4 render scale - F5 shadows",0
 m_inv_on    db "Mouse look: vertical inverted.",0
 m_inv_off   db "Mouse look: normal.",0
@@ -171,6 +184,10 @@ sh_n10 db "shots/11_ragdoll_props.bmp",0
 sh_n11 db "shots/12_atrium_down.bmp",0
 sh_n12 db "shots/13_atrium_up.bmp",0
 sh_menu db "shots/14_pause_menu.bmp",0
+sh_n13 db "shots/13b_crates_in_the_pit.bmp",0
+sh_maze_map db "shots/22_maze_layout_map.bmp",0
+sh_open_map db "shots/23_open_layout_map.bmp",0
+sh_maze_view db "shots/24_maze_layout_view.bmp",0
 sh_gen_map db "shots/15_generated_map_ground.bmp",0
 sh_gen_map0 db "shots/16_generated_map_basement.bmp",0
 sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
@@ -193,7 +210,8 @@ shots:
     SHOT 1, 30, 15, -1.5708, -0.25, 2, 0, sh_n10
     SHOT 2, 36, 21,  1.5708, -0.95, 0, 0, sh_n11
     SHOT 0, 34, 16,  3.1416,  0.9,  0, 0, sh_n12
-%define NSHOTS 13
+    SHOT 0, 34, 22,  -0.35,   0.25, 0, 0, sh_n13
+%define NSHOTS 14
 %define SHOT_SIZE 36
 
 c_dt_shot   dd 0.016
@@ -237,6 +255,7 @@ alignb 8
 %define MAX_SWEEP 20000
 sweep_hash  resd MAX_SWEEP
 sw_min_pct  resd 1
+gt_layout   resd 1
 sw_min_steps resd 1
 window      resq 1
 glctx       resq 1
@@ -283,6 +302,7 @@ crouch_latch resd 1
 restart_new resd 1                  ; the menu asked for a new seed
 built_mode  resd 1                  ; which building is in grid: 0 real, 1 generated
 built_seed  resd 1                  ; ...and from which seed
+built_layout resd 1                 ; ...with which layout
 
 section .text
 
@@ -1027,6 +1047,9 @@ prepare_world:
     jz .apply
     mov ecx, [seed_val]
     cmp ecx, [built_seed]
+    jne .build
+    mov ecx, [cfg_layout]
+    cmp ecx, [built_layout]
     je .apply
 .build:
     mov edi, [cfg_building]
@@ -1037,6 +1060,8 @@ prepare_world:
     mov [built_mode], eax
     mov eax, [seed_val]
     mov [built_seed], eax
+    mov eax, [cfg_layout]
+    mov [built_layout], eax
 .apply:
     call settings_apply                 ; (after build_nav, which resets T's links)
     EPILOGUE
@@ -2312,6 +2337,29 @@ shot_mode_run:
     mov dword [p_yaw], __float32__(-1.5708)
     lea rdi, [sh_gen_view]
     call shot_now
+    ; the maze and open layouts (seed 42): their maps, and inside the maze
+    mov dword [cfg_layout], 0
+    call prepare_world
+    call new_game
+    mov dword [have_map], 1
+    mov dword [map_visible], 1
+    mov dword [map_floor], 1
+    lea rdi, [sh_maze_map]
+    call shot_now
+    mov dword [map_visible], 0
+    call find_maze_spot
+    lea rdi, [sh_maze_view]
+    call shot_now
+    mov dword [cfg_layout], 2
+    call prepare_world
+    call new_game
+    mov dword [have_map], 1
+    mov dword [map_visible], 1
+    mov dword [map_floor], 1
+    lea rdi, [sh_open_map]
+    call shot_now
+    mov dword [map_visible], 0
+    mov dword [cfg_layout], 1
     ; the hands in every pose, in the real Beacom's main hallway
     mov dword [cfg_building], 0
     call prepare_world
@@ -2336,6 +2384,57 @@ shot_mode_run:
     lea rdi, [sh_hands_ladder]
     call shot_now
     mov dword [p_mode], 0
+    EPILOGUE
+
+; find_maze_spot -- stand in a one-cell passage on the ground floor (open
+; left and right or ahead and behind, walls to both sides), facing along it
+find_maze_spot:
+    PROLOGUE 16
+    mov r14d, 3
+.y:
+    cmp r14d, 12
+    jg .none
+    mov r13d, 18
+.x:
+    cmp r13d, 40
+    jg .ny
+    mov edi, 1
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    jne .nx
+    mov edi, 1
+    lea esi, [r13d-1]
+    mov edx, r14d
+    call cell_at
+    cmp eax, '#'
+    jne .nx
+    mov edi, 1
+    lea esi, [r13d+1]
+    mov edx, r14d
+    call cell_at
+    cmp eax, '#'
+    jne .nx
+    mov edi, 1
+    mov esi, r13d
+    lea edx, [r14d-1]
+    call cell_at
+    cmp eax, ' '
+    jne .nx
+    mov edi, 1
+    mov esi, r13d
+    mov edx, r14d
+    call player_spawn
+    mov dword [p_yaw], 0                ; looking north along it
+    EPILOGUE
+.nx:
+    inc r13d
+    jmp .x
+.ny:
+    inc r14d
+    jmp .y
+.none:
     EPILOGUE
 
 ; shot_now(rdi=file) -- settle a few frames and save what's on screen
@@ -2434,6 +2533,214 @@ walk_leg:
 %define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
 %define XN(i) (NCELLS + (i))
 extern path_len, path
+
+; hold_test(rdi = name or 0, esi = keys held (bit per keys_down slot),
+;           xmm0 = yaw, xmm1 = seconds) -- play with those keys held down
+hold_test:
+    PROLOGUE 32
+    mov [rsp+16], rdi
+    mov [rsp+8], esi
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    mov eax, [rsp+0]
+    mov [p_yaw], eax
+    xor ecx, ecx
+.k:
+    mov eax, [rsp+8]
+    shr eax, cl
+    and eax, 1
+    mov [keys_down+rcx], al
+    inc ecx
+    cmp ecx, 9
+    jl .k
+    movss xmm0, [rsp+4]
+    FLD xmm1, 60.0
+    mulss xmm0, xmm1
+    cvttss2si ebx, xmm0
+    cmp ebx, 1
+    jge .step
+    mov ebx, 1
+.step:
+    movss xmm0, [c_dt_shot]
+    call traverse_update
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call player_update
+    movss xmm0, [c_dt_shot]
+    call physics_update
+    dec ebx
+    jnz .step
+    lea rdi, [keys_down]
+    xor esi, esi
+    mov edx, 9
+    call memset
+    cmp qword [rsp+16], 0
+    je .quiet
+    call player_floor
+    mov edx, eax
+    lea rdi, [st_walk_fmt]
+    mov rsi, [rsp+16]
+    cvtss2sd xmm0, [p_x]
+    cvtss2sd xmm1, [p_y]
+    cvtss2sd xmm2, [p_z]
+    mov eax, 3
+    call printf
+.quiet:
+    EPILOGUE
+
+; settle -- a second of doing nothing (a move in progress finishes)
+settle:
+    PROLOGUE 16
+    xor edi, edi
+    xor esi, esi
+    mov eax, [p_yaw]
+    movd xmm0, eax
+    movss xmm1, [c_one]
+    call hold_test
+    EPILOGUE
+
+%define KB_FWD    1
+%define KB_SPRINT 16
+%define KB_CROUCH 32
+%define KB_JUMP   64
+
+; parkour_tests -- desks, mantle, vault, slide, crates, boxes
+parkour_tests:
+    PROLOGUE 32
+    mov dword [t_stun], __float32__(10000.0)
+    call traverse_reset
+    ; a desk is a real obstacle now...
+    lea rdi, [st_pk_desk]
+    mov esi, 2
+    mov edx, 23
+    mov ecx, 8
+    FLD xmm0, 0.0
+    FLD xmm1, 1.5
+    call walk_test
+    ; ...you can climb onto it...
+    mov edi, 2
+    mov esi, 23
+    mov edx, 8
+    call player_spawn
+    xor edi, edi
+    mov esi, KB_FWD | KB_JUMP
+    FLD xmm0, 0.0
+    FLD xmm1, 0.9
+    call hold_test
+    lea rdi, [st_pk_mantle]
+    xor esi, esi
+    FLD xmm0, 0.0
+    FLD xmm1, 0.6
+    call hold_test
+    ; ...or sprint and vault it
+    mov edi, 2
+    mov esi, 23
+    mov edx, 8
+    call player_spawn
+    xor edi, edi
+    mov esi, KB_FWD | KB_SPRINT | KB_JUMP
+    FLD xmm0, 0.0
+    FLD xmm1, 0.9
+    call hold_test
+    lea rdi, [st_pk_vault]
+    xor esi, esi
+    FLD xmm0, 0.0
+    FLD xmm1, 0.6
+    call hold_test
+    ; slide: sprint, then crouch
+    mov edi, 1
+    mov esi, 8
+    mov edx, 15
+    call player_spawn
+    xor edi, edi
+    mov esi, KB_FWD | KB_SPRINT
+    FLD xmm0, -1.5708
+    FLD xmm1, 0.5
+    call hold_test
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    xor edi, edi
+    mov esi, KB_FWD | KB_SPRINT | KB_CROUCH
+    FLD xmm0, -1.5708
+    FLD xmm1, 0.85
+    call hold_test
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_pk_slide]
+    mov eax, 1
+    call printf
+    ; the pit under the atrium: crate, tall crate, then up onto the balcony
+    call traverse_reset
+    mov edi, 0
+    mov esi, 35
+    mov edx, 21
+    call player_spawn
+    mov ebx, 240                        ; north, grabbing whatever's there...
+.climb:
+    push rbx
+    sub rsp, 8
+    xor edi, edi
+    mov esi, KB_FWD | KB_JUMP
+    FLD xmm0, 0.0
+    FLD xmm1, 0.0167
+    call hold_test
+    add rsp, 8
+    pop rbx
+    cmp dword [p_mode], 0
+    jne .climbing
+    movss xmm0, [p_y]
+    FLD xmm1, 1.85
+    comiss xmm0, xmm1                   ; ...until you stand on the tall one
+    jae .on_top
+.climbing:
+    dec ebx
+    jnz .climb
+.on_top:
+    lea rdi, [st_pk_crates]
+    xor esi, esi
+    FLD xmm0, 0.0
+    FLD xmm1, 0.02
+    call hold_test
+    xor edi, edi
+    mov esi, KB_FWD | KB_JUMP
+    FLD xmm0, -1.5708                   ; east, to the balcony edge
+    FLD xmm1, 1.3
+    call hold_test
+    lea rdi, [st_pk_balcony]
+    xor esi, esi
+    FLD xmm0, -1.5708
+    FLD xmm1, 0.8
+    call hold_test
+    ; a cardboard box: step or climb onto it
+    call physics_reset
+    mov edi, 1
+    mov esi, 8
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    xor edi, edi                        ; B_BOX
+    movss xmm0, [p_x]
+    FLD xmm1, 1.6
+    addss xmm0, xmm1
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    xorps xmm3, xmm3
+    call add_box
+    call settle
+    xor edi, edi
+    mov esi, KB_FWD | KB_JUMP
+    FLD xmm0, -1.5708
+    FLD xmm1, 0.5
+    call hold_test
+    lea rdi, [st_pk_box]
+    xor esi, esi
+    FLD xmm0, -1.5708
+    FLD xmm1, 0.8
+    call hold_test
+    call physics_reset
+    call traverse_reset
+    EPILOGUE
 
 ; gen_sweep(edi = N) -- BEACOM_GENSWEEP=N: build seeds 1..N and check each one
 ; completely: all four stairwells placed, open floor on every storey, every
@@ -2632,6 +2939,15 @@ spawn_check:
 gen_tests:
     PROLOGUE 32
     mov dword [cfg_building], 1
+    mov dword [gt_layout], 0
+.layout:
+    mov eax, [gt_layout]
+    mov [cfg_layout], eax
+    lea rdi, [st_layout_fmt]
+    lea rcx, [layout_names]
+    mov rsi, [rcx+rax*8]
+    xor eax, eax
+    call printf
     mov r12d, 1                         ; seed
 .seed:
     cmp r12d, 12
@@ -2696,6 +3012,10 @@ gen_tests:
     inc r12d
     jmp .seed
 .done:
+    inc dword [gt_layout]
+    cmp dword [gt_layout], 3
+    jl .layout
+    mov dword [cfg_layout], 1
     mov dword [cfg_building], 0
     xor edi, edi
     xor esi, esi
@@ -2971,6 +3291,7 @@ selftest:
     call traverse_reset
 
     call atrium_tests
+    call parkour_tests
     call gen_tests
     lea rdi, [env_gensweep]
     call getenv
@@ -2984,8 +3305,22 @@ selftest:
     jle .sweep
     mov eax, MAX_SWEEP
 .sweep:
-    mov edi, eax
+    mov [rsp+0], eax
+    mov dword [gt_layout], 0
+.sweep_layout:
+    mov eax, [gt_layout]
+    mov [cfg_layout], eax
+    lea rdi, [st_layout_fmt]
+    lea rcx, [layout_names]
+    mov rsi, [rcx+rax*8]
+    xor eax, eax
+    call printf
+    mov edi, [rsp+0]
     call gen_sweep
+    inc dword [gt_layout]
+    cmp dword [gt_layout], 3
+    jl .sweep_layout
+    mov dword [cfg_layout], 1
 .no_sweep:
 
     ; path finding across three storeys

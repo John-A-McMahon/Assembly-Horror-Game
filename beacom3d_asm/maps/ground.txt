@@ -22,8 +22,8 @@
 #         GH   H##########H   C  ... C##..#H  L           #
 # .       GH   H##########H   C  ... C##..#H  L           #
 #   G  G  GH   H##########H   C      C##..#H  L           #
-#         GH   NNNNNN#####H   CCCCCCCC##..#H  L     B     #
-#         GH   SSSSSN#####H          C##..#H  L           #
+# kk      GH   NNNNNN#####H   CCCCCCCC##..#H  L     B     #
+# K       GH   SSSSSN#####H          C##..#H  L           #
 #GGGGGGGGGGH   NSSSSN#####H   C      C#####H  L           #
 ###########H   NSSSSN#####H   C      C#####H  L           #
 ###########H   NSSSSN#####H   C      C#####H  L           #
