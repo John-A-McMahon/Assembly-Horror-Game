@@ -172,7 +172,7 @@ Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
   deauth packets, start with the map + compass, portal gun hidden / in hand / off,
-  hookshot hidden / in hand / off, how many cans of Diet Mountain Dew (0-8)
+  hookshot hidden / in hand / off, how many cans of Diet Mountain Dew (0-8), how many bottom feeders (0-4)
 * **You** — sprint stamina drain, flashlight battery drain, walk speed, jump
   height, zipline speed
 * **Controls** — mouse sensitivity, invert Y, crouch hold/toggle
@@ -185,12 +185,13 @@ Rows marked * apply when you restart.
 
 ### Achievements
 
-21 of them, from **PACIFIST** (win without firing a single deauth packet) and
+22 of them, from **PACIFIST** (win without firing a single deauth packet) and
 **GHOST PROTOCOL** (win without T ever seeing you) to **STAGE FRIGHT** (stand
 on the grand staircase stage while T chases you), **KING OF THE CRATES**,
 **THINKING WITH PORTALS**, **GET OVER HERE** (hit T with the hookshot),
 **SPIDER-BEACOM** (hookshot yourself 2.5 m up), **DO THE DEW** (drink 3 Diet
-Mountain Dews in one night), **LOST IN THE MAZE** and a
+Mountain Dews in one night), **OUT-FED** (snatch a capture back from a
+bottom feeder), **LOST IN THE MAZE** and a
 couple of secrets.
 Unlocking one pops a gold banner with a fanfare. They're saved to
 `beacom_achievements.cfg` (delete it to start over), listed at the bottom of
@@ -291,6 +292,22 @@ seconds**: 40% faster, and he sees and hears 40% further. Grabbing the
 cans near his patrol is as much about denying them to him as drinking them
 yourself.
 
+### Bottom feeders
+
+Two (0-4 in the pause menu) little scuttling scavengers live in the building.
+They can't kill you. They **rob** you:
+
+* While you carry no packet captures they ignore you (you'll still hear the
+  tick-tick of their legs nearby).
+* Carrying captures, one that sees you comes scuttling after you. It's
+  faster than you walk but slower than you sprint.
+* If it reaches you it snatches **one capture** and bolts, with the capture
+  glowing on its back. The scuffle is loud enough that T may come to look.
+* **Catch it** and you snatch the capture back. Otherwise it hides the
+  capture somewhere far from you (the message says which floor; the compass
+  shows it like any other capture) and calms down for a while.
+* They can't enter safe rooms. The compass shows them as purple dots.
+
 ### Generated layouts
 
 With *Building* set to generated, *Generated layout* picks the building's
@@ -336,10 +353,11 @@ follow you down into the atrium. He still can't climb ladders.
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
-| `achievements.asm` | the 21 achievements: rules, unlock banner, `beacom_achievements.cfg` |
+| `achievements.asm` | the 22 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
 | `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, hookshot, sleeve |
 | `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |
+| `feeders.asm` | the bottom feeders: wander / chase / steal / flee / stash, on T's nav graph |
 | `hookshot.asm` | the hookshot: traces the throw, latches on, pulls you in, fling, auto-mantle, stuns T |
 | `player.asm` | first-person controller: mouselook, movement, gravity, stairs, stamina, flashlight battery |
 | `ai.asm` | T: BFS over the 3D nav graph, 3D sight, occluded hearing, wander / investigate / chase |

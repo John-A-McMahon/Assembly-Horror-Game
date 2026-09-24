@@ -18,11 +18,11 @@
 
 global main, items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h
 global on_t_spotted, have_map, have_compass, have_portal, invert_y, show_fps
-global special, have_hookshot
+global special, have_hookshot, add_item
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
-extern p_on_ground, snd_can, snd_can_t, p_vy
+extern p_on_ground, snd_can, snd_can_t, p_vy, feeder_put
 extern portal_reset, portal_fire, portal_check_teleport, world_select, render_rebuild_world
 extern add_box, snd_fanfare, map_floor, dump_shadow_map, glFinish, p_eye_y, getenv, SDL_SetHint, hud_fps, render_cycle_scale, render_toggle_shadows
 
@@ -117,6 +117,11 @@ st_oob_fling db "[selftest] hookshot at the ceiling + fling: floor %d -> floor %
 st_oob_floor db "[selftest] hookshot at the floor: floor %d -> floor %d, feet got down to y=%.2f (expect >= 3.20: not dragged through it)",10,0
 st_oob_roof db "[selftest] hookshot fling on the top floor: head reached y=%.2f (expect <= 9.60: not out through the roof)",10,0
 st_oob_none db "[selftest] hookshot out-of-bounds: no open spot found on floor %d -- FAIL",10,0
+st_fd_steal db "[selftest] bottom feeder: robbed you after %.1fs (expect < 5): captures 2 -> %d (expect 1), it carries %d (expect 1)",10,0
+st_fd_stash db "[selftest] bottom feeder: stashed it after %.1fs, %.0f m from you (expect > 20), carrying %d (expect 0), a new capture lies there=%d (expect 1)",10,0
+st_fd_back db "[selftest] bottom feeder: you caught the thief: captures %d (expect 2), OUT-FED=%d (expect 1)",10,0
+st_fd_deauth db "[selftest] bottom feeder: deauthed while carrying: stunned=%d (expect 1), carrying %d (expect 0), capture dropped=%d (expect 1)",10,0
+st_fd_ignore db "[selftest] bottom feeder: with no captures on you it left you alone for 5s: captures %d (expect 0), chased=%d (expect 0)",10,0
 st_dew_you db "[selftest] Diet Mountain Dew: %.1fs of it (expect 20.0), stamina %.2f after sprinting on empty (expect 1.00)",10,0
 st_dew_t db "[selftest] T sniffed out a can %d cells away and drank it after %.1fs (expect < 15): wired for %.1fs (expect > 0), can gone=%d (expect 1)",10,0
 st_hook_across db "[selftest] hookshot across the collaboration space: pulled to x=%.2f (the media wall is at x=70; expect > 67)",10,0
@@ -232,6 +237,7 @@ sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
 sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
 sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
+sh_feeders db "shots/39_bottom_feeders.bmp",0
 sh_dew db "shots/38_diet_mountain_dew.bmp",0
 sh_hook_hand db "shots/36_hookshot_in_hand.bmp",0
 sh_hook_chain db "shots/37_hookshot_chain.bmp",0
@@ -657,7 +663,21 @@ add_item:
     call node_center
     mov eax, [item_count]
     cmp eax, MAX_ITEMS
+    jge .reuse
+    inc dword [item_count]
+    jmp .slot
+.reuse:
+    ; full: reuse the slot of something already picked up
+    xor eax, eax
+.free:
+    cmp eax, MAX_ITEMS
     jge .full
+    imul ecx, eax, ITEM_SIZE
+    cmp dword [items+rcx+ITEM_ACTIVE], 0
+    je .slot
+    inc eax
+    jmp .free
+.slot:
     imul ecx, eax, ITEM_SIZE
     lea rbx, [items+rcx]
     mov [rbx+ITEM_KIND], r12d
@@ -670,7 +690,6 @@ add_item:
     movaps xmm0, xmm1
     call floor_of_height
     mov [rbx+ITEM_F], eax
-    inc dword [item_count]
 .full:
     EPILOGUE
 
@@ -848,6 +867,7 @@ new_game:
     call far_spawn_node
     mov edi, eax
     call enemy_reset
+    call feeders_reset                  ; ...and the bottom feeders, away from you
 
     ; welcome messages
     lea rdi, [msg_buf]
@@ -1216,6 +1236,7 @@ fire_deauth:
     mov dword [special], SP_NONE
 .more_left:
     inc dword [run_deauths]             ; (no PACIFIST this run)
+    call feeders_deauth                 ; bottom feeders nearby are scrambled too
     movss xmm0, [t_dist]
     FLD xmm1, 4.0
     comiss xmm0, xmm1
@@ -2300,6 +2321,8 @@ game_tick:
     movss xmm0, [rsp+0]
     call dew_tick
     movss xmm0, [rsp+0]
+    call feeders_update
+    movss xmm0, [rsp+0]
     movss xmm1, [elapsed_time]
     call world_lights_update
     call update_items
@@ -2846,6 +2869,36 @@ shot_mode_run:
     dec eax
     imul eax, eax, ITEM_SIZE
     mov dword [items+rax+ITEM_ACTIVE], 0
+    ; two bottom feeders: one coming at you, one making off with a capture
+    mov dword [fd_count], 2
+    mov edi, 1
+    mov esi, 28
+    mov edx, 15
+    call cell_index
+    mov esi, eax
+    xor edi, edi
+    call feeder_put
+    mov dword [fd_yaw], __float32__(-1.5708)
+    mov dword [fd_anim], __float32__(0.8)
+    mov edi, 1
+    mov esi, 29
+    mov edx, 17
+    call cell_index
+    mov esi, eax
+    mov edi, 1
+    call feeder_put
+    mov dword [fd_yaw+4], __float32__(0.6)
+    mov dword [fd_anim+4], __float32__(2.3)
+    mov dword [fd_carry+4], 1
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], __float32__(-0.3)
+    lea rdi, [sh_feeders]
+    call shot_now
+    mov dword [fd_count], 0
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -3970,6 +4023,9 @@ dew_tests:
     inc ebx
     jmp .off
 .offed:
+    ; you: out of the way (in the corner wall, where T can't get a hunch)
+    mov dword [p_x], __float32__(1.0)
+    mov dword [p_z], __float32__(1.0)
     call start_node
     mov edi, eax
     call enemy_reset
@@ -4062,6 +4118,195 @@ dew_tests:
     xor esi, esi
     mov edx, NACH*4
     call memset
+    EPILOGUE
+
+; fd_run(xmm0 = seconds max, edi = stop when: 0 it robs you, 1 it's stashed)
+; -> xmm0 = seconds it took
+fd_run:
+    PROLOGUE 16
+    FLD xmm1, 60.0
+    mulss xmm0, xmm1
+    cvttss2si r12d, xmm0
+    mov r13d, edi
+    xor ebx, ebx
+.f:
+    cmp ebx, r12d
+    jge .out
+    movss xmm0, [c_dt_shot]
+    call feeders_update
+    inc ebx
+    test r13d, r13d
+    jnz .stash
+    cmp dword [fd_carry], 0
+    jne .out
+    jmp .f
+.stash:
+    cmp dword [fd_carry], 0
+    je .out
+    jmp .f
+.out:
+    cvtsi2ss xmm0, ebx
+    mulss xmm0, [c_dt_shot]
+    EPILOGUE
+
+; fd_setup -- you on open floor with 2 captures, one bottom feeder beside you
+fd_setup:
+    PROLOGUE 16
+    mov edi, 1
+    xor esi, esi
+    call find_open
+    mov edi, 1
+    mov esi, [fo_x]
+    mov edx, [fo_y]
+    call player_spawn
+    mov dword [inventory], 2
+    mov dword [fd_count], 1
+    mov edi, 1
+    mov esi, [fo_x]
+    inc esi
+    mov edx, [fo_y]
+    inc edx
+    call cell_index
+    mov esi, eax
+    xor edi, edi
+    call feeder_put
+    EPILOGUE
+
+; count_keys -> eax = capture items lying about
+count_keys:
+    xor eax, eax
+    xor ecx, ecx
+.k:
+    cmp ecx, [item_count]
+    jge .done
+    imul edx, ecx, ITEM_SIZE
+    cmp dword [items+rdx+ITEM_ACTIVE], 0
+    je .n
+    cmp dword [items+rdx+ITEM_KIND], IT_KEY
+    jne .n
+    inc eax
+.n:
+    inc ecx
+    jmp .k
+.done:
+    ret
+
+; feeder_tests -- robbed, the stash, catching the thief, the deauth, and
+; being left alone when you carry nothing
+feeder_tests:
+    PROLOGUE 32
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    mov dword [t_stun], __float32__(10000.0)
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    ; robbed
+    call fd_setup
+    call count_keys
+    mov [rsp+8], eax
+    FLD xmm0, 10.0
+    xor edi, edi
+    call fd_run
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_fd_steal]
+    mov esi, [inventory]
+    mov edx, [fd_carry]
+    mov eax, 1
+    call printf
+    ; ...it runs off and hides it
+    FLD xmm0, 90.0
+    mov edi, 1
+    call fd_run
+    movss [rsp+0], xmm0
+    movss xmm0, [fd_x]
+    subss xmm0, [p_x]
+    mulss xmm0, xmm0
+    movss xmm1, [fd_z]
+    subss xmm1, [p_z]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    movss xmm1, [fd_y]
+    subss xmm1, [p_y]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm1, xmm0
+    call count_keys
+    sub eax, [rsp+8]
+    mov ecx, eax
+    lea rdi, [st_fd_stash]
+    cvtss2sd xmm0, [rsp+0]
+    cvtss2sd xmm1, xmm1
+    mov esi, [fd_carry]
+    mov edx, ecx
+    mov eax, 2
+    call printf
+    ; robbed again -- and you grab it before it gets away
+    call fd_setup
+    FLD xmm0, 10.0
+    xor edi, edi
+    call fd_run
+    FLD xmm0, 1.0                       ; (it gets a moment's head start)
+    mov edi, 1
+    call fd_run
+    mov eax, [fd_x]
+    mov [p_x], eax
+    mov eax, [fd_z]
+    mov [p_z], eax
+    movss xmm0, [c_dt_shot]
+    call feeders_update
+    lea rdi, [st_fd_back]
+    mov esi, [inventory]
+    mov edx, [ach_flag+ACH_OUTFED*4]
+    xor eax, eax
+    call printf
+    ; robbed again -- and you deauth it
+    call fd_setup
+    FLD xmm0, 10.0
+    xor edi, edi
+    call fd_run
+    call count_keys
+    mov [rsp+8], eax
+    call feeders_deauth
+    call count_keys
+    sub eax, [rsp+8]
+    mov ecx, eax
+    xor esi, esi
+    cmp dword [fd_state], 3
+    sete sil
+    lea rdi, [st_fd_deauth]
+    mov edx, [fd_carry]
+    xor eax, eax
+    call printf
+    ; nothing on you: it doesn't care
+    call fd_setup
+    mov dword [inventory], 0
+    xor r12d, r12d
+    xor ebx, ebx
+.calm:
+    cmp ebx, 300
+    jge .calmed
+    movss xmm0, [c_dt_shot]
+    call feeders_update
+    cmp dword [fd_state], 1
+    jne .nc
+    mov r12d, 1
+.nc:
+    inc ebx
+    jmp .calm
+.calmed:
+    lea rdi, [st_fd_ignore]
+    mov esi, [inventory]
+    mov edx, r12d
+    xor eax, eax
+    call printf
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    mov dword [fd_count], 0
     EPILOGUE
 
 ; start_node -> eax = the node you start on in this building
@@ -4367,6 +4612,7 @@ selftest:
     call hook_tests
     call oob_tests
     call dew_tests
+    call feeder_tests
     mov dword [cfg_building], BLD_ORIGINAL
     call prepare_world                  ; ...then the original map's tests
     call new_game

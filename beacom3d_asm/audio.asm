@@ -22,6 +22,7 @@ global snd_noise_alert, snd_spotted, snd_thunder, snd_jumpscare, snd_win, snd_se
 global snd_set_floor, snd_mute, audio_cb, snd_fanfare, snd_clatter, snd_clank, snd_zip
 global snd_portal_open, snd_portal_fizzle, snd_portal_enter, snd_slide
 global snd_hook_fire, snd_hook_hit, snd_hook_miss, snd_can, snd_can_t
+global snd_feeder_spot, snd_feeder_steal, snd_feeder_click
 %ifdef WIN64
 extern audio_cb_win64
 %endif
@@ -830,6 +831,25 @@ snd_can_t:
     PROLOGUE 16
     BURST 3200.0, 0.3, 0.05, 0.7, FT_BP, 1, 0.0, 0.0
     BURST 7000.0, 0.8, 0.7, 0.2, FT_HP, 1, 0.04, 0.08
+    EPILOGUE
+
+; bottom feeders: a chitter when one spots you, a screech + scuffle when it
+; robs you, and the tick-tick of little legs on the tiles
+snd_feeder_spot:
+    PROLOGUE 16
+    TONE 1900.0, 2400.0, 0.05, 0.06, W_SQR, 0.0
+    TONE 1700.0, 2300.0, 0.05, 0.06, W_SQR, 0.07
+    TONE 2100.0, 2600.0, 0.06, 0.06, W_SQR, 0.14
+    EPILOGUE
+snd_feeder_steal:
+    PROLOGUE 16
+    TONE 2600.0, 900.0, 0.35, 0.09, W_SAW, 0.0
+    BURST 1500.0, 0.6, 0.3, 0.35, FT_BP, 0, 0.0, 0.01
+    BURST 4000.0, 0.8, 0.2, 0.15, FT_HP, 0, 0.12, 0.0
+    EPILOGUE
+snd_feeder_click:
+    PROLOGUE 16
+    BURST 5200.0, 0.4, 0.015, 0.07, FT_HP, 0, 0.0, 0.0
     EPILOGUE
 
 ; a slide: shoes and jeans scraping along the floor

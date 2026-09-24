@@ -1341,6 +1341,7 @@ shadow_pass:
 .world_done:
     ; ...and T, whose silhouette is the whole point (and anything physical)
     call draw_t
+    call draw_feeders
     call draw_physics
     mov edi, GL_POLYGON_OFFSET_FILL
     call glDisable
@@ -3598,6 +3599,195 @@ draw_signs:
 .done:
     EPILOGUE
 
+; draw_feeders -- the bottom feeders: low, flat, six scuttling legs, two
+; glowing eyes, and the stolen capture glowing on the back of a thief
+draw_feeders:
+    PROLOGUE 48
+    xor ebx, ebx
+.f:
+    cmp ebx, [fd_count]
+    jge .done
+    movss xmm0, [fd_y+rbx*4]
+    call floor_of_height
+    sub eax, [cur_floor]
+    cmp eax, VIS_FLOORS
+    jg .n
+    cmp eax, -VIS_FLOORS
+    jl .n
+    movss xmm0, [fd_x+rbx*4]
+    movss xmm1, [fd_y+rbx*4]
+    movss xmm2, [fd_z+rbx*4]
+    movss xmm3, [fd_yaw+rbx*4]
+    cmp dword [fd_state+rbx*4], 3       ; stunned: twitching on its back
+    jne .upright
+    FLD xmm4, 0.45
+    addss xmm1, xmm4
+.upright:
+    call model_begin
+    cmp dword [fd_state+rbx*4], 3
+    jne .no_flip
+    FLD xmm0, 180.0
+    FLD xmm1, 0.0
+    FLD xmm2, 0.0
+    FLD xmm3, 1.0
+    call glRotatef
+.no_flip:
+    mov edi, [white_tex]
+    call bind
+    mov edi, GL_QUADS
+    call glBegin
+    ; body, shell, head, mandibles
+    xorps xmm0, xmm0
+    FLD xmm1, 0.1
+    xorps xmm2, xmm2
+    FLD xmm3, 0.26
+    FLD xmm4, 0.17
+    FLD xmm5, 0.38
+    mov edi, 0x2b3326
+    call cbox
+    xorps xmm0, xmm0
+    FLD xmm1, 0.27
+    FLD xmm2, -0.05
+    FLD xmm3, 0.2
+    FLD xmm4, 0.08
+    FLD xmm5, 0.29
+    mov edi, 0x3d4a33
+    call cbox
+    xorps xmm0, xmm0
+    FLD xmm1, 0.08
+    FLD xmm2, 0.42
+    FLD xmm3, 0.16
+    FLD xmm4, 0.14
+    FLD xmm5, 0.08
+    mov edi, 0x222820
+    call cbox
+    FLD xmm0, -0.08
+    FLD xmm1, 0.07
+    FLD xmm2, 0.54
+    FLD xmm3, 0.025
+    FLD xmm4, 0.05
+    FLD xmm5, 0.06
+    mov edi, 0x6b5a3a
+    call cbox
+    FLD xmm0, 0.08
+    FLD xmm1, 0.07
+    FLD xmm2, 0.54
+    FLD xmm3, 0.025
+    FLD xmm4, 0.05
+    FLD xmm5, 0.06
+    mov edi, 0x6b5a3a
+    call cbox
+    ; six legs, alternating (a tripod gait)
+    xor r12d, r12d
+.leg:
+    cmp r12d, 6
+    jge .legs_done
+    ; phase = anim + (leg % 3) * 2.1 + (side ? pi : 0)
+    mov eax, r12d
+    xor edx, edx
+    mov ecx, 3
+    div ecx                             ; eax = side, edx = which
+    mov r13d, eax
+    mov r14d, edx
+    cvtsi2ss xmm0, r14d
+    FLD xmm1, 2.1
+    mulss xmm0, xmm1
+    addss xmm0, [fd_anim+rbx*4]
+    test r13d, r13d
+    jz .ph
+    FLD xmm1, 3.14159
+    addss xmm0, xmm1
+.ph:
+    movss [rsp+0], xmm0
+    call sinf
+    maxss xmm0, [c_zero]
+    FLD xmm1, 0.07
+    mulss xmm0, xmm1
+    movss [rsp+4], xmm0                 ; lift
+    movss xmm0, [rsp+0]
+    call cosf
+    FLD xmm1, 0.08
+    mulss xmm0, xmm1
+    cvtsi2ss xmm1, r14d
+    FLD xmm2, 0.24
+    mulss xmm1, xmm2
+    addss xmm0, xmm1
+    FLD xmm1, -0.24
+    addss xmm0, xmm1
+    movss [rsp+8], xmm0                 ; z
+    FLD xmm0, -0.36
+    test r13d, r13d
+    jz .sx
+    FLD xmm0, 0.36
+.sx:
+    movss [rsp+12], xmm0                ; x
+    ; the foot, down on the tiles (or lifted)
+    movss xmm0, [rsp+12]
+    movss xmm1, [rsp+4]
+    movss xmm2, [rsp+8]
+    FLD xmm3, 0.035
+    FLD xmm4, 0.2
+    FLD xmm5, 0.03
+    mov edi, 0x1a1f18
+    call cbox
+    ; the upper leg, out from the body
+    movss xmm0, [rsp+12]
+    FLD xmm1, 0.6
+    mulss xmm0, xmm1
+    FLD xmm1, 0.18
+    addss xmm1, [rsp+4]
+    movss xmm2, [rsp+8]
+    FLD xmm3, 0.12
+    FLD xmm4, 0.04
+    FLD xmm5, 0.03
+    mov edi, 0x232a20
+    call cbox
+    inc r12d
+    jmp .leg
+.legs_done:
+    call glEnd
+    ; the glowing bits
+    FLD xmm0, 1.0
+    call set_emit
+    mov edi, GL_QUADS
+    call glBegin
+    FLD xmm0, -0.075
+    FLD xmm1, 0.17
+    FLD xmm2, 0.5
+    FLD xmm3, 0.03
+    FLD xmm4, 0.035
+    FLD xmm5, 0.012
+    mov edi, 0xffd23a
+    call cbox
+    FLD xmm0, 0.075
+    FLD xmm1, 0.17
+    FLD xmm2, 0.5
+    FLD xmm3, 0.03
+    FLD xmm4, 0.035
+    FLD xmm5, 0.012
+    mov edi, 0xffd23a
+    call cbox
+    cmp dword [fd_carry+rbx*4], 0
+    je .no_carry
+    xorps xmm0, xmm0
+    FLD xmm1, 0.36
+    FLD xmm2, -0.05
+    FLD xmm3, 0.12
+    FLD xmm4, 0.24
+    FLD xmm5, 0.12
+    mov edi, 0x4fd0ff
+    call cbox
+.no_carry:
+    call glEnd
+    xorps xmm0, xmm0
+    call set_emit
+    call model_end
+.n:
+    inc ebx
+    jmp .f
+.done:
+    EPILOGUE
+
 ; draw_items -- spinning .pcap cubes, deauth packets, Tyler, the chicken jockey
 draw_items:
     PROLOGUE 48
@@ -4183,6 +4373,7 @@ draw_scene:
     call set_emit
     call draw_items
     call draw_t
+    call draw_feeders
     call draw_physics
     call draw_ziplines
     call draw_hook

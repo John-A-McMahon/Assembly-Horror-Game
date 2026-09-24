@@ -702,6 +702,26 @@ draw_compass_marks:
     FLD xmm4, 0.1
     call map_mark
 .done:
+    ; the bottom feeders: little purple dots
+    xor ebx, ebx
+.fd:
+    cmp ebx, [fd_count]
+    jge .fd_done
+    movss xmm0, [fd_y+rbx*4]
+    call floor_of_height
+    cmp eax, [map_floor]
+    jne .fd_n
+    movss xmm0, [fd_x+rbx*4]
+    movss xmm1, [fd_z+rbx*4]
+    FLD xmm2, 0.75
+    FLD xmm3, 0.35
+    FLD xmm4, 1.0
+    FLD xmm5, 6.0
+    call map_mark
+.fd_n:
+    inc ebx
+    jmp .fd
+.fd_done:
     EPILOGUE
 
 ; draw_heading_strip -- a Skyrim-style compass bar at the top of the screen:

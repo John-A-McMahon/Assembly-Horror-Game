@@ -44,10 +44,11 @@ an17 db "NETWORKING",0
 an18 db "GET OVER HERE",0
 an19 db "SPIDER-BEACOM",0
 an20 db "DO THE DEW",0
+an21 db "OUT-FED",0
 align 8
 ach_names   dq an0, an1, an2, an3, an4, an5, an6, an7, an8, an9
             dq an10, an11, an12, an13, an14, an15, an16, an17, an18, an19
-            dq an20
+            dq an20, an21
 
 m_unlocked  db "ACHIEVEMENT UNLOCKED: %s",0
 m_run_head  db 10,"Achievements unlocked this run:",10,0

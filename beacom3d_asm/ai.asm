@@ -26,7 +26,7 @@
 %include "common.inc"
 
 global find_path, enemy_reset, enemy_update, enemy_hear, enemy_deauth, random_node
-global t_dew, enemy_lure
+global t_dew, enemy_lure, find_next
 global t_x, t_y, t_z, t_state, t_stun, t_sees, t_speed_bonus, t_caught, t_dist, t_same_storey
 global t_anim_phase, t_moving, path_len, t_hear_d, seen, stamp
 global far_spawn_node, spawn_dist, spawn_maxd
@@ -250,6 +250,47 @@ find_path:
     mov eax, 1
     EPILOGUE
 .search:
+    mov edi, r12d
+    mov esi, r13d
+    call bfs_search
+    test eax, eax
+    jz .not_found
+.found:
+    ; walk the back-pointers from `to` to `from` into tmp_path, then reverse
+    xor ecx, ecx
+    mov eax, r13d
+.back:
+    mov [tmp_path+rcx*4], eax
+    inc ecx
+    cmp eax, r12d
+    je .reverse
+    mov eax, [prev+rax*4]
+    jmp .back
+.reverse:
+    mov [path_len], ecx
+    xor edx, edx                        ; out index
+.rev_loop:
+    dec ecx
+    js .rev_done
+    mov eax, [tmp_path+rcx*4]
+    mov [path+rdx*4], eax
+    inc edx
+    jmp .rev_loop
+.rev_done:
+    mov eax, 1
+    EPILOGUE
+.not_found:
+    xor eax, eax
+    EPILOGUE
+
+; -----------------------------------------------------------------------------
+; bfs_search(edi=from, esi=to) -> eax 1 if found; prev[] then leads from `to`
+; back to `from`
+; -----------------------------------------------------------------------------
+bfs_search:
+    PROLOGUE 16
+    mov r12d, edi
+    mov r13d, esi
     inc dword [stamp]
     mov r15d, [stamp]
     xor r14d, r14d                      ; queue head
@@ -284,31 +325,36 @@ find_path:
     inc ebx
     jmp .nb_loop
 .found:
-    ; walk the back-pointers from `to` to `from` into tmp_path, then reverse
-    xor ecx, ecx
-    mov eax, r13d
-.back:
-    mov [tmp_path+rcx*4], eax
-    inc ecx
-    cmp eax, r12d
-    je .reverse
-    mov eax, [prev+rax*4]
-    jmp .back
-.reverse:
-    mov [path_len], ecx
-    xor edx, edx                        ; out index
-.rev_loop:
-    dec ecx
-    js .rev_done
-    mov eax, [tmp_path+rcx*4]
-    mov [path+rdx*4], eax
-    inc edx
-    jmp .rev_loop
-.rev_done:
     mov eax, 1
     EPILOGUE
 .not_found:
     xor eax, eax
+    EPILOGUE
+
+; -----------------------------------------------------------------------------
+; find_next(edi=from, esi=to) -> eax = the next node on the way (to itself if
+; already there), -1 if there's no way. Leaves T's path alone (bottom feeders).
+; -----------------------------------------------------------------------------
+find_next:
+    PROLOGUE 16
+    mov r12d, edi
+    mov r13d, esi
+    mov eax, r13d
+    cmp r12d, r13d
+    je .done
+    call bfs_search
+    test eax, eax
+    jz .none
+    mov eax, r13d
+.back:
+    mov ecx, [prev+rax*4]
+    cmp ecx, r12d
+    je .done
+    mov eax, ecx
+    jmp .back
+.none:
+    mov eax, -1
+.done:
     EPILOGUE
 
 ; -----------------------------------------------------------------------------
