@@ -143,8 +143,9 @@ tools/dbuild.sh win      # Windows beacom3d.exe
 | Space | jump -- or, facing a ledge, **mantle** up (desks, crates, boxes, ledges up to ~2 m); sprinting at something waist-high, **vault** it |
 | F | flashlight (battery drains; T sees it from far away) |
 | E | pick up / talk to B / grab a zipline |
-| Q / right mouse | fire a deauth packet (stuns T and teleports him away) |
-| Left / right mouse (with the portal gun) | blue / orange portal (Q still fires deauths) |
+| Left mouse / Q | use your special item: fire a deauth packet (stuns T and teleports him away), a blue portal, or the hookshot |
+| Right mouse | the item's second use: an orange portal (deauths and the hookshot fire as with the left button) |
+| Space (while the hookshot pulls you) | let go and fling yourself onwards with the momentum |
 | M / Tab | explored map of the current floor |
 | Esc | pause menu: settings, custom run, restart (arrows/WASD + Enter, or the mouse) |
 | F3 / F4 / F5 | FPS counter / render resolution (1/1, 1/2, 1/3) / flashlight shadows |
@@ -170,7 +171,8 @@ Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
   generated layout (**maze / classic / open**),
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
-  deauth packets, start with the map + compass, portal gun hidden / in hand / off
+  deauth packets, start with the map + compass, portal gun hidden / in hand / off,
+  hookshot hidden / in hand / off
 * **You** — sprint stamina drain, flashlight battery drain, walk speed, jump
   height, zipline speed
 * **Controls** — mouse sensitivity, invert Y, crouch hold/toggle
@@ -183,10 +185,12 @@ Rows marked * apply when you restart.
 
 ### Achievements
 
-18 of them, from **PACIFIST** (win without firing a single deauth packet) and
+20 of them, from **PACIFIST** (win without firing a single deauth packet) and
 **GHOST PROTOCOL** (win without T ever seeing you) to **STAGE FRIGHT** (stand
 on the grand staircase stage while T chases you), **KING OF THE CRATES**,
-**THINKING WITH PORTALS**, **LOST IN THE MAZE** and a couple of secrets.
+**THINKING WITH PORTALS**, **GET OVER HERE** (hit T with the hookshot),
+**SPIDER-BEACOM** (hookshot yourself 2.5 m up), **LOST IN THE MAZE** and a
+couple of secrets.
 Unlocking one pops a gold banner with a fanfare. They're saved to
 `beacom_achievements.cfg` (delete it to start over), listed at the bottom of
 the Esc menu, and the end screen in the terminal shows what that run earned.
@@ -249,6 +253,27 @@ slide. T can't mantle, vault or climb -- a desk between you is a real
 obstacle for him, and in the pit under the atrium a crate and a tall crate
 stack let you climb up onto the ground-floor balcony where he can't follow.
 
+### The hookshot, and one special item at a time
+
+Somewhere in every building a **hookshot** is hidden (look for the green
+launcher with the brass hook and the HOOK plaque). Click (or press Q) and the
+hook flies out along your view, up to 20 m, and bites into the first solid
+thing: a wall, a pillar, a desk, a crate, a ceiling, the underside of a
+balcony. Then it hauls you there at 15 m/s. Hook the edge of the floor above
+and you're pulled up and mantle straight onto it: in the real Beacom you
+can grapple from the collaboration space straight up to
+the second floor. Press **Space** mid-pull to let go and keep flying (jump
+gaps, launch yourself across the atrium). Hook T and he staggers for a
+moment, but the clank is loud. Miss and the hook reels back in. T can't
+follow you anywhere the hookshot takes you.
+
+You can only hold **one special item**: the deauth stack (up to 3 packets),
+the portal gun, or the hookshot. Pick up a different one and what you were
+holding drops at your feet (a deauth stack drops as one item with all its
+packets), so you can go back and swap. The HUD shows what you're holding in
+the bottom-left. The pause menu's **Hookshot** row makes it hidden (default),
+in your hand from the start, or off.
+
 ### Generated layouts
 
 With *Building* set to generated, *Generated layout* picks the building's
@@ -294,10 +319,11 @@ follow you down into the atrium. He still can't climb ladders.
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
-| `achievements.asm` | the 18 achievements: rules, unlock banner, `beacom_achievements.cfg` |
+| `achievements.asm` | the 20 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
-| `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, sleeve |
+| `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, hookshot, sleeve |
 | `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |
+| `hookshot.asm` | the hookshot: traces the throw, latches on, pulls you in, fling, auto-mantle, stuns T |
 | `player.asm` | first-person controller: mouselook, movement, gravity, stairs, stamina, flashlight battery |
 | `ai.asm` | T: BFS over the 3D nav graph, 3D sight, occluded hearing, wander / investigate / chase |
 | `render.asm` | GLSL lighting shader, display lists built from the maps, fixtures and light pool, T, items, signs, jumpscare |

@@ -308,10 +308,10 @@ rag_width   dd 0.2, 0.05, 0.06, 0.06, 0.08, 0.08
 %define RAG_DRAW_BONES 6
 ; pickups: half-size of the spinning box, and the colour of the glow under it
 ;              capture deauth map   compass portal
-item_half_x dd 0.21,   0.25,  0.26,  0.17,   0.28
-item_half_y dd 0.21,   0.15,  0.04,  0.06,   0.12
-item_half_z dd 0.21,   0.15,  0.19,  0.17,   0.12
-item_glow   dd 0.16,0.66,1.0,  1.0,0.12,0.12,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15
+item_half_x dd 0.21,   0.25,  0.26,  0.17,   0.28,   0.30
+item_half_y dd 0.21,   0.15,  0.04,  0.06,   0.12,   0.08
+item_half_z dd 0.21,   0.15,  0.19,  0.17,   0.12,   0.10
+item_glow   dd 0.16,0.66,1.0,  1.0,0.12,0.12,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35
 ; per material: bump strength (texture brightness read as height) and shine
 ;              H    C    G    L    N    #    floor flrB flrS ceil ceilB rack white
 mat_bump    dd 0.55,0.25,0.2, 0.5, 0.4, 0.5, 0.35,0.5, 0.35,0.3, 0.5, 0.4, 0.0
@@ -2887,6 +2887,70 @@ draw_ziplines:
     GLF3 glColor3f, 1.0, 1.0, 1.0
     EPILOGUE
 
+; draw_hook -- the hookshot's chain, from your left hand to the hook head
+draw_hook:
+    PROLOGUE 64
+    cmp dword [hk_state], 0
+    je .done
+    ; your left hand: eye + forward*0.45 - right*0.2 - 0.2 down
+    movss xmm0, [p_yaw]
+    call sinf
+    movss [rsp+48], xmm0                ; s
+    movss xmm0, [p_yaw]
+    call cosf
+    movss [rsp+52], xmm0                ; c
+    movss xmm0, [rsp+48]                ; x = px - 0.45 s - 0.2 c
+    FLD xmm1, -0.45
+    mulss xmm0, xmm1
+    movss xmm1, [rsp+52]
+    FLD xmm2, -0.2
+    mulss xmm1, xmm2
+    addss xmm0, xmm1
+    addss xmm0, [p_x]
+    movss [rsp+0], xmm0
+    movss xmm0, [p_eye_y]
+    FLD xmm1, -0.2
+    addss xmm0, xmm1
+    movss [rsp+4], xmm0
+    movss xmm0, [rsp+52]                ; z = pz - 0.45 c + 0.2 s
+    FLD xmm1, -0.45
+    mulss xmm0, xmm1
+    movss xmm1, [rsp+48]
+    FLD xmm2, 0.2
+    mulss xmm1, xmm2
+    addss xmm0, xmm1
+    addss xmm0, [p_z]
+    movss [rsp+8], xmm0
+    mov eax, [hk_hx]
+    mov [rsp+16], eax
+    mov eax, [hk_hy]
+    mov [rsp+20], eax
+    mov eax, [hk_hz]
+    mov [rsp+24], eax
+    mov edi, [white_tex]
+    call bind
+    mov edi, GL_QUADS
+    call glBegin
+    GLF3 glColor3f, 0.42, 0.43, 0.46    ; the chain
+    lea rdi, [rsp+0]
+    lea rsi, [rsp+16]
+    FLD xmm0, 0.014
+    call emit_tube
+    movss xmm0, [rsp+16]                ; the hook head, brass
+    movss xmm1, [rsp+20]
+    FLD xmm6, -0.06
+    addss xmm1, xmm6
+    movss xmm2, [rsp+24]
+    FLD xmm3, 0.06
+    FLD xmm4, 0.12
+    FLD xmm5, 0.06
+    mov edi, 0xC9A94A
+    call cbox
+    call glEnd
+    GLF3 glColor3f, 1.0, 1.0, 1.0
+.done:
+    EPILOGUE
+
 ; emit_b -- B, the lord of networking: a tall robed figure
 emit_b:
     PROLOGUE 32
@@ -4054,6 +4118,7 @@ draw_scene:
     call draw_t
     call draw_physics
     call draw_ziplines
+    call draw_hook
     ; Y's plaque on the cage
     cmp dword [cur_floor], 1
     jg .no_y

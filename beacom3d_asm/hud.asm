@@ -37,22 +37,28 @@ s_pr1       db "[E] take the deauth packet",0
 s_pr2       db "[E] take the MAP",0
 s_pr3       db "[E] take the COMPASS",0
 s_pr4       db "[E] take the PORTAL GUN",0
-s_pr5       db "[E] talk to B",0
-s_pr6       db "[E] give B the captures",0
-s_pr7       db "[E] grab the zipline",0
-s_pr8       db "[W] climb the ladder",0
+s_pr5       db "[E] take the HOOKSHOT",0
+s_pr6       db "[E] talk to B",0
+s_pr7       db "[E] give B the captures",0
+s_pr8       db "[E] grab the zipline",0
+s_pr9       db "[W] climb the ladder",0
 s_mapfull   db "MAP  --  [ ] change floor",0
 s_dirs      db "N",0,"E",0,"S",0,"W",0
 s_paused    db "PAUSED",0
 s_paused2   db "T is waiting.   ESC or click to resume   (Q in the terminal quits)",0
 s_map       db "explored map",0
 s_noise     db "NOISE  (| = T hears)",0
-s_deauth_fmt db "DEAUTH x%d",0
+s_deauth_fmt db "ITEM: DEAUTH x%d",0
+s_item_portal db "ITEM: PORTAL GUN",0
+s_item_hook db "ITEM: HOOKSHOT",0
+s_item_none db "ITEM: -",0
+align 8
+item_strs   dq s_item_none, 0, s_item_portal, s_item_hook
 s_fps_fmt   db "FPS %d",0
 align 8
 floor_names dq s_floor0, s_floor1, s_floor2
-prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8
-%define NPROMPTS 9
+prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8, s_pr9
+%define NPROMPTS 10
 
 c_msg_life   dd 7.5
 c_lore_life  dd 15.5
@@ -61,20 +67,23 @@ c_grain_a    dd 0.07
 c_pulse      dd 9.0
 c_neg_pi     dd -3.14159265
 ; compass marker colours by pickup kind: capture deauth map compass portal
-mark_col     dd 0.3,0.85,1.0,  1.0,0.3,0.3,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15
+mark_col     dd 0.3,0.85,1.0,  1.0,0.3,0.3,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35
 
 section .bss
 floor_tex   resd NF
 floor_w     resd NF
 floor_h     resd NF
-prompt_tex  resd 9
-prompt_w    resd 9
-prompt_h    resd 9
+prompt_tex  resd 10
+prompt_w    resd 10
+prompt_h    resd 10
 map_floor   resd 1                  ; which storey the map is showing
 dir_tex     resd 4                  ; N E S W for the compass strip
 dir_w       resd 4
 dir_h       resd 4
 deauth_tex  resd 10
+item_tex    resd 4                  ; what you're holding (SP_)
+item_w      resd 4
+item_h      resd 4
 deauth_w    resd 10
 deauth_h    resd 10
 misc_tex    resd 8                  ; stamina, flashlight, sees, paused, paused2, map, noise, full map
@@ -147,6 +156,23 @@ hud_init:
     inc ebx
     jmp .pr
 .pr_done:
+    xor ebx, ebx
+.it:
+    cmp ebx, 4
+    jge .it_done
+    mov rsi, [item_strs+rbx*8]
+    test rsi, rsi
+    jz .it_next
+    mov rdi, [font_hud]
+    mov edx, RGBC(255,110,110)
+    call mk
+    mov [item_tex+rbx*4], eax
+    mov [item_w+rbx*4], ecx
+    mov [item_h+rbx*4], r8d
+.it_next:
+    inc ebx
+    jmp .it
+.it_done:
     xor ebx, ebx
 .da:
     cmp ebx, 10
@@ -1441,6 +1467,13 @@ hud_draw:
     FLD xmm1, 96.0
     subss xmm0, xmm1
     movss [rsp+8], xmm0                 ; y of the block
+    ; what you're holding (deauths show how many)
+    mov eax, [special]
+    mov edi, [item_tex+rax*4]
+    mov esi, [item_w+rax*4]
+    mov edx, [item_h+rax*4]
+    cmp eax, SP_DEAUTH
+    jne .item_ok
     mov ebx, [deauths]
     cmp ebx, 9
     jle .dok
@@ -1449,6 +1482,7 @@ hud_draw:
     mov edi, [deauth_tex+rbx*4]
     mov esi, [deauth_w+rbx*4]
     mov edx, [deauth_h+rbx*4]
+.item_ok:
     FLD xmm0, 18.0
     movss xmm1, [rsp+8]
     movss xmm2, [c_one]

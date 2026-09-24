@@ -25,6 +25,7 @@ global cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_l
 global cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
 global cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 global cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
+global cfg_hookshot
 
 extern invert_y, show_fps, shadows_on, shadows_ok, render_scale
 extern draw_text, draw_rect, font_hud, font_small, font_big, tt_w, tt_h, glDeleteTextures
@@ -70,6 +71,7 @@ cfg_safe        dd 1            ; safe rooms work
 cfg_deauths     dd 3
 cfg_start_map   dd 0
 cfg_portal      dd 0            ; 0 somewhere in the building, 1 start with it, 2 none
+cfg_hookshot    dd 0            ; (same)
 cfg_stamina     dd 100
 cfg_battery     dd 100
 cfg_walk        dd 100
@@ -100,6 +102,7 @@ l_safe      db "Safe rooms",0
 l_deauths   db "Deauth packets in the building *",0
 l_start_map db "Map + compass *",0
 l_portal    db "Portal gun *",0
+l_hookshot  db "Hookshot *",0
 h_you       db "YOU",0
 l_stamina   db "Sprint stamina drain",0
 l_battery   db "Flashlight battery drain",0
@@ -143,6 +146,8 @@ l_ach14     db "KING OF THE CRATES - stand on a tall crate stack",0
 l_ach15     db "HI I AM TYLER - meet Tyler",0
 l_ach16     db "CHICKEN JOCKEY - find the chicken jockey",0
 l_ach17     db "NETWORKING - talk to B",0
+l_ach18     db "GET OVER HERE - hit T with the hookshot",0
+l_ach19     db "SPIDER-BEACOM - hookshot yourself 2.5 m up",0
 s_locked    db "locked",0
 s_unlocked  db "UNLOCKED",0
 fmt_info    db "%s",0
@@ -163,6 +168,7 @@ k_safe      db "safe_rooms",0
 k_deauths   db "deauths",0
 k_start_map db "start_with_map",0
 k_portal    db "portal_gun",0
+k_hookshot  db "hookshot",0
 k_stamina   db "stamina_drain",0
 k_battery   db "battery_drain",0
 k_walk      db "walk_speed",0
@@ -229,6 +235,7 @@ rows:
     ROW l_deauths,   k_deauths,   cfg_deauths,    T_INT,    0, 9, 1, 0
     ROW l_start_map, k_start_map, cfg_start_map,  T_CHOICE, 0, 1, 1, n_map
     ROW l_portal,    k_portal,    cfg_portal,     T_CHOICE, 0, 2, 1, n_portal
+    ROW l_hookshot,  k_hookshot,  cfg_hookshot,   T_CHOICE, 0, 2, 1, n_portal
     ROW h_you,       0,           0,              T_HEADER, 0, 0, 0, 0
     ROW l_stamina,   k_stamina,   cfg_stamina,    T_PCT,    0, 300, 25, 0
     ROW l_battery,   k_battery,   cfg_battery,    T_PCT,    0, 300, 25, 0
@@ -271,6 +278,8 @@ rows:
     ROW l_ach15,     0,           ach_flag+60,     T_INFO,   0, 1, 1, n_ach
     ROW l_ach16,     0,           ach_flag+64,     T_INFO,   0, 1, 1, n_ach
     ROW l_ach17,     0,           ach_flag+68,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach18,     0,           ach_flag+72,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach19,     0,           ach_flag+76,     T_INFO,   0, 1, 1, n_ach
 rows_end:
 %define NROWS ((rows_end - rows) / ROW_SIZE)
 

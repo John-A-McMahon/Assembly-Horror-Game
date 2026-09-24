@@ -21,6 +21,7 @@ global audio_init, snd_footstep, snd_tstep, snd_heartbeat, snd_pickup, snd_deaut
 global snd_noise_alert, snd_spotted, snd_thunder, snd_jumpscare, snd_win, snd_set_t
 global snd_set_floor, snd_mute, audio_cb, snd_fanfare, snd_clatter, snd_clank, snd_zip
 global snd_portal_open, snd_portal_fizzle, snd_portal_enter, snd_slide
+global snd_hook_fire, snd_hook_hit, snd_hook_miss
 %ifdef WIN64
 extern audio_cb_win64
 %endif
@@ -791,6 +792,31 @@ snd_portal_enter:
     PROLOGUE 16
     BURST 350.0, 0.7, 0.45, 0.45, FT_BP, 0, 0.0, 0.05
     TONE 900.0, 300.0, 0.4, 0.07, W_SINE, 0.0
+    EPILOGUE
+
+; the hookshot: a spring-loaded thunk and the chain rattling out
+snd_hook_fire:
+    PROLOGUE 16
+    BURST 180.0, 0.7, 0.12, 0.5, FT_BP, 0, 0.0, 0.0
+    BURST 3200.0, 0.4, 0.05, 0.12, FT_BP, 0, 0.03, 0.0
+    BURST 3600.0, 0.4, 0.05, 0.10, FT_BP, 0, 0.07, 0.0
+    BURST 3000.0, 0.4, 0.05, 0.09, FT_BP, 0, 0.11, 0.0
+    BURST 3400.0, 0.4, 0.05, 0.07, FT_BP, 0, 0.15, 0.0
+    EPILOGUE
+
+; ...biting into something: a bright clank
+snd_hook_hit:
+    PROLOGUE 16
+    TONE 2400.0, 2300.0, 0.25, 0.09, W_TRI, 0.0
+    TONE 3550.0, 3500.0, 0.18, 0.05, W_TRI, 0.0
+    BURST 900.0, 0.6, 0.12, 0.4, FT_BP, 0, 0.0, 0.0
+    EPILOGUE
+
+; ...nothing to bite: the chain reels back in
+snd_hook_miss:
+    PROLOGUE 16
+    BURST 2800.0, 0.5, 0.3, 0.12, FT_BP, 0, 0.0, 0.05
+    TONE 500.0, 250.0, 0.2, 0.05, W_SQR, 0.05
     EPILOGUE
 
 ; a slide: shoes and jeans scraping along the floor

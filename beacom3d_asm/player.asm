@@ -18,7 +18,7 @@
 global player_spawn, player_update, player_look, player_floor, player_in_safe
 global p_x, p_y, p_z, p_yaw, p_pitch, p_stamina, p_battery, p_flash_on, p_crouch
 global p_exhausted, p_eye_y, p_step_event, p_flash_level, keys_down, p_roll, p_sprint
-global p_vy, p_on_ground, p_bob
+global p_vy, p_on_ground, p_bob, p_mom_x, p_mom_z
 extern p_mode, trav_roll, trav_shake, player_ground, footprint_ground, parkour_try, snd_slide
 
 ; keys_down[] slots, filled by main.asm from SDL_GetKeyboardState
@@ -78,6 +78,7 @@ c_pitch_min  dd -1.5
 c_head_r     dd 0.16
 c_head_extra dd 0.1
 c_slide_time dd 0.85          ; seconds
+c_mom_drag   dd 0.35          ; hookshot fling: momentum lost per second in the air
 c_slide_v0   dd 8.2           ; speed at the start of a slide...
 c_slide_v1   dd 2.6           ; ...and at the end
 c_slide_roll dd 0.05
@@ -106,6 +107,8 @@ p_roll       resd 1           ; out: camera roll from bob
 p_step_event resd 1           ; out: 0 none, 1 quiet step, 2 step, 3 loud step, 4 jump
 p_flash_level resd 1          ; out: 0..1 flashlight brightness
 keys_down    resb 16
+p_mom_x      resd 1           ; momentum from a hookshot fling (while airborne)
+p_mom_z      resd 1
 slide_t      resd 1           ; seconds of slide left
 slide_dx     resd 1           ; its direction
 slide_dz     resd 1
@@ -523,6 +526,30 @@ player_update:
     mov edi, [p_sprint]
     call snd_footstep
 .no_move:
+
+    ; ---- momentum from a hookshot fling: carries you until you land
+    cmp dword [p_on_ground], 0
+    je .flying
+    mov dword [p_mom_x], 0
+    mov dword [p_mom_z], 0
+    jmp .no_fling
+.flying:
+    movss xmm0, [p_mom_x]
+    mulss xmm0, [rsp+0]
+    movss xmm1, [p_mom_z]
+    mulss xmm1, [rsp+0]
+    call slide
+    movss xmm0, [rsp+0]                 ; air drag
+    mulss xmm0, [c_mom_drag]
+    movss xmm1, [c_one]
+    subss xmm1, xmm0
+    movss xmm0, [p_mom_x]
+    mulss xmm0, xmm1
+    movss [p_mom_x], xmm0
+    movss xmm0, [p_mom_z]
+    mulss xmm0, xmm1
+    movss [p_mom_z], xmm0
+.no_fling:
 
     ; ---- jump -- or, at a ledge, mantle / vault (parkour.asm)
     cmp byte [keys_down+K_JUMP], 0

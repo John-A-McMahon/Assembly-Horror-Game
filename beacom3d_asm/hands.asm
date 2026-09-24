@@ -60,7 +60,9 @@ extern p_glUseProgram, p_glUniform1f, p_glUniform3f, p_glUniformMatrix4fv
 %define L_TORCH 2
 %define L_BAR   3
 %define L_GUN   4
-%define NLISTS  5
+%define L_HOOK  5
+%define L_HOOKTIP 6
+%define NLISTS  7
 
 %define ELL_LAT 10                  ; (also written as 10.0 in ell_v)
 %define ELL_LON 16                  ; (also written as 16.0 in ell_v)
@@ -147,6 +149,22 @@ gun_parts:
     TUBE 0x2E3036,  0.026, 0.017, -0.20,   0.021, 0.020, -0.265,   0.0048, 0.0040,  0.0, 0.0, 10.0
     TUBE 0x2E3036,  -0.026, 0.017, -0.20,   -0.021, 0.020, -0.265,   0.0048, 0.0040,  0.0, 0.0, 10.0
 gun_parts_end:
+; ---- the hookshot: a dark grip, a green body, a brass chain spool and ring,
+; and the hook itself on the front (gone while it's flying)
+hook_parts:
+    TUBE 0x2E3036,  0.0, 0.0, 0.075,   0.0, 0.0, -0.05,   0.0175, 0.0175,  0.0, 0.0, 24.0
+    TUBE 0x3F7A3A,  0.0, 0.034, 0.03,   0.0, 0.034, -0.20,   0.031, 0.027,  0.0, 0.0, 24.0
+    ELL  0xB89A48,  0.0, 0.034, 0.045,   0.036, 0.0, 0.0,   0.0, 0.036, 0.0,   0.0, 0.0, 0.03
+    TUBE 0xB89A48,  0.0, 0.034, -0.20,   0.0, 0.034, -0.216,   0.037, 0.037,  0.0, 0.0, 24.0
+    TUBE 0x2E3036,  0.0, 0.034, -0.216,   0.0, 0.034, -0.25,   0.013, 0.012,  0.0, 0.0, 14.0
+hook_parts_end:
+hooktip_parts:
+    ELL  0xC9A94A,  0.0, 0.034, -0.262,   0.016, 0.0, 0.0,   0.0, 0.016, 0.0,   0.0, 0.0, 0.022
+    TUBE 0xC9A94A,  0.0, 0.034, -0.27,   0.024, 0.05, -0.29,   0.006, 0.004,  0.0, 0.0, 8.0
+    TUBE 0xC9A94A,  0.0, 0.034, -0.27,   -0.024, 0.05, -0.29,   0.006, 0.004,  0.0, 0.0, 8.0
+    TUBE 0xC9A94A,  0.0, 0.034, -0.27,   0.0, 0.006, -0.292,   0.006, 0.004,  0.0, 0.0, 8.0
+hooktip_parts_end:
+
 tip_part:
     ELL 0xFFFFFF,   0.0, 0.032, -0.252,   0.0135, 0.0, 0.0,   0.0, 0.0135, 0.0,   0.0, 0.0, 0.0135
 
@@ -831,6 +849,18 @@ build_lists:
     lea rsi, [gun_parts_end]
     call parts
     call end_list
+    mov edi, L_HOOK
+    call begin_list
+    lea rdi, [hook_parts]
+    lea rsi, [hook_parts_end]
+    call parts
+    call end_list
+    mov edi, L_HOOKTIP
+    call begin_list
+    lea rdi, [hooktip_parts]
+    lea rsi, [hooktip_parts_end]
+    call parts
+    call end_list
     EPILOGUE
 
 ; begin_list(edi = which) / end_list
@@ -1155,6 +1185,30 @@ draw_viewmodel:
     je .ladder
     cmp dword [have_portal], 0
     jne .gun
+    cmp dword [have_hookshot], 0
+    jne .hook
+    jmp .done
+.hook:
+    ; the hookshot, held like the portal gun
+    lea rsi, [pos_gun]
+    lea rdi, [rsp+40]
+    xorps xmm0, xmm0
+    call pose_pos
+    lea rdi, [rot_gun]
+    lea rsi, [rsp+40]
+    mov edx, 1
+    call place
+    call hand_lists
+    FLD xmm1, 0.6
+    call mat_hard
+    mov edi, L_HOOK
+    call call_list
+    cmp dword [hk_state], 0             ; the hook's out on its chain
+    jne .hook_out
+    mov edi, L_HOOKTIP
+    call call_list
+.hook_out:
+    call model_end
     jmp .done
 .zip:
     lea rsi, [pos_bar]

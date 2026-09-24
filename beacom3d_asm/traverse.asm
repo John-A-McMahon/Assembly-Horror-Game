@@ -244,7 +244,7 @@ walk_checks:
     cmp eax, 0
     jl .zips
     mov ebx, eax
-    mov dword [trav_prompt], 8
+    mov dword [trav_prompt], 9
     cmp byte [keys_down+0], 0           ; W
     je .zips
     ; facing the wall?
@@ -338,7 +338,7 @@ walk_checks:
     mov [zip_cand_t], eax
     cmp dword [trav_prompt], 0
     jge .nz
-    mov dword [trav_prompt], 7
+    mov dword [trav_prompt], 8
 .nz:
     inc ebx
     jmp .zip
@@ -609,6 +609,8 @@ traverse_update:
     je .zip
     cmp eax, 3                          ; mantling / vaulting (parkour.asm)
     je .parkour
+    cmp eax, 4                          ; hauled by the hookshot (hookshot.asm)
+    je .hooked
     xor eax, eax
     mov [trav_roll], eax
     mov [trav_shake], eax
@@ -624,6 +626,9 @@ traverse_update:
     mov dword [trav_prompt], -1
     movss xmm0, [rsp+0]
     call ride
+    EPILOGUE
+.hooked:
+    mov dword [trav_prompt], -1
     EPILOGUE
 .parkour:
     mov dword [trav_prompt], -1

@@ -96,7 +96,16 @@ section .rodata
 %define ACH_TYLER 15
 %define ACH_JOCKEY 16
 %define ACH_NETWORKING 17
-%define NACH 18
+%define ACH_HOOK_T 18
+%define ACH_SPIDER 19
+%define NACH 20
+
+; ---- the special item you carry (one at a time) ------------------------------
+%define SP_NONE   0
+%define SP_DEAUTH 1
+%define SP_PORTAL 2
+%define SP_HOOK   3
+%define MAX_DEAUTHS 3
 
 ; ---- T's states --------------------------------------------------------------
 %define T_WANDER      0
@@ -120,11 +129,12 @@ section .rodata
 %define IT_MAP     2        ; Zelda-style dungeon map: reveals every floor
 %define IT_COMPASS 3        ; ...and compass: shows captures, B and T on the map
 %define IT_PORTAL  4        ; portal gun
-%define IT_TYLER   5        ; "HI I AM TYLER"
-%define IT_JOCKEY  6        ; chicken jockey easter egg
+%define IT_HOOKSHOT 5       ; the hookshot
+%define IT_TYLER   6        ; "HI I AM TYLER"
+%define IT_JOCKEY  7        ; chicken jockey easter egg
 ; label_tex[] slots (textures.asm): one per pickup kind, then these
-%define LBL_B      5
-%define LBL_Y      6
+%define LBL_B      6
+%define LBL_Y      7
 ; item record layout (32 bytes)
 %define ITEM_KIND   0       ; dword
 %define ITEM_ACTIVE 4       ; dword
@@ -133,6 +143,7 @@ section .rodata
 %define ITEM_Y      16      ; float world Y (base)
 %define ITEM_Z      20      ; float world Z
 %define ITEM_SEEN   24      ; dword
+%define ITEM_CHARGES 28     ; dword: deauth packets in a dropped stack
 %define ITEM_SIZE   32
 
 ; ---- SDL / GL numbers ---------------------------------------------------------
@@ -377,6 +388,7 @@ extern cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_l
 extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
 extern cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
+extern cfg_hookshot
 %endif
 
 ; PCT xmm, cfg_var -- xmm = cfg_var / 100 (clobbers nothing else)
@@ -390,6 +402,12 @@ extern ach_unlock, ach_new_run, ach_won, ach_tick, ach_load, ach_print_run
 extern ach_flag, ach_persist, run_deauths, run_spotted, run_warned, run_moves
 %endif
 
+%ifndef MODULE_HOOK
+extern hookshot_fire, hookshot_update, hookshot_reset
+extern hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz
+%endif
+
 %ifndef MODULE_MAIN
 extern items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h
+extern special, have_hookshot
 %endif

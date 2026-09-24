@@ -18,6 +18,7 @@
 
 global main, items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h
 global on_t_spotted, have_map, have_compass, have_portal, invert_y, show_fps
+global special, have_hookshot
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
@@ -112,6 +113,10 @@ st_real_hunt db "[selftest] real Beacom: T came up from the sub-level and caught
 st_real_lost db "[selftest] real Beacom: T never reached you in room 213 -- FAIL",10,0
 st_ach_fmt  db "[selftest] achievements, clean win: PACIFIST=%d GHOST=%d SPEEDRUN=%d (expect 1 1 0); after a deauth and being seen: PACIFIST=%d FULL CAPTURE=%d (expect 0 1)",10,0
 st_ach_fmt2 db "[selftest] achievements: KING OF THE CRATES on the tall crate stack=%d (expect 1)",10,0
+st_hook_across db "[selftest] hookshot across the collaboration space: pulled to x=%.2f (the media wall is at x=70; expect > 67)",10,0
+st_hook_up db "[selftest] hookshot up to the balcony: ended at y=%.2f on floor %d (expect floor 2), SPIDER-BEACOM=%d (expect 1)",10,0
+st_hook_t db "[selftest] hookshot hits T: stunned for %.2fs (expect > 0), GET OVER HERE=%d (expect 1)",10,0
+st_hook_slot db "[selftest] one special item: portal gun held=%d, hookshot left at your feet=%d (expect 1 1); holding %d (3=hookshot) after dropping a stack of %d deauths (expect 3)",10,0
 st_row_fmt  db "%.59s",10,0
 env_gensweep db "BEACOM_GENSWEEP",0
 st_sweep_fmt db "[selftest] seed sweep 1..%d: seeds missing a stairwell %d, storeys without open floor %d, seeds with unreachable spots %d (%d cells)",10,0
@@ -136,7 +141,7 @@ mkdir_shots db "mkdir -p shots",0
 ; ---- in-game messages (strings carried over from the originals) ----
 m_seed      db "Seed %d. Find 3 wireshark packet captures -- one on every floor -- and bring them to B.",0
 m_generated db "This is not the Beacom you know. Seed %d built it tonight -- the atrium, the server room and B's library are the only places that stayed put. (Esc -> Generated layout: maze / classic / open.)",0
-m_controls  db "ESC: menu + CUSTOM RUN settings - WASD move - mouse or arrow keys look - SHIFT sprint - C crouch (sprint+C slide) - SPACE jump / mantle / vault - F flashlight - E grab - Q deauth - M map - I invert mouse - F3 fps - F4 render scale - F5 shadows",0
+m_controls  db "ESC: menu + CUSTOM RUN settings - WASD move - mouse or arrow keys look - SHIFT sprint - C crouch (sprint+C slide) - SPACE jump / mantle / vault - F flashlight - E grab - LMB/Q use item (deauth, portal, hookshot) - RMB orange portal - M map - I invert mouse - F3 fps - F4 render scale - F5 shadows",0
 m_inv_on    db "Mouse look: vertical inverted.",0
 m_inv_off   db "Mouse look: normal.",0
 env_wsl     db "WSL_DISTRO_NAME",0
@@ -150,7 +155,17 @@ hint_one    db "1",0
 m_see_key   db "You see a wireshark packet capture flicker in the dark...",0
 m_got_map   db "You got the MAP! Press M to see every floor -- [ and ] page through them.",0
 m_got_compass db "You got the COMPASS! The map now shows the captures, B... and where T is.",0
-m_got_portal db "You got the PORTAL GUN! Left click: blue portal, right click: orange portal.",0
+m_got_portal db "You got the PORTAL GUN! Left click (or Q): blue portal, right click: orange portal.",0
+m_got_hook  db "You got the HOOKSHOT! Left click (or Q) at a wall, a ceiling, a ledge: it bites and yanks you there. SPACE mid-pull flings you.",0
+m_dropped   db "You can only carry one special item -- you leave the %s where you stand.",0
+m_full      db "You can't carry more than 3 deauth packets.",0
+m_nothing   db "You're not holding a special item (deauth packet, portal gun or hookshot).",0
+sp_name1    db "deauth packets",0
+sp_name2    db "portal gun",0
+sp_name3    db "hookshot",0
+align 8
+sp_names    dq 0, sp_name1, sp_name2, sp_name3
+sp_items    dd -1, IT_WEAPON, IT_PORTAL, IT_HOOKSHOT
 m_got_key   db "Packet capture acquired (%d/3). Bring them to B.",0
 m_all_keys  db "That's all three. Get back to B in the library -- ground floor.",0
 m_see_b     db "Lord of networking: 'Pull up wireshark and get a capture going! This Beacom building is very dangerous! Mr. T lurks the halls. Mr. Y has gone missing -- you must find 3 wireshark packet captures before it is too late. If you are ever scared, I have used my networking magic to secure some rooms. T cannot enter them! Good luck on your quest!'",0
@@ -203,6 +218,8 @@ sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
 sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
 sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
+sh_hook_hand db "shots/36_hookshot_in_hand.bmp",0
+sh_hook_chain db "shots/37_hookshot_chain.bmp",0
 sh_r0 db "shots/30_beacom_entry_media_wall.bmp",0
 sh_r1 db "shots/31_beacom_balcony_over_collab.bmp",0
 sh_r2 db "shots/32_beacom_grand_staircase.bmp",0
@@ -323,6 +340,8 @@ invert_y    resd 1
 have_map    resd 1
 have_compass resd 1
 have_portal resd 1
+have_hookshot resd 1
+special     resd 1                  ; SP_: the one special item you carry
 mouse_edge_mode resd 1
 show_fps    resd 1
 fps_frames  resd 1
@@ -624,6 +643,7 @@ add_item:
     mov [rbx+ITEM_KIND], r12d
     mov dword [rbx+ITEM_ACTIVE], 1
     mov dword [rbx+ITEM_SEEN], 0
+    mov dword [rbx+ITEM_CHARGES], 1
     movss [rbx+ITEM_X], xmm0
     movss [rbx+ITEM_Y], xmm1
     movss [rbx+ITEM_Z], xmm2
@@ -667,6 +687,7 @@ new_game:
     call noise_reset
     call traverse_reset
     call portal_reset
+    call hookshot_reset
     call ach_new_run
     mov dword [crouch_latch], 0
     xor edi, edi
@@ -675,6 +696,8 @@ new_game:
     mov [have_map], eax
     mov [have_compass], eax
     mov [have_portal], eax
+    mov [have_hookshot], eax
+    mov [special], eax
     mov edi, [start_f]                  ; (each building has its own start)
     mov esi, [start_x]
     mov edx, [start_y]
@@ -713,7 +736,8 @@ new_game:
     ; ...and the portal gun (custom run: hidden / in your hands / none)
     cmp dword [cfg_portal], 1
     jne .portal_hidden
-    mov dword [have_portal], 1
+    mov edi, SP_PORTAL
+    call give_special
 .portal_hidden:
     cmp dword [cfg_portal], 0
     jne .portal_done
@@ -725,6 +749,22 @@ new_game:
     mov edi, IT_PORTAL
     call add_item
 .portal_done:
+    ; ...and the hookshot (hidden / in your hands / none)
+    cmp dword [cfg_hookshot], 1
+    jne .hook_hidden
+    mov edi, SP_HOOK
+    call give_special                   ; (both in hand? the portal gun lands at your feet)
+.hook_hidden:
+    cmp dword [cfg_hookshot], 0
+    jne .hook_done
+    mov edi, -1
+    xor esi, esi
+    xor edx, edx
+    call random_cell
+    mov esi, eax
+    mov edi, IT_HOOKSHOT
+    call add_item
+.hook_done:
     cmp dword [cfg_start_map], 0
     je .map_hidden
     mov dword [have_map], 1
@@ -895,7 +935,31 @@ interact:
 .weapon:
     cmp dword [rbx+ITEM_KIND], IT_WEAPON
     jne .zelda
-    inc dword [deauths]
+    mov r12d, [rbx+ITEM_CHARGES]        ; (a dropped stack can hold several)
+    cmp r12d, 1
+    jge .charges
+    mov r12d, 1
+.charges:
+    cmp dword [special], SP_DEAUTH
+    jne .new_stack
+    mov eax, [deauths]
+    add eax, r12d
+    cmp eax, MAX_DEAUTHS
+    jle .stack
+    ; full: leave it where it is
+    mov dword [rbx+ITEM_ACTIVE], 1
+    lea rdi, [m_full]
+    mov esi, COL_WARN
+    call msg
+    jmp .done
+.stack:
+    mov [deauths], eax
+    jmp .got_deauth
+.new_stack:
+    mov edi, SP_DEAUTH
+    call give_special
+    mov [deauths], r12d
+.got_deauth:
     lea rdi, [m_weapon]
     mov esi, COL_GOOD
     call msg
@@ -921,9 +985,19 @@ interact:
     jmp .done
 .not_compass:
     cmp eax, IT_PORTAL
-    jne .done
-    mov dword [have_portal], 1
+    jne .not_portal
+    mov edi, SP_PORTAL
+    call give_special
     lea rdi, [m_got_portal]
+    mov esi, COL_GOOD
+    call msg
+    jmp .done
+.not_portal:
+    cmp eax, IT_HOOKSHOT
+    jne .done
+    mov edi, SP_HOOK
+    call give_special
+    lea rdi, [m_got_hook]
     mov esi, COL_GOOD
     call msg
     jmp .done
@@ -961,7 +1035,117 @@ interact:
 .done:
     EPILOGUE
 
-; fire_deauth -- Q / right mouse button
+; use_special(edi = 0 primary / 1 secondary) -- whatever you carry
+use_special:
+    PROLOGUE 16
+    mov ebx, edi
+    mov eax, [special]
+    cmp eax, SP_DEAUTH
+    je .deauth
+    cmp eax, SP_PORTAL
+    je .portal
+    cmp eax, SP_HOOK
+    je .hook
+    lea rdi, [m_nothing]
+    mov esi, COL_WARN
+    call msg
+    EPILOGUE
+.deauth:
+    call fire_deauth
+    EPILOGUE
+.portal:
+    mov edi, ebx                        ; blue / orange
+    call portal_fire
+    EPILOGUE
+.hook:
+    call hookshot_fire
+    EPILOGUE
+
+; give_special(edi = SP_) -- hold this one; whatever you held (if it was a
+; different kind) is left on the floor where you stand, deauth stack and all
+give_special:
+    PROLOGUE 16
+    mov ebx, edi
+    mov eax, [special]
+    cmp eax, SP_NONE
+    je .take
+    cmp eax, ebx
+    je .take
+    ; drop it: an item at your feet
+    mov r12d, eax
+    mov edi, [sp_items+r12*4]
+    call drop_item
+    mov ecx, [deauths]
+    cmp r12d, SP_DEAUTH
+    je .count
+    mov ecx, 1
+.count:
+    mov [rax+ITEM_CHARGES], ecx
+    mov dword [deauths], 0
+    lea rdi, [msg_buf]
+    mov esi, 512
+    lea rdx, [m_dropped]
+    mov rcx, [sp_names+r12*8]
+    xor eax, eax
+    call snprintf
+    lea rdi, [msg_buf]
+    mov esi, COL_INFO
+    call msg
+.take:
+    mov [special], ebx
+    xor eax, eax
+    cmp ebx, SP_PORTAL
+    sete al
+    mov [have_portal], eax
+    xor eax, eax
+    cmp ebx, SP_HOOK
+    sete al
+    mov [have_hookshot], eax
+    EPILOGUE
+
+; drop_item(edi = item kind) -> rax = the new item, lying where you stand
+; (reuses a picked-up slot when the list is full)
+drop_item:
+    PROLOGUE 16
+    mov r12d, edi
+    mov eax, [item_count]
+    cmp eax, MAX_ITEMS
+    jl .append
+    xor ecx, ecx                        ; full: take a slot that's been picked up
+.find:
+    cmp ecx, MAX_ITEMS
+    jge .last
+    imul eax, ecx, ITEM_SIZE
+    cmp dword [items+rax+ITEM_ACTIVE], 0
+    je .slot
+    inc ecx
+    jmp .find
+.last:
+    mov ecx, MAX_ITEMS-1
+.slot:
+    imul eax, ecx, ITEM_SIZE
+    jmp .fill
+.append:
+    imul eax, eax, ITEM_SIZE
+    inc dword [item_count]
+.fill:
+    lea rbx, [items+rax]
+    mov [rbx+ITEM_KIND], r12d
+    mov dword [rbx+ITEM_ACTIVE], 1
+    mov dword [rbx+ITEM_SEEN], 1
+    mov dword [rbx+ITEM_CHARGES], 1
+    mov eax, [p_x]
+    mov [rbx+ITEM_X], eax
+    mov eax, [p_y]
+    mov [rbx+ITEM_Y], eax
+    mov eax, [p_z]
+    mov [rbx+ITEM_Z], eax
+    call player_floor
+    mov [rbx+ITEM_F], eax
+    mov rax, rbx
+    EPILOGUE
+
+; fire_deauth -- a deauth packet (use_special)
 fire_deauth:
     PROLOGUE 16
     cmp dword [deauths], 0
@@ -972,6 +1156,9 @@ fire_deauth:
     EPILOGUE
 .have:
     dec dword [deauths]
+    jnz .more_left
+    mov dword [special], SP_NONE
+.more_left:
     inc dword [run_deauths]             ; (no PACIFIST this run)
     movss xmm0, [t_dist]
     FLD xmm1, 4.0
@@ -1395,24 +1582,16 @@ handle_events:
 .btn_play:
     cmp dword [game_state], GS_PLAYING
     jne .poll
-    ; with the portal gun: left = blue, right = orange; otherwise right = deauth
-    cmp dword [have_portal], 0
-    je .btn_deauth
-    cmp ecx, 1
-    jne .btn_orange
+    ; your special item: left click uses it, right click is its other use
+    ; (the orange portal; the same as left for everything else)
     xor edi, edi
-    call portal_fire
-    jmp .poll
-.btn_orange:
+    cmp ecx, 1
+    je .use
     cmp ecx, 3
     jne .poll
     mov edi, 1
-    call portal_fire
-    jmp .poll
-.btn_deauth:
-    cmp ecx, 3
-    jne .poll
-    call fire_deauth
+.use:
+    call use_special
     jmp .poll
 .not_button:
     cmp eax, SDL_MOUSEWHEEL
@@ -1487,7 +1666,8 @@ handle_events:
 .k2:
     cmp ecx, SC_Q
     jne .k3
-    call fire_deauth
+    xor edi, edi
+    call use_special
     jmp .poll
 .k3:
     cmp ecx, SC_I
@@ -1951,10 +2131,10 @@ update_prompt:
     call near_b
     test eax, eax
     jz .done
-    mov dword [hud_prompt], 5
+    mov dword [hud_prompt], 6
     cmp dword [inventory], 3
     jl .done
-    mov dword [hud_prompt], 6
+    mov dword [hud_prompt], 7
 .done:
     EPILOGUE
 
@@ -1969,6 +2149,8 @@ game_tick:
     subss xmm1, xmm0
     movss [b_cooldown], xmm1
 
+    movss xmm0, [rsp+0]
+    call hookshot_update
     movss xmm0, [rsp+0]
     call traverse_update
     movss xmm0, [rsp+0]
@@ -2443,9 +2625,11 @@ shot_mode_run:
     call player_spawn
     mov dword [p_yaw], __float32__(-1.5708)
     mov dword [p_pitch], __float32__(-0.12)
-    mov dword [have_portal], 1
+    mov edi, SP_PORTAL
+    call give_special
     lea rdi, [sh_hands_gun]
     call shot_now
+    mov dword [special], SP_NONE
     mov dword [have_portal], 0
     mov dword [p_mode], 2
     mov dword [p_pitch], __float32__(0.25)
@@ -2484,6 +2668,31 @@ shot_mode_run:
     inc ebx
     jmp .real_shot
 .real_done:
+    ; the hookshot: in hand, then thrown across the collaboration space
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], __float32__(0.05)
+    mov edi, SP_HOOK
+    call give_special
+    lea rdi, [sh_hook_hand]
+    call shot_now
+    call hookshot_fire
+    mov ebx, 12                         ; ~0.2 s: the head is on its way
+.hk_fly:
+    movss xmm0, [c_dt_shot]
+    call hookshot_update
+    dec ebx
+    jnz .hk_fly
+    lea rdi, [sh_hook_chain]
+    call shot_now
+    call hookshot_reset
+    mov dword [p_mode], 0
+    mov dword [special], SP_NONE
+    mov dword [have_hookshot], 0
+.ach_toast:
     ; an achievement popping
     call hud_clear_messages
     mov edi, ACH_STAGE
@@ -3239,6 +3448,145 @@ ach_tests:
     mov dword [elapsed_time], 0
     EPILOGUE
 
+; hook_run(xmm0 = seconds) -- let the hookshot and you move for a while
+hook_run:
+    PROLOGUE 16
+    FLD xmm1, 60.0
+    mulss xmm0, xmm1
+    cvttss2si ebx, xmm0
+.f:
+    movss xmm0, [c_dt_shot]
+    call hookshot_update
+    movss xmm0, [c_dt_shot]
+    call traverse_update
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call player_update
+    dec ebx
+    jnz .f
+    EPILOGUE
+
+; hook_tests -- the hookshot and the one-special-item rule (real Beacom)
+hook_tests:
+    PROLOGUE 32
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    mov dword [t_stun], __float32__(10000.0)
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    ; across the collaboration space to the media wall
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], 0
+    FLD xmm0, 0.05
+    call hook_run
+    call hookshot_fire
+    FLD xmm0, 2.0
+    call hook_run
+    lea rdi, [st_hook_across]
+    cvtss2sd xmm0, [p_x]
+    mov eax, 1
+    call printf
+    ; up to the 2nd floor: aim high at the north balcony
+    mov edi, 1
+    mov esi, 28
+    mov edx, 11
+    call player_spawn
+    mov dword [p_yaw], 0
+    mov dword [p_pitch], __float32__(0.6)
+    FLD xmm0, 0.05
+    call hook_run
+    call hookshot_fire
+    FLD xmm0, 3.0
+    call hook_run
+    call player_floor
+    mov esi, eax
+    lea rdi, [st_hook_up]
+    cvtss2sd xmm0, [p_y]
+    mov edx, [ach_flag+ACH_SPIDER*4]
+    mov eax, 1
+    call printf
+    ; hook T: he staggers
+    mov edi, 1
+    mov esi, 24
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], 0
+    mov edi, (1*MAP_H + 15)*MAP_W + 29
+    call enemy_reset
+    mov dword [t_stun], 0
+    FLD xmm0, 0.05
+    call hook_run
+    call hookshot_fire
+    FLD xmm0, 1.0
+    call hook_run
+    lea rdi, [st_hook_t]
+    cvtss2sd xmm0, [t_stun]
+    mov esi, [ach_flag+ACH_HOOK_T*4]
+    mov eax, 1
+    call printf
+    ; one special item: picking up the portal gun leaves the hookshot behind
+    mov dword [t_stun], __float32__(10000.0)
+    mov dword [special], SP_NONE
+    mov edi, SP_HOOK
+    call give_special
+    mov edi, SP_PORTAL
+    call give_special
+    mov r14d, [have_portal]
+    xor r12d, r12d                      ; hookshots lying where you stand
+    xor ebx, ebx
+.it:
+    cmp ebx, [item_count]
+    jge .counted
+    imul eax, ebx, ITEM_SIZE
+    lea r13, [items+rax]
+    cmp dword [r13+ITEM_ACTIVE], 0
+    je .n
+    cmp dword [r13+ITEM_KIND], IT_HOOKSHOT
+    jne .n
+    movss xmm0, [r13+ITEM_X]
+    subss xmm0, [p_x]
+    andps xmm0, [c_abs_mask]
+    FLD xmm1, 0.1
+    comiss xmm0, xmm1
+    jae .n
+    inc r12d
+.n:
+    inc ebx
+    jmp .it
+.counted:
+    ; ...and a stack of 3 deauths is dropped as one item of 3
+    mov edi, SP_DEAUTH
+    call give_special
+    mov dword [deauths], MAX_DEAUTHS
+    mov edi, SP_HOOK
+    call give_special
+    mov eax, [item_count]
+    dec eax
+    imul eax, eax, ITEM_SIZE
+    mov r8d, [items+rax+ITEM_CHARGES]
+    lea rdi, [st_hook_slot]
+    mov esi, r14d
+    mov edx, r12d
+    mov ecx, [special]
+    xor eax, eax
+    call printf
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    mov dword [special], SP_NONE
+    mov dword [have_hookshot], 0
+    mov dword [have_portal], 0
+    EPILOGUE
+
 ; start_node -> eax = the node you start on in this building
 start_node:
     sub rsp, 8
@@ -3539,6 +3887,7 @@ selftest:
     PROLOGUE 32
     mov dword [seed_val], 42
     call real_tests                     ; the real Beacom first...
+    call hook_tests
     mov dword [cfg_building], BLD_ORIGINAL
     call prepare_world                  ; ...then the original map's tests
     call new_game
