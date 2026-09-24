@@ -19,6 +19,7 @@
 ; =============================================================================
 %define MODULE_RENDER
 %include "common.inc"
+extern bld_on, bld_ax, bld_ay, bld_az, bld_bx, bld_by, bld_bz, bld_prog
 
 ; GL 2.0 functions are called through pointers from SDL_GL_GetProcAddress.
 ; On Windows those pointers use the Microsoft calling convention, so they go
@@ -1342,6 +1343,7 @@ shadow_pass:
     ; ...and T, whose silhouette is the whole point (and anything physical)
     call draw_t
     call draw_feeders
+    call draw_t_build
     call draw_physics
     mov edi, GL_POLYGON_OFFSET_FILL
     call glDisable
@@ -3645,6 +3647,93 @@ draw_signs:
 .done:
     EPILOGUE
 
+; draw_t_build -- T's stairs: crates stacked in steps from where he stood up
+; to your perch (as many as he's built so far), hazard-striped
+draw_t_build:
+    PROLOGUE 48
+    cmp dword [bld_on], 0
+    je .done
+    ; steps: one per 0.45 m of the way
+    movss xmm0, [bld_bx]
+    subss xmm0, [bld_ax]
+    mulss xmm0, xmm0
+    movss xmm1, [bld_bz]
+    subss xmm1, [bld_az]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    FLD xmm1, 0.45
+    divss xmm0, xmm1
+    cvttss2si r12d, xmm0
+    inc r12d
+    cmp r12d, 24
+    jle .n_ok
+    mov r12d, 24
+.n_ok:
+    cvtsi2ss xmm0, r12d
+    mulss xmm0, [bld_prog]
+    cvtss2si r13d, xmm0                 ; built so far
+    mov edi, [white_tex]
+    call bind
+    mov edi, GL_QUADS
+    call glBegin
+    xor ebx, ebx
+.s:
+    cmp ebx, r13d
+    jge .drawn
+    ; t = (i + 1) / n: this crate's far edge
+    lea eax, [rbx+1]
+    cvtsi2ss xmm6, eax
+    cvtsi2ss xmm7, r12d
+    divss xmm6, xmm7
+    movss [rsp+0], xmm6
+    movss xmm0, [bld_bx]
+    subss xmm0, [bld_ax]
+    mulss xmm0, xmm6
+    addss xmm0, [bld_ax]
+    movss [rsp+4], xmm0
+    movss xmm2, [bld_bz]
+    subss xmm2, [bld_az]
+    mulss xmm2, xmm6
+    addss xmm2, [bld_az]
+    movss [rsp+8], xmm2
+    movss xmm4, [bld_by]
+    subss xmm4, [bld_ay]
+    mulss xmm4, xmm6                    ; height of this step
+    FLD xmm5, 0.05
+    maxss xmm4, xmm5
+    movss [rsp+12], xmm4
+    movss xmm0, [rsp+4]
+    movss xmm1, [bld_ay]
+    movss xmm2, [rsp+8]
+    FLD xmm3, 0.3
+    FLD xmm5, 0.3
+    mov edi, 0x7a5028
+    test ebx, 1
+    jz .c
+    mov edi, 0x8f6232
+.c:
+    call cbox
+    ; a hazard stripe along the top
+    movss xmm0, [rsp+4]
+    movss xmm1, [bld_ay]
+    addss xmm1, [rsp+12]
+    FLD xmm6, -0.06
+    addss xmm1, xmm6
+    movss xmm2, [rsp+8]
+    FLD xmm3, 0.31
+    FLD xmm4, 0.05
+    FLD xmm5, 0.31
+    mov edi, 0xe0c020
+    call cbox
+    inc ebx
+    jmp .s
+.drawn:
+    call glEnd
+    GLF3 glColor3f, 1.0, 1.0, 1.0
+.done:
+    EPILOGUE
+
 ; draw_feeders -- the bottom feeders: low, flat, six scuttling legs, two
 ; glowing eyes, and the stolen capture glowing on the back of a thief
 draw_feeders:
@@ -4479,6 +4568,7 @@ draw_scene:
     call draw_items
     call draw_t
     call draw_feeders
+    call draw_t_build
     call draw_physics
     call draw_ziplines
     call draw_hook

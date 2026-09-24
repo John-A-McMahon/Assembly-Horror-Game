@@ -23,7 +23,10 @@ global have_grod, tyler_armed, tyler_x, tyler_y, tyler_z, grod_beam, beam_x, bea
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
-extern p_on_ground, snd_can, snd_can_t, p_vy, feeder_put
+extern p_on_ground, snd_can, snd_can_t, p_vy, feeder_put, por_on, portal_reset
+extern build_deauth, director_reset, t_build, bld_on, t_goal, dir_calm, dir_relax, t_camp
+extern t_por_on, build_break, enemy_portal_follow, bld_ay, bld_by, bld_ax, bld_bx, bld_az, bld_bz
+extern bld_cd, build_hit_point, t_node, p_eye
 extern portal_reset, portal_fire, portal_check_teleport, world_select, render_rebuild_world
 extern add_box, snd_fanfare, map_floor, dump_shadow_map, glFinish, p_eye_y, getenv, SDL_SetHint, hud_fps, render_cycle_scale, render_toggle_shadows
 
@@ -128,7 +131,16 @@ st_grod_arm db "[selftest] Grod: gave it to Tyler: armed=%d (expect 1), still ca
 st_grod_fire db "[selftest] Grod: T walked up to Tyler: blasted=%d (expect 1), now %.0f m from Tyler (expect > 20), recharging %.0fs (expect 20)",10,0
 st_grod_cd db "[selftest] Grod: T back at once: blasted again=%d (expect 0 while it recharges)",10,0
 st_fd_ignore db "[selftest] bottom feeder: with no captures on you it left you alone for 5s: captures %d (expect 0), chased=%d (expect 0)",10,0
-st_dew_you db "[selftest] Diet Mountain Dew: %.1fs of it (expect 20.0), stamina %.2f after sprinting on empty (expect 1.00)",10,0
+st_dir_push db "[selftest] director: comfortable for 41s -> T investigating=%d (expect 1), heading for your spot=%d (expect 1)",10,0
+st_dir_relax db "[selftest] director: after a close call T backs off to a spot %d cells from you (expect >= 25)",10,0
+st_bld db "[selftest] T builds: you on a crate stack (y=%.2f), T below: built=%d climbed=%d (expect 1 1), caught you=%d (expect 1) after %.1fs",10,0
+st_bld_brk db "[selftest] T's stairs knocked down mid-climb: T back on the floor=%d (expect 1), stunned=%d (expect 1), stairs gone=%d (expect 1)",10,0
+st_bld_aim db "[selftest] T's stairs: deauth aimed at them=%d (expect 1); hook point on them=%d, 3 m off=%d (expect 1 0)",10,0
+st_por_t db "[selftest] T follows you through your portal: came out of the exit=%d (expect 1) after %.1fs",10,0
+st_por_safe db "[selftest] portal at a safe-room wall: placed=%d (expect 0 -- no portals in safe rooms)",10,0
+st_hook_hear db "[selftest] hookshot bite heard: T investigating=%d (expect 1)",10,0
+st_nem db "[selftest] nemesis: 3 hookshot escapes -> hears it from %.0f m (expect 33); 3 perches -> builds in %.2fs (expect 1.05); 2 wins -> speed x%.2f (expect 1.08)",10,0
+st_dew_you db "[selftest] Diet Mountain Dew: %.1fs of it (expect 10.0), stamina %.2f after sprinting on empty (expect 1.00)",10,0
 st_dew_t db "[selftest] T sniffed out a can %d cells away and drank it after %.1fs (expect < 15): wired for %.1fs (expect > 0), can gone=%d (expect 1)",10,0
 st_hook_across db "[selftest] hookshot across the collaboration space: pulled to x=%.2f (the media wall is at x=70; expect > 67)",10,0
 st_hook_up db "[selftest] hookshot up to the balcony: ended at y=%.2f on floor %d (expect floor 2), SPIDER-BEACOM=%d (expect 1)",10,0
@@ -176,10 +188,10 @@ m_got_portal db "You got the PORTAL GUN! Left click (or Q): blue portal, right c
 m_got_hook  db "You got the HOOKSHOT! Left click (or Q) at a wall, a ceiling, a ledge: it bites and yanks you there. SPACE mid-pull flings you.",0
 m_dropped   db "You can only carry one special item -- you leave the %s where you stand.",0
 m_full      db "You can't carry more than 3 deauth packets.",0
-m_dew_you   db "*kssht* DIET MOUNTAIN DEW. Unlimited stamina for 20 seconds -- run.",0
+m_dew_you   db "*kssht* DIET MOUNTAIN DEW. Unlimited stamina for 10 seconds -- run.",0
 m_dew_off   db "The Dew wears off.",0
 m_dew_t     db "*kssht* ...somewhere, T just cracked open a Diet Mountain Dew. He's WIRED: faster, sharper, for 15 seconds.",0
-c_dew_you   dd 20.0
+c_dew_you   dd 10.0
 c_dew_t     dd 15.0
 c_dew_sip   dd 0.9                      ; T drinks a can this close
 c_dew_sniff dd 14.0                     ; ...and wanders over to one this close
@@ -256,6 +268,7 @@ sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
 sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
 sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
+sh_build db "shots/42_t_builds_stairs.bmp",0
 sh_grod db "shots/40_packet_of_grod.bmp",0
 sh_tyler db "shots/41_dauth_cannon_of_grod.bmp",0
 sh_feeders db "shots/39_bottom_feeders.bmp",0
@@ -366,6 +379,8 @@ beam_y      resd 1
 beam_z      resd 1
 fo_x        resd 1                      ; find_open's answer
 fo_y        resd 1
+fo_f        resd 1
+bld_max     resd 1                      ; (self-tests) furthest T's build got
 hr_maxy     resd 1                      ; hook_run: highest / lowest feet
 hr_miny     resd 1
 game_state  resd 1
@@ -922,6 +937,8 @@ new_game:
     mov edi, eax
     call enemy_reset
     call feeders_reset                  ; ...and the bottom feeders, away from you
+    call director_reset
+    call nemesis_new_night              ; what T remembers about you
 
     ; welcome messages
     lea rdi, [msg_buf]
@@ -1177,6 +1194,8 @@ interact:
     cmp dword [inventory], 3
     jl .talk
     mov dword [game_state], GS_WON
+    mov edi, 1
+    call nemesis_end
     call ach_won
     jmp .done
 .talk:
@@ -1330,10 +1349,15 @@ fire_deauth:
     mov dword [special], SP_NONE
 .more_left:
     inc dword [run_deauths]             ; (no PACIFIST this run)
-    ; aimed at a bottom feeder? it's gone for good -- and T is untouched
+    ; aimed at a bottom feeder? it's gone for good -- and T is untouched.
+    ; At T's stairs? they come down (with him). Otherwise it's T's.
     call feeders_deauth
     test eax, eax
+    jnz .spent
+    call build_deauth
+    test eax, eax
     jz .at_t
+.spent:
     call snd_deauth
     movss xmm0, [c_noise_deauth]
     call noise_add
@@ -1341,6 +1365,8 @@ fire_deauth:
     mov [hud_flash], eax
     EPILOGUE
 .at_t:
+    mov edi, 4                          ; (nemesis: you got away with a deauth)
+    call nemesis_note
     movss xmm0, [t_dist]
     FLD xmm1, 4.0
     comiss xmm0, xmm1
@@ -2530,6 +2556,7 @@ game_tick:
     call feeders_update
     movss xmm0, [rsp+0]
     call grod_tick
+    call nemesis_tick
     movss xmm0, [rsp+0]
     movss xmm1, [elapsed_time]
     call world_lights_update
@@ -2575,6 +2602,8 @@ game_tick:
     cmp dword [t_caught], 0
     je .alive
     mov dword [game_state], GS_LOST
+    xor edi, edi
+    call nemesis_end
 .alive:
     call update_prompt
     call hud_update_explored
@@ -3182,6 +3211,29 @@ shot_mode_run:
     call shot_now
 .ty_done:
     mov dword [tyler_armed], 0
+    ; T building his way up to you on a basement crate stack
+    call perch_setup
+    FLD xmm0, 12.0
+    mov edi, 1
+    call t_run
+    mov ebx, 20                         ; a few steps up
+.climb:
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    dec ebx
+    jnz .climb
+    ; watch from the floor a few cells off, looking back at the stack
+    mov edi, [fo_f]
+    mov esi, [fo_x]
+    add esi, 3
+    mov edx, [fo_y]
+    call player_spawn
+    mov dword [p_yaw], __float32__(1.5708)
+    mov dword [p_pitch], __float32__(0.12)
+    lea rdi, [sh_build]
+    call shot_now
+    mov dword [bld_on], 0
+    mov dword [t_build], 0
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -4742,6 +4794,526 @@ grod_tests:
     mov dword [tyler_armed], 0
     EPILOGUE
 
+; cells_apart(edi = node a, esi = node b) -> eax = |dx|+|dy|+12|df| (grid nodes)
+cells_apart:
+    PROLOGUE 16
+    mov eax, edi
+    xor edx, edx
+    mov ecx, MAP_W
+    div ecx
+    mov r12d, edx                       ; ax
+    xor edx, edx
+    mov ecx, MAP_H
+    div ecx
+    mov r13d, eax                       ; af
+    mov r14d, edx                       ; ay
+    mov eax, esi
+    xor edx, edx
+    mov ecx, MAP_W
+    div ecx
+    sub r12d, edx
+    xor edx, edx
+    mov ecx, MAP_H
+    div ecx
+    sub r13d, eax
+    sub r14d, edx
+    mov eax, r12d
+    cdq
+    xor eax, edx
+    sub eax, edx
+    mov ebx, eax
+    mov eax, r14d
+    cdq
+    xor eax, edx
+    sub eax, edx
+    add ebx, eax
+    mov eax, r13d
+    cdq
+    xor eax, edx
+    sub eax, edx
+    imul eax, eax, 12
+    add eax, ebx
+    EPILOGUE
+
+; find_cell(edi = char, esi = neighbour char at x+1) -> eax 1, fo_f/fo_x/fo_y
+find_cell:
+    PROLOGUE 16
+    mov [rsp+0], edi
+    mov [rsp+4], esi
+    xor r12d, r12d
+.f:
+    cmp r12d, NF
+    jge .none
+    xor r14d, r14d
+.y:
+    cmp r14d, MAP_H
+    jge .nf
+    xor r13d, r13d
+.x:
+    cmp r13d, MAP_W-1
+    jge .ny
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, [rsp+0]
+    jne .nx
+    mov edi, r12d
+    lea esi, [r13d+1]
+    mov edx, r14d
+    call cell_at
+    cmp eax, [rsp+4]
+    jne .nx
+    mov [fo_f], r12d
+    mov [fo_x], r13d
+    mov [fo_y], r14d
+    mov eax, 1
+    EPILOGUE
+.nx:
+    inc r13d
+    jmp .x
+.ny:
+    inc r14d
+    jmp .y
+.nf:
+    inc r12d
+    jmp .f
+.none:
+    xor eax, eax
+    EPILOGUE
+
+; t_run(xmm0 = seconds, edi = stop when: 0 caught, 1 t_build >= 2) -> xmm0
+; seconds taken; r14d (callee's) = highest t_build seen -> [bld_max]
+t_run:
+    PROLOGUE 16
+    FLD xmm1, 60.0
+    mulss xmm0, xmm1
+    cvttss2si r12d, xmm0
+    mov r13d, edi
+    xor ebx, ebx
+.f:
+    cmp ebx, r12d
+    jge .out
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    inc ebx
+    mov eax, [t_build]
+    cmp eax, [bld_max]
+    jle .m
+    mov [bld_max], eax
+.m:
+    test r13d, r13d
+    jnz .up
+    cmp dword [t_caught], 0
+    jne .out
+    jmp .f
+.up:
+    cmp dword [t_build], 2
+    jge .out
+    jmp .f
+.out:
+    cvtsi2ss xmm0, ebx
+    mulss xmm0, [c_dt_shot]
+    EPILOGUE
+
+; perch_setup -- you on a tall crate stack in the basement, T chasing below
+perch_setup:
+    PROLOGUE 16
+    call director_reset
+    mov edi, 'K'
+    mov esi, ' '
+    call find_cell
+    mov edi, [fo_f]
+    mov esi, [fo_x]
+    mov edx, [fo_y]
+    call player_spawn
+    movss xmm0, [p_y]
+    FLD xmm1, 2.3
+    addss xmm0, xmm1
+    movss [p_y], xmm0
+    FLD xmm0, 0.6                       ; drop onto the stack
+    call hook_run
+    mov edi, [fo_f]
+    mov esi, [fo_x]
+    inc esi
+    mov edx, [fo_y]
+    call cell_index
+    mov edi, eax
+    call enemy_reset
+    mov dword [t_stun], 0
+    mov dword [t_state], T_CHASE
+    mov dword [bld_max], 0
+    EPILOGUE
+
+; balance_tests -- the director, T building, portals, the hookshot's clank,
+; the nemesis
+balance_tests:
+    PROLOGUE 48
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    call nemesis_forget
+    mov dword [fd_count], 0
+    mov eax, [cfg_t_vision]
+    mov [rsp+32], eax
+    mov eax, [cfg_t_hear]
+    mov [rsp+36], eax
+    ; ---- the director's nudge: blind, deaf T far off, you comfortable
+    mov dword [cfg_t_vision], 0
+    mov dword [cfg_t_hear], 0
+    call start_node
+    mov [rsp+0], eax
+    mov edi, eax
+    call far_spawn_node
+    mov edi, eax
+    call enemy_reset
+    call director_reset
+    mov dword [dir_calm], __float32__(41.0)
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    movss xmm0, [p_x]
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    call node_at_pos
+    xor edx, edx
+    cmp eax, [t_goal]
+    sete dl
+    xor esi, esi
+    cmp dword [t_state], T_INVESTIGATE
+    sete sil
+    lea rdi, [st_dir_push]
+    xor eax, eax
+    call printf
+    ; ---- ...and backing off after a close call: T right by you
+    mov edi, [rsp+0]
+    call enemy_reset
+    call director_reset
+    mov dword [dir_relax], __float32__(10.0)
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    mov edi, [t_goal]
+    mov esi, [rsp+0]
+    call cells_apart
+    lea rdi, [st_dir_relax]
+    mov esi, eax
+    xor eax, eax
+    call printf
+    mov eax, [rsp+32]
+    mov [cfg_t_vision], eax
+    mov eax, [rsp+36]
+    mov [cfg_t_hear], eax
+    ; ---- T builds up to your perch and gets you
+    call perch_setup
+    FLD xmm0, 12.0
+    xor edi, edi
+    call t_run
+    movss [rsp+4], xmm0
+    xor edx, edx
+    cmp dword [bld_max], 1
+    setge dl
+    xor ecx, ecx
+    cmp dword [bld_max], 2
+    setge cl
+    lea rdi, [st_bld]
+    cvtss2sd xmm0, [p_y]
+    mov esi, edx
+    mov edx, ecx
+    mov ecx, [t_caught]
+    cvtss2sd xmm1, [rsp+4]
+    mov eax, 2
+    call printf
+    ; ---- knock them down while he climbs
+    call perch_setup
+    FLD xmm0, 12.0
+    mov edi, 1
+    call t_run
+    FLD xmm0, 0.2
+    movss xmm0, [c_dt_shot]
+    call enemy_update                   ; (a step up the stairs)
+    mov edi, 1
+    call build_break
+    xor esi, esi
+    movss xmm0, [t_y]
+    ucomiss xmm0, [bld_ay]
+    sete sil
+    xor edx, edx
+    movss xmm0, [t_stun]
+    comiss xmm0, [c_zero]
+    seta dl
+    xor ecx, ecx
+    cmp dword [bld_on], 0
+    sete cl
+    lea rdi, [st_bld_brk]
+    xor eax, eax
+    call printf
+    ; ---- aim a deauth at the stairs; the hookshot's test point
+    call perch_setup
+    mov dword [bld_cd], 0
+    movss xmm0, [c_dt_shot]
+    call enemy_update                   ; (he starts building)
+    ; stand back and look at the middle of the stairs
+    movss xmm0, [bld_ax]
+    addss xmm0, [bld_bx]
+    mulss xmm0, [c_half]
+    movss [rsp+8], xmm0
+    movss xmm0, [bld_ay]
+    addss xmm0, [bld_by]
+    mulss xmm0, [c_half]
+    movss [rsp+12], xmm0
+    movss xmm0, [bld_az]
+    addss xmm0, [bld_bz]
+    mulss xmm0, [c_half]
+    movss [rsp+16], xmm0
+    movss xmm0, [rsp+8]
+    movss xmm1, [rsp+12]
+    movss xmm2, [rsp+16]
+    call build_hit_point
+    mov [rsp+20], eax
+    movss xmm0, [rsp+8]
+    FLD xmm3, 3.0
+    addss xmm0, xmm3
+    movss xmm1, [rsp+12]
+    movss xmm2, [rsp+16]
+    call build_hit_point
+    mov [rsp+24], eax
+    ; you: on the crate top already (perch_setup), crouched (a basement
+    ; crate stack puts a standing head in the ceiling); look at the middle
+    movss xmm0, [p_y]
+    FLD xmm1, 1.0
+    addss xmm0, xmm1
+    movss [p_eye_y], xmm0
+    movss xmm0, [rsp+8]
+    subss xmm0, [p_x]
+    xorps xmm0, [c_sign_mask]
+    movss xmm1, [rsp+16]
+    subss xmm1, [p_z]
+    xorps xmm1, [c_sign_mask]
+    movss [rsp+28], xmm0
+    movss [rsp+40], xmm1
+    call atan2f
+    movss [p_yaw], xmm0
+    movss xmm0, [rsp+28]
+    mulss xmm0, xmm0
+    movss xmm1, [rsp+40]
+    mulss xmm1, xmm1
+    addss xmm1, xmm0
+    sqrtss xmm1, xmm1
+    movss xmm0, [rsp+12]
+    subss xmm0, [p_eye_y]
+    call atan2f
+    movss [p_pitch], xmm0
+    call build_deauth
+    lea rdi, [st_bld_aim]
+    mov esi, eax
+    mov edx, [rsp+20]
+    mov ecx, [rsp+24]
+    xor eax, eax
+    call printf
+    ; ---- T through a portal after you: entry a few cells from him, exit far
+    mov dword [cfg_t_vision], 0
+    mov edi, [rsp+0]
+    call enemy_reset
+    call director_reset
+    mov dword [t_state], T_CHASE
+    mov edi, [rsp+0]
+    call far_spawn_node
+    mov [rsp+4], eax
+    mov edi, [start_f]
+    mov esi, [start_x]
+    mov edx, [start_y]
+    call find_near_open
+    mov edi, eax
+    call node_center
+    movss [rsp+8], xmm0
+    movss [rsp+12], xmm1
+    movss [rsp+16], xmm2
+    mov edi, [rsp+4]
+    call node_center
+    movss [rsp+20], xmm0
+    movss [rsp+24], xmm1
+    movss [rsp+28], xmm2
+    movaps xmm3, xmm0
+    movaps xmm4, xmm1
+    movaps xmm5, xmm2
+    movss xmm0, [rsp+8]
+    movss xmm1, [rsp+12]
+    movss xmm2, [rsp+16]
+    call enemy_portal_follow
+    xor ebx, ebx
+.por:
+    cmp ebx, 600
+    jge .por_done
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    inc ebx
+    mov eax, [t_node]
+    cmp eax, [rsp+4]
+    jne .por
+.por_done:
+    xor esi, esi
+    mov eax, [t_node]
+    cmp eax, [rsp+4]
+    sete sil
+    cvtsi2ss xmm0, ebx
+    mulss xmm0, [c_dt_shot]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_por_t]
+    mov eax, 1
+    call printf
+    mov eax, [rsp+32]
+    mov [cfg_t_vision], eax
+    ; ---- no portals in safe rooms: stand in one, shoot its wall
+    call portal_reset
+    mov edi, 'S'
+    mov esi, 'N'
+    call find_cell
+    mov edi, [fo_f]
+    mov esi, [fo_x]
+    mov edx, [fo_y]
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], 0
+    FLD xmm0, 0.05
+    call hook_run
+    xor edi, edi
+    call portal_fire
+    lea rdi, [st_por_safe]
+    mov esi, [por_on]
+    xor eax, eax
+    call printf
+    ; ---- the hookshot's clank: T nearby but blind comes to look
+    mov dword [cfg_t_vision], 0
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], 0
+    FLD xmm0, 0.05
+    call hook_run
+    mov edi, 1
+    mov esi, 31
+    mov edx, 13
+    call find_near_open_at
+    mov edi, eax
+    call enemy_reset
+    mov dword [p_mode], 0
+    call hookshot_reset
+    call hookshot_fire
+    FLD xmm0, 0.3
+    call hook_run
+    xor esi, esi
+    cmp dword [t_state], T_INVESTIGATE
+    sete sil
+    lea rdi, [st_hook_hear]
+    xor eax, eax
+    call printf
+    call hookshot_reset
+    mov dword [p_mode], 0
+    mov eax, [rsp+32]
+    mov [cfg_t_vision], eax
+    ; ---- the nemesis learns
+    call nemesis_forget
+    mov r12d, 3
+.esc:
+    mov dword [t_caught], 0
+    mov dword [t_state], T_CHASE
+    call nemesis_tick
+    xor edi, edi                        ; the hookshot...
+    call nemesis_note
+    mov dword [t_state], T_WANDER
+    call nemesis_tick                   ; ...and he lost you
+    mov dword [t_state], T_CHASE
+    call nemesis_tick
+    mov edi, 3                          ; a perch...
+    call nemesis_note
+    mov dword [t_state], T_WANDER
+    call nemesis_tick
+    dec r12d
+    jnz .esc
+    mov dword [nm_wins], 2
+    call nemesis_apply
+    cvtss2sd xmm0, [nm_hook_hear]
+    cvtss2sd xmm1, [nm_build_time]
+    cvtss2sd xmm2, [nm_speed]
+    lea rdi, [st_nem]
+    mov eax, 3
+    call printf
+    call nemesis_forget
+    call director_reset
+    EPILOGUE
+
+; find_near_open(edi = f, esi = x, edx = y) -> eax = a plain-floor node 3..5
+; cells from there (for the portal test) / find_near_open_at: the cell itself
+; if it's plain floor, else the nearest one found the same way
+find_near_open:
+    PROLOGUE 16
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    mov ebx, -5
+.dy:
+    cmp ebx, 5
+    jg .fallback
+    mov r15d, -5
+.dx:
+    cmp r15d, 5
+    jg .ndy
+    mov eax, ebx
+    cdq
+    xor eax, edx
+    sub eax, edx
+    mov ecx, eax
+    mov eax, r15d
+    cdq
+    xor eax, edx
+    sub eax, edx
+    add ecx, eax
+    cmp ecx, 3
+    jl .ndx
+    mov edi, r12d
+    lea esi, [r13d+r15d]
+    lea edx, [r14d+ebx]
+    call cell_at
+    cmp eax, ' '
+    jne .ndx
+    mov edi, r12d
+    lea esi, [r13d+r15d]
+    lea edx, [r14d+ebx]
+    call cell_index
+    EPILOGUE
+.ndx:
+    inc r15d
+    jmp .dx
+.ndy:
+    inc ebx
+    jmp .dy
+.fallback:
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_index
+    EPILOGUE
+find_near_open_at:
+    PROLOGUE 16
+    mov r12d, edi
+    mov r13d, esi
+    mov r14d, edx
+    call cell_at
+    cmp eax, ' '
+    jne .near
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_index
+    EPILOGUE
+.near:
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call find_near_open
+    EPILOGUE
+
 ; start_node -> eax = the node you start on in this building
 start_node:
     sub rsp, 8
@@ -5047,6 +5619,7 @@ selftest:
     call dew_tests
     call feeder_tests
     call grod_tests
+    call balance_tests
     mov dword [cfg_building], BLD_ORIGINAL
     call prepare_world                  ; ...then the original map's tests
     call new_game
@@ -5462,6 +6035,7 @@ main:
     jne .no_cfg
     call settings_load
     call ach_load                       ; (and save them from now on)
+    call nemesis_load                   ; ...and what T remembers about you
 .no_cfg:
     call world_init
     call render_init

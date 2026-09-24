@@ -172,7 +172,7 @@ Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
   deauth packets, start with the map + compass, portal gun hidden / in hand / off,
-  hookshot hidden / in hand / off, how many cans of Diet Mountain Dew (0-8), how many bottom feeders (0-4)
+  hookshot hidden / in hand / off, how many cans of Diet Mountain Dew (0-8), how many bottom feeders (0-4), whether T remembers you between nights (nemesis)
 * **You** — sprint stamina drain, flashlight battery drain, walk speed, jump
   height, zipline speed
 * **Controls** — mouse sensitivity, invert Y, crouch hold/toggle
@@ -281,7 +281,7 @@ in your hand from the start, or off.
 ### Diet Mountain Dew
 
 Four cans (set 0-8 in the pause menu) are scattered around the building.
-Drink one (**E**) and you get **20 seconds of unlimited stamina**: the
+Drink one (**E**) and you get **10 seconds of unlimited stamina**: the
 stamina bar turns lime and counts down. Cracking a can open makes a little
 noise.
 
@@ -324,6 +324,48 @@ is worthy: he becomes the **DAUTH CANNON OF GROD**. From then on he stands
 guard with a purple cannon on his shoulder, turning to track T. Whenever T
 comes within 16 m in sight of him, a purple bolt blasts T clean across the
 building. The cannon then needs 20 seconds to recharge. Lure T past Tyler.
+
+### T fights back: the director, building, portals, the nemesis
+
+**The director.** T's pressure comes in waves. If he hasn't chased you for
+40 s, he's nudged toward where you are (and again every 15 s after). When a
+chase gets within 8 m of you and you still get away, he backs off for 12 s,
+wandering somewhere at least 25 cells from you. So there's always a breather
+after a close call, and never a long safe lull.
+
+**T builds.** Up on a desk, a crate stack or anything else he can't walk to,
+while he can see you? He hammers together a staircase of crates (you'll
+hear it: about 1.5 s), climbs it and gets you. The stairs fall apart after
+20 s. Knock them down first: aim a **deauth** at them, or **hookshot** them
+(the hook yanks them down). If he's on them, he tumbles off and is stunned
+for a moment. Like the bottom feeders, a deauth spent on his stairs doesn't
+touch T himself.
+
+**T follows you through portals.** Go through a portal while he's chasing
+you and he walks to it and steps out of the other side after you. And no
+more safe-room cheese: **portals can't be opened in (or into) a safe room**.
+
+**The hookshot is loud.** When the hook bites, T hears the clank (22 m) and
+comes to look at where you'll land.
+
+**T remembers you (nemesis).** Every chase you escape is put down to the
+last trick you used: the hookshot, a portal, a safe room, a perch he had to
+build up to, or a deauth. After 3 escapes the same way he adapts, and after
+6 he adapts more:
+
+| You keep escaping with... | T learns to... |
+| --- | --- |
+| the hookshot | hear the hook bite from 33 m, then 44 m |
+| portals | follow you through them even when he wasn't chasing you |
+| safe rooms | wait outside for 10 s, then 20 s, instead of wandering off |
+| perches | build his stairs faster (1.05 s, then 0.6 s) |
+| deauths | shake them off quicker (4 s, then 3 s of stun) |
+
+He also holds a grudge: each night you beat him makes him 4% faster (each
+time he catches you takes 2% off, capped at +16%). When he learns something
+mid-night you're told, and every night after the first opens with what he
+remembers. It's saved in `beacom_nemesis.cfg` (delete it to start over, or
+switch it off in the pause menu).
 
 ### Generated layouts
 
@@ -375,6 +417,7 @@ follow you down into the atrium. He still can't climb ladders.
 | `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, hookshot, sleeve |
 | `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |
 | `feeders.asm` | the bottom feeders: wander / chase / steal / flee / stash, on T's nav graph |
+| `nemesis.asm` | T's memory of how you escape him, across nights (`beacom_nemesis.cfg`) |
 | `hookshot.asm` | the hookshot: traces the throw, latches on, pulls you in, fling, auto-mantle, stuns T |
 | `player.asm` | first-person controller: mouselook, movement, gravity, stairs, stamina, flashlight battery |
 | `ai.asm` | T: BFS over the 3D nav graph, 3D sight, occluded hearing, wander / investigate / chase |

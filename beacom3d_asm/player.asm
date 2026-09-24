@@ -17,7 +17,7 @@
 
 global player_spawn, player_update, player_look, player_floor, player_in_safe
 global p_x, p_y, p_z, p_yaw, p_pitch, p_stamina, p_battery, p_flash_on, p_crouch
-global p_dew
+global p_dew, p_eye
 global p_exhausted, p_eye_y, p_step_event, p_flash_level, keys_down, p_roll, p_sprint
 global p_vy, p_on_ground, p_bob, p_mom_x, p_mom_z
 extern p_mode, trav_roll, trav_shake, player_ground, footprint_ground, parkour_try, snd_slide

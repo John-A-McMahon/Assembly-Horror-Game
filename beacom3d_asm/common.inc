@@ -393,7 +393,7 @@ extern cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_l
 extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
 extern cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
-extern cfg_hookshot, cfg_dew, cfg_feeders
+extern cfg_hookshot, cfg_dew, cfg_feeders, cfg_nemesis
 %endif
 
 ; PCT xmm, cfg_var -- xmm = cfg_var / 100 (clobbers nothing else)
@@ -410,6 +410,13 @@ extern ach_flag, ach_persist, run_deauths, run_spotted, run_warned, run_moves
 %ifndef MODULE_HOOK
 extern hookshot_fire, hookshot_update, hookshot_reset
 extern hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz
+%endif
+
+%ifndef MODULE_NEMESIS
+extern nemesis_load, nemesis_note, nemesis_tick, nemesis_end, nemesis_new_night
+extern nemesis_forget, nemesis_apply
+extern nm_build_time, nm_stun, nm_portal_any, nm_camp_time, nm_hook_hear, nm_speed
+extern nm_cnt, nm_caught, nm_wins, nm_nights
 %endif
 
 %ifndef MODULE_FEED

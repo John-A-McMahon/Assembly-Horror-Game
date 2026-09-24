@@ -22,7 +22,7 @@ global snd_noise_alert, snd_spotted, snd_thunder, snd_jumpscare, snd_win, snd_se
 global snd_set_floor, snd_mute, audio_cb, snd_fanfare, snd_clatter, snd_clank, snd_zip
 global snd_portal_open, snd_portal_fizzle, snd_portal_enter, snd_slide
 global snd_hook_fire, snd_hook_hit, snd_hook_miss, snd_can, snd_can_t
-global snd_feeder_spot, snd_feeder_steal, snd_feeder_click
+global snd_feeder_spot, snd_feeder_steal, snd_feeder_click, snd_build
 %ifdef WIN64
 extern audio_cb_win64
 %endif
@@ -835,6 +835,16 @@ snd_can_t:
 
 ; bottom feeders: a chitter when one spots you, a screech + scuffle when it
 ; robs you, and the tick-tick of little legs on the tiles
+; T hammering his stairs together (from where he is)
+snd_build:
+    PROLOGUE 16
+    BURST 500.0, 0.5, 0.07, 0.6, FT_BP, 1, 0.0, 0.0
+    BURST 500.0, 0.5, 0.07, 0.6, FT_BP, 1, 0.25, 0.0
+    BURST 450.0, 0.5, 0.07, 0.6, FT_BP, 1, 0.5, 0.0
+    BURST 900.0, 0.7, 0.3, 0.3, FT_BP, 1, 0.75, 0.02
+    BURST 500.0, 0.5, 0.07, 0.6, FT_BP, 1, 1.05, 0.0
+    EPILOGUE
+
 snd_feeder_spot:
     PROLOGUE 16
     TONE 1900.0, 2400.0, 0.05, 0.06, W_SQR, 0.0

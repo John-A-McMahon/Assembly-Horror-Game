@@ -26,7 +26,7 @@ extern draw_scene, use_program, upload_frame_uniforms, bind
 extern cam_x, cam_y, cam_z, cur_floor, p_eye_y
 extern glStencilFunc, glStencilOp, glStencilMask, glClearStencil, glDepthFunc
 extern glDepthRange, glClipPlane, glGetFloatv, glLoadMatrixf, glColorMask
-extern snd_portal_open, snd_portal_fizzle, snd_portal_enter
+extern snd_portal_open, snd_portal_fizzle, snd_portal_enter, enemy_portal_follow
 
 %macro GLF4 5
     FLD xmm0, %2
@@ -83,6 +83,7 @@ por_r       dd 0.25, 1.0
 por_g       dd 0.6,  0.55
 por_b       dd 1.0,  0.1
 m_fizzle    db "The portal fizzles -- it only sticks to walls.",0
+m_no_safe   db "The safe room's networking magic scrambles the portal -- no portals in (or into) safe rooms.",0
 
 section .bss
 por_on      resd 2
@@ -225,6 +226,8 @@ portal_fire:
     lea esi, [r13d+r8d]
     lea edx, [r14d+r9d]
     call cell_at
+    cmp eax, 'S'                        ; a safe room: no escape hatch in there
+    je .safe
     test byte [char_class+rax], CF_FLAT
     jz .fail
     ; not on top of the other portal
@@ -281,6 +284,13 @@ portal_fire:
     EPILOGUE
 .fail:
     call snd_portal_fizzle
+    EPILOGUE
+.safe:
+    call snd_portal_fizzle
+    lea rdi, [m_no_safe]
+    mov esi, 0xFF47B3FF
+    xor edx, edx
+    call hud_message
     EPILOGUE
 
 ; ray_cell -> r12 = storey, r13 = x, r14 = y of the ray point. (uses floor
@@ -446,6 +456,25 @@ portal_check_teleport:
     call snd_portal_enter
     mov edi, ACH_PORTALS
     call ach_unlock
+    ; T saw you go (or, having learned, heard): he follows. In front of the
+    ; entry (feet on its floor) -> in front of the exit.
+    cvtsi2ss xmm1, dword [por_f+r12*4]
+    mulss xmm1, [c_fh]
+    movss xmm0, [por_nx+r12*4]
+    mulss xmm0, [c_exit_d]
+    addss xmm0, [por_x+r12*4]
+    movss xmm2, [por_nz+r12*4]
+    mulss xmm2, [c_exit_d]
+    addss xmm2, [por_z+r12*4]
+    cvtsi2ss xmm4, dword [por_f+r13*4]
+    mulss xmm4, [c_fh]
+    movss xmm3, [por_nx+r13*4]
+    mulss xmm3, [c_exit_d]
+    addss xmm3, [por_x+r13*4]
+    movss xmm5, [por_nz+r13*4]
+    mulss xmm5, [c_exit_d]
+    addss xmm5, [por_z+r13*4]
+    call enemy_portal_follow
     jmp .done
 .next:
     inc r12d

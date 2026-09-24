@@ -25,7 +25,7 @@ global cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_l
 global cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
 global cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 global cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
-global cfg_hookshot, cfg_dew, cfg_feeders
+global cfg_hookshot, cfg_dew, cfg_feeders, cfg_nemesis
 
 extern invert_y, show_fps, shadows_on, shadows_ok, render_scale
 extern draw_text, draw_rect, font_hud, font_small, font_big, tt_w, tt_h, glDeleteTextures
@@ -74,6 +74,7 @@ cfg_portal      dd 0            ; 0 somewhere in the building, 1 start with it, 
 cfg_hookshot    dd 0            ; (same)
 cfg_dew         dd 4            ; cans of Diet Mountain Dew
 cfg_feeders     dd 2            ; bottom feeders
+cfg_nemesis     dd 1            ; T remembers how you escape him
 cfg_stamina     dd 100
 cfg_battery     dd 100
 cfg_walk        dd 100
@@ -107,6 +108,7 @@ l_portal    db "Portal gun *",0
 l_hookshot  db "Hookshot *",0
 l_dew       db "Diet Mountain Dew cans *",0
 l_feeders   db "Bottom feeders *",0
+l_nemesis   db "T remembers you (nemesis) *",0
 h_you       db "YOU",0
 l_stamina   db "Sprint stamina drain",0
 l_battery   db "Flashlight battery drain",0
@@ -178,6 +180,7 @@ k_portal    db "portal_gun",0
 k_hookshot  db "hookshot",0
 k_dew       db "dew",0
 k_feeders   db "feeders",0
+k_nemesis   db "nemesis",0
 k_stamina   db "stamina_drain",0
 k_battery   db "battery_drain",0
 k_walk      db "walk_speed",0
@@ -247,6 +250,7 @@ rows:
     ROW l_hookshot,  k_hookshot,  cfg_hookshot,   T_CHOICE, 0, 2, 1, n_portal
     ROW l_dew,       k_dew,       cfg_dew,        T_INT,    0, 8, 1, 0
     ROW l_feeders,   k_feeders,   cfg_feeders,    T_INT,    0, 4, 1, 0
+    ROW l_nemesis,   k_nemesis,   cfg_nemesis,    T_CHOICE, 0, 1, 1, n_offon
     ROW h_you,       0,           0,              T_HEADER, 0, 0, 0, 0
     ROW l_stamina,   k_stamina,   cfg_stamina,    T_PCT,    0, 300, 25, 0
     ROW l_battery,   k_battery,   cfg_battery,    T_PCT,    0, 300, 25, 0

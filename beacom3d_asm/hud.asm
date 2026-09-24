@@ -1576,7 +1576,7 @@ hud_draw:
     comiss xmm5, [c_zero]
     jbe .st_plain
     movaps xmm1, xmm5
-    FLD xmm5, 20.0
+    FLD xmm5, 10.0
     divss xmm1, xmm5
     minss xmm1, [c_one]
     FLD xmm2, 0.6

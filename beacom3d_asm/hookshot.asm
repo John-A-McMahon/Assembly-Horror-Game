@@ -22,7 +22,8 @@ global hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz
 
 extern p_mode, p_vy, p_on_ground, p_mom_x, p_mom_z, parkour_try
 extern plat_inside, plat_height, t_stun, snd_hook_fire, snd_hook_hit, snd_hook_miss
-extern hud_message, slab_cross
+extern hud_message, slab_cross, build_hit_point, build_break, enemy_hear
+extern nm_hook_hear, nemesis_note
 
 %define MODE_WALK 0
 %define MODE_HOOK 4
@@ -214,6 +215,13 @@ hookshot_fire:
     call hits_t
     test eax, eax
     jnz .got_t
+    ; T's stairs? hook them and yank them down
+    movss xmm0, [rsp+8]
+    movss xmm1, [rsp+12]
+    movss xmm2, [rsp+16]
+    call build_hit_point
+    test eax, eax
+    jnz .got_stairs
     movss xmm4, [hk_dy]                 ; the height one step back
     mulss xmm4, [c_step]
     movss xmm3, [rsp+12]
@@ -228,6 +236,11 @@ hookshot_fire:
     movss xmm0, [rsp+4]
     subss xmm0, [c_step]
     movss [hk_target], xmm0
+    jmp .traced
+.got_stairs:
+    mov dword [hk_hit_t], 2
+    mov eax, [rsp+4]
+    mov [hk_target], eax
     jmp .traced
 .got_t:
     mov dword [hk_hit_t], 1
@@ -331,12 +344,28 @@ hookshot_update:
     movaps xmm0, xmm1
     movss [hk_len], xmm0
     call head_at
+    cmp dword [hk_hit_t], 2
+    je .hit_stairs
     cmp dword [hk_hit_t], 0
     jne .hit_t
     movss xmm0, [hk_target]
     comiss xmm0, [c_zero]
     jbe .miss
-    ; it bit: now haul
+    ; it bit: now haul -- and the clank carries: T comes to see (from
+    ; further, once he's learned your hookshot)
+    movss xmm0, [hk_hx]
+    movss xmm1, [hk_dx]
+    mulss xmm1, [c_stand_off]
+    subss xmm0, xmm1
+    movss xmm1, [p_y]
+    movss xmm2, [hk_hz]
+    movss xmm3, [hk_dz]
+    mulss xmm3, [c_stand_off]
+    subss xmm2, xmm3
+    movss xmm3, [nm_hook_hear]
+    call enemy_hear
+    xor edi, edi
+    call nemesis_note
     mov dword [hk_state], HK_PULLING
     mov dword [p_mode], MODE_HOOK
     mov dword [p_vy], 0
@@ -362,6 +391,12 @@ hookshot_update:
     call hud_message
     mov edi, ACH_HOOK_T
     call ach_unlock
+    mov dword [hk_state], HK_RETRACT
+    EPILOGUE
+.hit_stairs:
+    call snd_hook_hit
+    mov edi, 1
+    call build_break
     mov dword [hk_state], HK_RETRACT
     EPILOGUE
 .miss:
