@@ -19,6 +19,7 @@
 global main, items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h
 global on_t_spotted, have_map, have_compass, have_portal, invert_y, show_fps
 global special, have_hookshot, add_item
+global have_grod, tyler_armed, tyler_x, tyler_y, tyler_z, grod_beam, beam_x, beam_y, beam_z
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
@@ -120,7 +121,12 @@ st_oob_none db "[selftest] hookshot out-of-bounds: no open spot found on floor %
 st_fd_steal db "[selftest] bottom feeder: robbed you after %.1fs (expect < 5): captures 2 -> %d (expect 1), it carries %d (expect 1)",10,0
 st_fd_stash db "[selftest] bottom feeder: stashed it after %.1fs, %.0f m from you (expect > 20), carrying %d (expect 0), a new capture lies there=%d (expect 1)",10,0
 st_fd_back db "[selftest] bottom feeder: you caught the thief: captures %d (expect 2), OUT-FED=%d (expect 1)",10,0
-st_fd_deauth db "[selftest] bottom feeder: deauthed while carrying: stunned=%d (expect 1), carrying %d (expect 0), capture dropped=%d (expect 1)",10,0
+st_fd_away db "[selftest] deauth fired away from the feeder: hit it=%d (expect 0: the packet goes to T), gone=%d (expect 0)",10,0
+st_fd_deauth db "[selftest] deauth aimed at the thief: hit it=%d (expect 1), gone for good=%d (expect 1), carrying %d (expect 0), capture dropped=%d (expect 1)",10,0
+st_grod_pick db "[selftest] Grod: picked up the packet weapon=%d (expect 1), it is not a special item you can fire: special=%d (expect 0)",10,0
+st_grod_arm db "[selftest] Grod: gave it to Tyler: armed=%d (expect 1), still carrying=%d (expect 0), WORTHY=%d (expect 1)",10,0
+st_grod_fire db "[selftest] Grod: T walked up to Tyler: blasted=%d (expect 1), now %.0f m from Tyler (expect > 20), recharging %.0fs (expect 20)",10,0
+st_grod_cd db "[selftest] Grod: T back at once: blasted again=%d (expect 0 while it recharges)",10,0
 st_fd_ignore db "[selftest] bottom feeder: with no captures on you it left you alone for 5s: captures %d (expect 0), chased=%d (expect 0)",10,0
 st_dew_you db "[selftest] Diet Mountain Dew: %.1fs of it (expect 20.0), stamina %.2f after sprinting on empty (expect 1.00)",10,0
 st_dew_t db "[selftest] T sniffed out a can %d cells away and drank it after %.1fs (expect < 15): wired for %.1fs (expect > 0), can gone=%d (expect 1)",10,0
@@ -178,6 +184,19 @@ c_dew_t     dd 15.0
 c_dew_sip   dd 0.9                      ; T drinks a can this close
 c_dew_sniff dd 14.0                     ; ...and wanders over to one this close
 c_noise_can dd 0.1                      ; cracking a can open is not quiet
+m_grod      db "You lift an ancient packet weapon, humming with power. A voice BOOMS: 'YOU ARE NOT WORTHY.' ...but maybe Tyler is. Find him -- he hangs around the %s.",0
+grod_fl0    db "basement",0
+grod_fl1    db "ground floor",0
+grod_fl2    db "second floor",0
+align 8
+grod_fls    dq grod_fl0, grod_fl1, grod_fl2
+m_unworthy  db "The packet of Grod won't fire for you. 'YOU ARE NOT WORTHY.' Take it to Tyler.",0
+m_worthy    db "TYLER IS WORTHY. He raises the packet of Grod and it becomes the DAUTH CANNON OF GROD! Lure T past him...",0
+m_grod_fire db "The DAUTH CANNON OF GROD roars -- T is blasted clean across the building!",0
+c_grod_r    dd 16.0                     ; the cannon's reach
+c_grod_cd   dd 20.0                     ; ...and its recharge
+c_grod_beam dd 0.5
+c_give_d    dd 2.6                      ; close enough to hand Tyler something
 m_nothing   db "You're not holding a special item (deauth packet, portal gun or hookshot).",0
 sp_name1    db "deauth packets",0
 sp_name2    db "portal gun",0
@@ -237,6 +256,8 @@ sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
 sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
 sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
+sh_grod db "shots/40_packet_of_grod.bmp",0
+sh_tyler db "shots/41_dauth_cannon_of_grod.bmp",0
 sh_feeders db "shots/39_bottom_feeders.bmp",0
 sh_dew db "shots/38_diet_mountain_dew.bmp",0
 sh_hook_hand db "shots/36_hookshot_in_hand.bmp",0
@@ -332,6 +353,17 @@ item_count  resd 1
 inventory   resd 1
 deauths     resd 1
 dew_count   resd 1                      ; cans you drank this run
+have_grod   resd 1                      ; carrying the packet of Grod
+tyler_armed resd 1                      ; Tyler is the DAUTH CANNON OF GROD
+tyler_item  resd 1                      ; Tyler's slot in items[]
+tyler_x     resd 1
+tyler_y     resd 1
+tyler_z     resd 1
+grod_cd     resd 1                      ; seconds until it can fire again
+grod_beam   resd 1                      ; seconds of bolt left on screen
+beam_x      resd 1                      ; where the bolt hit T
+beam_y      resd 1
+beam_z      resd 1
 fo_x        resd 1                      ; find_open's answer
 fo_y        resd 1
 hr_maxy     resd 1                      ; hook_run: highest / lowest feet
@@ -701,6 +733,10 @@ new_game:
     mov [inventory], eax
     mov [deauths], eax
     mov [dew_count], eax
+    mov [have_grod], eax
+    mov [tyler_armed], eax
+    mov [grod_cd], eax
+    mov [grod_beam], eax
     mov [elapsed_time], eax
     mov [item_count], eax
     mov [last_band], eax
@@ -833,6 +869,24 @@ new_game:
     mov esi, eax
     mov edi, IT_TYLER
     call add_item
+    mov eax, [item_count]
+    dec eax
+    mov [tyler_item], eax
+    imul eax, eax, ITEM_SIZE
+    mov ecx, [items+rax+ITEM_X]
+    mov [tyler_x], ecx
+    mov ecx, [items+rax+ITEM_Y]
+    mov [tyler_y], ecx
+    mov ecx, [items+rax+ITEM_Z]
+    mov [tyler_z], ecx
+    ; the ancient packet weapon, deep in the basement
+    xor edi, edi
+    xor esi, esi
+    xor edx, edx
+    call random_cell
+    mov esi, eax
+    mov edi, IT_GROD
+    call add_item
     mov edi, 1
     mov esi, 10
     mov edx, 18
@@ -953,6 +1007,21 @@ near_b:
 ; interact -- E: pick up the nearest item, or talk to B
 interact:
     PROLOGUE 16
+    call near_tyler
+    test eax, eax
+    jz .no_tyler
+    cmp dword [have_grod], 0
+    je .no_tyler
+    mov dword [have_grod], 0
+    mov dword [tyler_armed], 1
+    call snd_fanfare
+    lea rdi, [m_worthy]
+    mov esi, COL_GOOD
+    call msg
+    mov edi, ACH_WORTHY
+    call ach_unlock
+    EPILOGUE
+.no_tyler:
     movss xmm0, [c_reach]
     xor edi, edi
     call nearest_item
@@ -993,6 +1062,27 @@ interact:
     jne .dew
     jmp .deauth
 .dew:
+    cmp dword [rbx+ITEM_KIND], IT_GROD
+    jne .not_grod
+    mov dword [have_grod], 1
+    call snd_fanfare
+    movss xmm0, [tyler_y]
+    call floor_of_height
+    cmp eax, 2
+    jle .grod_fl
+    mov eax, 2
+.grod_fl:
+    lea rcx, [grod_fls]
+    mov rcx, [rcx+rax*8]
+    lea rdi, [msg_buf]
+    mov esi, 512
+    lea rdx, [m_grod]
+    xor eax, eax
+    call snprintf
+    lea rdi, [msg_buf]
+    call lore
+    jmp .done
+.not_grod:
     cmp dword [rbx+ITEM_KIND], IT_DEW
     jne .zelda
     call snd_can
@@ -1123,6 +1213,10 @@ use_special:
     cmp eax, SP_HOOK
     je .hook
     lea rdi, [m_nothing]
+    cmp dword [have_grod], 0
+    je .say
+    lea rdi, [m_unworthy]
+.say:
     mov esi, COL_WARN
     call msg
     EPILOGUE
@@ -1236,7 +1330,17 @@ fire_deauth:
     mov dword [special], SP_NONE
 .more_left:
     inc dword [run_deauths]             ; (no PACIFIST this run)
-    call feeders_deauth                 ; bottom feeders nearby are scrambled too
+    ; aimed at a bottom feeder? it's gone for good -- and T is untouched
+    call feeders_deauth
+    test eax, eax
+    jz .at_t
+    call snd_deauth
+    movss xmm0, [c_noise_deauth]
+    call noise_add
+    mov eax, [c_one]
+    mov [hud_flash], eax
+    EPILOGUE
+.at_t:
     movss xmm0, [t_dist]
     FLD xmm1, 4.0
     comiss xmm0, xmm1
@@ -2192,6 +2296,18 @@ update_prompt:
     PROLOGUE 16
     mov eax, [trav_prompt]              ; ladder / zipline (items win below)
     mov [hud_prompt], eax
+    call near_tyler                     ; Tyler: hand him the packet / his title
+    test eax, eax
+    jz .items
+    cmp dword [have_grod], 0
+    je .title
+    mov dword [hud_prompt], 12
+    EPILOGUE
+.title:
+    cmp dword [tyler_armed], 0
+    je .items
+    mov dword [hud_prompt], 13
+.items:
     movss xmm0, [c_reach]
     xor edi, edi
     call nearest_item
@@ -2208,10 +2324,100 @@ update_prompt:
     call near_b
     test eax, eax
     jz .done
-    mov dword [hud_prompt], 7
+    mov dword [hud_prompt], 8
     cmp dword [inventory], 3
     jl .done
-    mov dword [hud_prompt], 8
+    mov dword [hud_prompt], 9
+.done:
+    EPILOGUE
+
+; near_tyler -> eax 1 if you're right beside Tyler
+near_tyler:
+    PROLOGUE 16
+    movss xmm0, [tyler_x]
+    movss xmm1, [tyler_y]
+    movss xmm2, [tyler_z]
+    call dist_to_player
+    xor eax, eax
+    comiss xmm0, [c_give_d]
+    jae .no
+    mov eax, 1
+.no:
+    EPILOGUE
+
+; grod_tick(xmm0 = dt) -- the DAUTH CANNON OF GROD: when T comes within reach
+; and in sight of Tyler, it blasts him across the building (then recharges)
+grod_tick:
+    PROLOGUE 32
+    movss xmm1, [grod_beam]
+    subss xmm1, xmm0
+    maxss xmm1, [c_zero]
+    movss [grod_beam], xmm1
+    cmp dword [tyler_armed], 0
+    je .done
+    movss xmm1, [grod_cd]
+    subss xmm1, xmm0
+    maxss xmm1, [c_zero]
+    movss [grod_cd], xmm1
+    comiss xmm1, [c_zero]
+    ja .done
+    movss xmm0, [t_stun]
+    comiss xmm0, [c_zero]
+    ja .done
+    cmp dword [rag_active], 0
+    jne .done
+    movss xmm0, [t_x]
+    subss xmm0, [tyler_x]
+    mulss xmm0, xmm0
+    movss xmm1, [t_z]
+    subss xmm1, [tyler_z]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    movss xmm1, [t_y]
+    subss xmm1, [tyler_y]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    comiss xmm0, [c_grod_r]
+    jae .done
+    movss xmm0, [tyler_x]
+    movss xmm1, [tyler_y]
+    FLD xmm3, 1.05
+    addss xmm1, xmm3
+    movss xmm2, [tyler_z]
+    movss xmm3, [t_x]
+    movss xmm4, [t_y]
+    FLD xmm5, 1.0
+    addss xmm4, xmm5
+    movss xmm5, [t_z]
+    call line_of_sight_3d
+    test eax, eax
+    jz .done
+    ; FIRE
+    mov eax, [t_x]
+    mov [beam_x], eax
+    mov eax, [t_y]
+    mov [beam_y], eax
+    mov eax, [t_z]
+    mov [beam_z], eax
+    mov eax, [c_grod_beam]
+    mov [grod_beam], eax
+    mov eax, [c_grod_cd]
+    mov [grod_cd], eax
+    movss xmm0, [tyler_y]
+    call floor_of_height
+    mov edi, eax
+    movss xmm0, [tyler_x]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si esi, xmm0
+    movss xmm0, [tyler_z]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si edx, xmm0
+    call enemy_deauth                   ; T: far away, and dazed
+    call snd_deauth
+    lea rdi, [m_grod_fire]
+    mov esi, COL_GOOD
+    call msg
 .done:
     EPILOGUE
 
@@ -2322,6 +2528,8 @@ game_tick:
     call dew_tick
     movss xmm0, [rsp+0]
     call feeders_update
+    movss xmm0, [rsp+0]
+    call grod_tick
     movss xmm0, [rsp+0]
     movss xmm1, [elapsed_time]
     call world_lights_update
@@ -2899,6 +3107,81 @@ shot_mode_run:
     lea rdi, [sh_feeders]
     call shot_now
     mov dword [fd_count], 0
+    ; the packet of Grod on the floor ahead
+    mov edi, 1
+    mov esi, 28
+    mov edx, 15
+    call cell_index
+    mov esi, eax
+    mov edi, IT_GROD
+    call add_item
+    lea rdi, [sh_grod]
+    call shot_now
+    mov eax, [item_count]
+    dec eax
+    imul eax, eax, ITEM_SIZE
+    mov dword [items+rax+ITEM_ACTIVE], 0
+    ; Tyler, armed: stand a few metres off him on open floor, looking at him
+    mov dword [tyler_armed], 1
+    xor r12d, r12d
+.ty_try:
+    cmp r12d, 4
+    jge .ty_done
+    movss xmm0, [tyler_x]
+    movss xmm1, [tyler_z]
+    FLD xmm2, 3.0
+    cmp r12d, 1
+    jne .t1
+    FLD xmm2, -3.0
+.t1:
+    cmp r12d, 2
+    jl .tx
+    cmp r12d, 3
+    jne .tz
+    FLD xmm2, -3.0
+.tz:
+    addss xmm1, xmm2
+    jmp .tp
+.tx:
+    addss xmm0, xmm2
+.tp:
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss xmm0, [tyler_y]
+    call floor_of_height
+    mov edi, eax
+    movss xmm0, [rsp+0]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si esi, xmm0
+    movss xmm0, [rsp+4]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si edx, xmm0
+    call cell_at
+    cmp eax, ' '
+    je .ty_ok
+    inc r12d
+    jmp .ty_try
+.ty_ok:
+    mov eax, [rsp+0]
+    mov [p_x], eax
+    mov eax, [tyler_y]
+    mov [p_y], eax
+    mov eax, [rsp+4]
+    mov [p_z], eax
+    ; T just off to the side, so the cannon turns to him, mid-blast
+    movss xmm0, [tyler_x]
+    subss xmm0, [p_x]
+    movss xmm1, [tyler_z]
+    subss xmm1, [p_z]
+    xorps xmm0, [c_sign_mask]
+    xorps xmm1, [c_sign_mask]
+    call atan2f
+    movss [p_yaw], xmm0
+    mov dword [p_pitch], __float32__(0.05)
+    lea rdi, [sh_tyler]
+    call shot_now
+.ty_done:
+    mov dword [tyler_armed], 0
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -4269,15 +4552,61 @@ feeder_tests:
     call fd_run
     call count_keys
     mov [rsp+8], eax
+    ; aim: yaw = atan2(-dx, -dz), pitch = atan2(dy, flat)
+    movss xmm0, [p_y]
+    FLD xmm1, 1.55
+    addss xmm0, xmm1
+    movss [p_eye_y], xmm0
+    movss xmm0, [fd_x]
+    subss xmm0, [p_x]
+    xorps xmm0, [c_sign_mask]
+    movss xmm1, [fd_z]
+    subss xmm1, [p_z]
+    xorps xmm1, [c_sign_mask]
+    movss [rsp+16], xmm0
+    movss [rsp+20], xmm1
+    call atan2f
+    movss [rsp+24], xmm0                ; the yaw that looks at it
+    movss xmm0, [rsp+16]
+    mulss xmm0, xmm0
+    movss xmm1, [rsp+20]
+    mulss xmm1, xmm1
+    addss xmm1, xmm0
+    sqrtss xmm1, xmm1
+    movss xmm0, [fd_y]
+    FLD xmm2, 0.35
+    addss xmm0, xmm2
+    subss xmm0, [p_eye_y]
+    call atan2f
+    movss [p_pitch], xmm0
+    ; first facing the other way: the packet would be T's
+    movss xmm0, [rsp+24]
+    FLD xmm1, 3.14159
+    addss xmm0, xmm1
+    movss [p_yaw], xmm0
     call feeders_deauth
+    mov [rsp+28], eax
+    lea rdi, [st_fd_away]
+    mov esi, eax
+    xor edx, edx
+    cmp dword [fd_state], 4
+    sete dl
+    xor eax, eax
+    call printf
+    ; then right at it
+    mov eax, [rsp+24]
+    mov [p_yaw], eax
+    call feeders_deauth
+    mov [rsp+28], eax
     call count_keys
     sub eax, [rsp+8]
-    mov ecx, eax
-    xor esi, esi
-    cmp dword [fd_state], 3
-    sete sil
+    mov r8d, eax
+    xor edx, edx
+    cmp dword [fd_state], 4
+    sete dl
     lea rdi, [st_fd_deauth]
-    mov edx, [fd_carry]
+    mov esi, [rsp+28]
+    mov ecx, [fd_carry]
     xor eax, eax
     call printf
     ; nothing on you: it doesn't care
@@ -4307,6 +4636,110 @@ feeder_tests:
     mov edx, NACH*4
     call memset
     mov dword [fd_count], 0
+    EPILOGUE
+
+; grod_tests -- the packet of Grod, Tyler armed, the cannon firing at T
+grod_tests:
+    PROLOGUE 32
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    ; walk up to the packet weapon and take it
+    xor ebx, ebx
+.g:
+    cmp ebx, [item_count]
+    jge .found
+    imul eax, ebx, ITEM_SIZE
+    cmp dword [items+rax+ITEM_KIND], IT_GROD
+    je .found
+    inc ebx
+    jmp .g
+.found:
+    imul eax, ebx, ITEM_SIZE
+    mov ecx, [items+rax+ITEM_X]
+    mov [p_x], ecx
+    mov ecx, [items+rax+ITEM_Y]
+    mov [p_y], ecx
+    mov ecx, [items+rax+ITEM_Z]
+    mov [p_z], ecx
+    call interact
+    xor edi, edi
+    call use_special                    ; (not worthy)
+    lea rdi, [st_grod_pick]
+    mov esi, [have_grod]
+    mov edx, [special]
+    xor eax, eax
+    call printf
+    ; to Tyler
+    movss xmm0, [tyler_x]
+    FLD xmm1, 0.6
+    addss xmm0, xmm1
+    movss [p_x], xmm0
+    mov eax, [tyler_y]
+    mov [p_y], eax
+    mov eax, [tyler_z]
+    mov [p_z], eax
+    call interact
+    lea rdi, [st_grod_arm]
+    mov esi, [tyler_armed]
+    mov edx, [have_grod]
+    mov ecx, [ach_flag+ACH_WORTHY*4]
+    xor eax, eax
+    call printf
+    ; T comes by
+    movss xmm0, [tyler_x]
+    movss xmm1, [tyler_y]
+    movss xmm2, [tyler_z]
+    call node_at_pos
+    mov [rsp+0], eax
+    mov edi, eax
+    call enemy_reset
+    mov dword [t_stun], 0
+    movss xmm0, [c_dt_shot]
+    call grod_tick
+    xor esi, esi
+    movss xmm0, [t_stun]
+    comiss xmm0, [c_zero]
+    seta sil
+    movss xmm0, [t_x]
+    subss xmm0, [tyler_x]
+    mulss xmm0, xmm0
+    movss xmm1, [t_z]
+    subss xmm1, [tyler_z]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    movss xmm1, [t_y]
+    subss xmm1, [tyler_y]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    cvtss2sd xmm0, xmm0
+    cvtss2sd xmm1, [grod_cd]
+    lea rdi, [st_grod_fire]
+    mov eax, 2
+    call printf
+    ; straight back: still recharging
+    mov edi, [rsp+0]
+    call enemy_reset
+    mov dword [t_stun], 0
+    movss xmm0, [c_dt_shot]
+    call grod_tick
+    xor esi, esi
+    movss xmm0, [t_stun]
+    comiss xmm0, [c_zero]
+    seta sil
+    lea rdi, [st_grod_cd]
+    xor eax, eax
+    call printf
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    mov dword [tyler_armed], 0
     EPILOGUE
 
 ; start_node -> eax = the node you start on in this building
@@ -4613,6 +5046,7 @@ selftest:
     call oob_tests
     call dew_tests
     call feeder_tests
+    call grod_tests
     mov dword [cfg_building], BLD_ORIGINAL
     call prepare_world                  ; ...then the original map's tests
     call new_game

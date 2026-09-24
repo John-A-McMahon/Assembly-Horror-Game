@@ -185,13 +185,13 @@ Rows marked * apply when you restart.
 
 ### Achievements
 
-22 of them, from **PACIFIST** (win without firing a single deauth packet) and
+23 of them, from **PACIFIST** (win without firing a single deauth packet) and
 **GHOST PROTOCOL** (win without T ever seeing you) to **STAGE FRIGHT** (stand
 on the grand staircase stage while T chases you), **KING OF THE CRATES**,
 **THINKING WITH PORTALS**, **GET OVER HERE** (hit T with the hookshot),
 **SPIDER-BEACOM** (hookshot yourself 2.5 m up), **DO THE DEW** (drink 3 Diet
 Mountain Dews in one night), **OUT-FED** (snatch a capture back from a
-bottom feeder), **LOST IN THE MAZE** and a
+bottom feeder), **WORTHY** (arm Tyler with the DAUTH CANNON OF GROD), **LOST IN THE MAZE** and a
 couple of secrets.
 Unlocking one pops a gold banner with a fanfare. They're saved to
 `beacom_achievements.cfg` (delete it to start over), listed at the bottom of
@@ -308,6 +308,23 @@ They can't kill you. They **rob** you:
   shows it like any other capture) and calms down for a while.
 * They can't enter safe rooms. The compass shows them as purple dots.
 
+**A deauth packet is a choice.** Aim it at a bottom feeder (within 15 m,
+in view, roughly in your sights) and that feeder is **gone for good**,
+dropping anything it was carrying. But that packet doesn't touch T. Fire
+anywhere else and the packet is T's: he's knocked away, but only for a
+while. You carry at most 3.
+
+### The DAUTH CANNON OF GROD (sidequest)
+
+Somewhere in the basement lies an ancient **packet weapon** (a purple
+plaque marked GROD). You can pick it up, but you can't use it: *"YOU ARE
+NOT WORTHY."* It doesn't take your special-item slot. Take it to **Tyler**
+(the pickup message tells you which floor he's on) and press **E**. Tyler
+is worthy: he becomes the **DAUTH CANNON OF GROD**. From then on he stands
+guard with a purple cannon on his shoulder, turning to track T. Whenever T
+comes within 16 m in sight of him, a purple bolt blasts T clean across the
+building. The cannon then needs 20 seconds to recharge. Lure T past Tyler.
+
 ### Generated layouts
 
 With *Building* set to generated, *Generated layout* picks the building's
@@ -353,7 +370,7 @@ follow you down into the atrium. He still can't climb ladders.
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
-| `achievements.asm` | the 22 achievements: rules, unlock banner, `beacom_achievements.cfg` |
+| `achievements.asm` | the 23 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
 | `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, hookshot, sleeve |
 | `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |

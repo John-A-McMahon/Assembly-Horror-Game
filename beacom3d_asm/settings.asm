@@ -154,6 +154,7 @@ l_ach18     db "GET OVER HERE - hit T with the hookshot",0
 l_ach19     db "SPIDER-BEACOM - hookshot yourself 2.5 m up",0
 l_ach20     db "DO THE DEW - drink 3 Diet Mountain Dews in one night",0
 l_ach21     db "OUT-FED - snatch a capture back from a bottom feeder",0
+l_ach22     db "WORTHY - arm Tyler with the DAUTH CANNON OF GROD",0
 s_locked    db "locked",0
 s_unlocked  db "UNLOCKED",0
 fmt_info    db "%s",0
@@ -292,6 +293,7 @@ rows:
     ROW l_ach19,     0,           ach_flag+76,     T_INFO,   0, 1, 1, n_ach
     ROW l_ach20,     0,           ach_flag+80,     T_INFO,   0, 1, 1, n_ach
     ROW l_ach21,     0,           ach_flag+84,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach22,     0,           ach_flag+88,     T_INFO,   0, 1, 1, n_ach
 rows_end:
 %define NROWS ((rows_end - rows) / ROW_SIZE)
 

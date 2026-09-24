@@ -39,10 +39,14 @@ s_pr3       db "[E] take the COMPASS",0
 s_pr4       db "[E] take the PORTAL GUN",0
 s_pr5       db "[E] take the HOOKSHOT",0
 s_pr6       db "[E] drink the DIET MOUNTAIN DEW",0
-s_pr7       db "[E] talk to B",0
-s_pr8       db "[E] give B the captures",0
-s_pr9       db "[E] grab the zipline",0
-s_pr10      db "[W] climb the ladder",0
+s_pr7       db "[E] take the ancient PACKET WEAPON",0
+s_pr8       db "[E] talk to B",0
+s_pr9       db "[E] give B the captures",0
+s_pr10      db "[E] grab the zipline",0
+s_pr11      db "[W] climb the ladder",0
+s_pr12      db "[E] give Tyler the packet weapon",0
+s_pr13      db "TYLER, THE DAUTH CANNON OF GROD -- guarding this hall",0
+s_grod      db "CARRYING: THE PACKET OF GROD (you are not worthy -- find Tyler)",0
 s_dew       db "DIET DEW: UNLIMITED STAMINA",0
 s_mapfull   db "MAP  --  [ ] change floor",0
 s_dirs      db "N",0,"E",0,"S",0,"W",0
@@ -60,7 +64,8 @@ s_fps_fmt   db "FPS %d",0
 align 8
 floor_names dq s_floor0, s_floor1, s_floor2
 prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8, s_pr9, s_pr10
-%define NPROMPTS 11
+            dq s_pr11, s_pr12, s_pr13
+%define NPROMPTS 14
 
 c_msg_life   dd 7.5
 c_lore_life  dd 15.5
@@ -69,7 +74,7 @@ c_grain_a    dd 0.07
 c_pulse      dd 9.0
 c_neg_pi     dd -3.14159265
 ; compass marker colours by pickup kind: capture deauth map compass portal
-mark_col     dd 0.3,0.85,1.0,  1.0,0.3,0.3,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35,  0.6,1.0,0.2
+mark_col     dd 0.3,0.85,1.0,  1.0,0.3,0.3,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35,  0.6,1.0,0.2,  0.75,0.35,1.0
 
 section .bss
 floor_tex   resd NF
@@ -88,9 +93,9 @@ item_w      resd 4
 item_h      resd 4
 deauth_w    resd 10
 deauth_h    resd 10
-misc_tex    resd 9                  ; stamina, flashlight, sees, paused, paused2, map, noise, full map, dew
-misc_w      resd 9
-misc_h      resd 9
+misc_tex    resd 10                 ; stamina, flashlight, sees, paused, paused2, map, noise, full map, dew, grod
+misc_w      resd 10
+misc_h      resd 10
 msg_tex     resd MAX_MSG
 msg_w       resd MAX_MSG
 msg_h       resd MAX_MSG
@@ -258,6 +263,13 @@ hud_init:
     mov [misc_tex+32], eax
     mov [misc_w+32], ecx
     mov [misc_h+32], r8d
+    mov rdi, [font_small]
+    lea rsi, [s_grod]
+    mov edx, RGBC(200,120,255)
+    call mk
+    mov [misc_tex+36], eax
+    mov [misc_w+36], ecx
+    mov [misc_h+36], r8d
     ; compass letters
     xor ebx, ebx
 .dir:
@@ -707,6 +719,8 @@ draw_compass_marks:
 .fd:
     cmp ebx, [fd_count]
     jge .fd_done
+    cmp dword [fd_state+rbx*4], 4
+    je .fd_n
     movss xmm0, [fd_y+rbx*4]
     call floor_of_height
     cmp eax, [map_floor]
@@ -1516,6 +1530,19 @@ hud_draw:
     movss xmm1, [rsp+8]
     movss xmm2, [c_one]
     call draw_text
+    ; the quest item, above it
+    cmp dword [have_grod], 0
+    je .no_grod
+    mov edi, [misc_tex+36]
+    mov esi, [misc_w+36]
+    mov edx, [misc_h+36]
+    FLD xmm0, 18.0
+    movss xmm1, [rsp+8]
+    FLD xmm2, 22.0
+    subss xmm1, xmm2
+    movss xmm2, [c_one]
+    call draw_text
+.no_grod:
     mov edi, [misc_tex+0]
     mov esi, [misc_w+0]
     mov edx, [misc_h+0]

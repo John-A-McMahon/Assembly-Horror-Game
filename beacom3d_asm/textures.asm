@@ -138,6 +138,7 @@ lbl_sign    db "CAUTION",10,10,"WET",10,"FLOOR",0
 lbl_compass db "N",0
 lbl_portal  db "PORTAL",0
 lbl_hook    db "HOOK",0
+lbl_grod    db "GROD",0
 
 section .data
 ; Wireshark-ish row colours (weighted by how often they turn up)
@@ -161,7 +162,7 @@ radial_tex  resd 1
 led_tex     resd 1
 sign_tex    resd NSIGNS
 prop_tex    resd 2                    ; cardboard box, wet-floor sign
-label_tex   resd 10                   ; .pcap DEAUTH MAP COMPASS PORTAL HOOKSHOT (dew) B "Y HELP"
+label_tex   resd 11                   ; .pcap DEAUTH MAP COMPASS PORTAL HOOKSHOT (dew) GROD B "Y HELP"
 tt_w        resd 1                    ; size of the last text texture made
 tt_h        resd 1
 font_hud    resq 1
@@ -1908,6 +1909,14 @@ textures_init:
     mov r9, [font_label]
     call make_plaque
     mov [label_tex+IT_HOOKSHOT*4], eax
+    lea rdi, [lbl_grod]
+    mov esi, 128
+    mov edx, 128
+    mov ecx, RGB(255,220,90)
+    mov r8d, RGB(80,30,140)             ; ancient purple
+    mov r9, [font_label]
+    call make_plaque
+    mov [label_tex+IT_GROD*4], eax
     ; props: a cardboard box and a yellow wet-floor sign
     lea rdi, [lbl_box]
     mov esi, 128

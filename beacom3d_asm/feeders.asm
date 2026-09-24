@@ -10,8 +10,9 @@
 ;            on its back -- catch it first and you snatch it back
 ;   stash    otherwise it hides the capture there (a new capture item, on
 ;            the compass like any other) and calms down for a while
-;   deauth   a deauth packet also scrambles every feeder within 12 m: they
-;            drop whatever they carry and lie stunned for 5 s
+;   deauth   a deauth packet aimed at one gets rid of it FOR GOOD (it drops
+;            whatever it carries) -- but that packet doesn't touch T. Aim
+;            away from them and it's T's: gone, but only for a while.
 ; They can't go into safe rooms, and the scuffle when one robs you is loud
 ; enough that T may come to look.
 ; =============================================================================
@@ -22,13 +23,14 @@ global feeders_reset, feeders_update, feeders_deauth, feeder_put
 global fd_count, fd_x, fd_y, fd_z, fd_yaw, fd_anim, fd_carry, fd_state
 
 extern find_next, cfg_feeders, cfg_t_angry, add_item, snd_pickup
-extern snd_feeder_spot, snd_feeder_steal, snd_feeder_click, atan2f
+extern snd_feeder_spot, snd_feeder_steal, snd_feeder_click, atan2f, sinf, cosf
 
 %define NFEED     4
 %define FD_WANDER 0
 %define FD_CHASE  1
 %define FD_FLEE   2
 %define FD_STUN   3
+%define FD_DEAD   4
 
 section .data
 fd_speeds   dd 1.6, 4.2, 4.6, 0.0       ; per state (you walk 3.4, sprint 6.0)
@@ -42,7 +44,8 @@ c_stun      dd 5.0                      ; deauthed
 c_daze      dd 3.0                      ; after you snatch a capture back
 c_calm      dd 8.0                      ; after stashing one
 c_getaway   dd 0.7                      ; a thief can't be grabbed at once
-c_deauth_r  dd 12.0
+c_deauth_r  dd 15.0                     ; a deauth reaches this far...
+c_aim       dd 0.9                      ; ...within ~25 degrees of your aim
 c_click_r   dd 10.0                     ; you hear them scuttle this close
 c_click_dt  dd 0.15
 c_anim      dd 7.0
@@ -53,7 +56,8 @@ m_smell     db "Something low and quick is scuttling after you -- a BOTTOM FEEDE
 m_stolen    db "A bottom feeder snatched a packet capture! (%d/3 left) Catch it before it hides it!",0
 m_snatched  db "You snatch the capture back from the bottom feeder! (%d/3)",0
 m_stashed   db "The bottom feeder stashed your capture somewhere on the %s.",0
-m_dropped   db "The deauth scrambles a bottom feeder -- it drops the capture it was carrying.",0
+m_killed    db "The deauth fries the bottom feeder. It's gone for good. (T is still out there...)",0
+m_killed_c  db "The deauth fries the bottom feeder -- gone for good, and it drops the capture it was carrying!",0
 fl_0        db "basement",0
 fl_1        db "ground floor",0
 fl_2        db "second floor",0
@@ -163,29 +167,103 @@ drop_capture:
     call add_item
     EPILOGUE
 
-; feeders_deauth -- the zap scrambles every feeder close to you
+; feeders_deauth -> eax 1 if the packet you just fired was aimed at a bottom
+; feeder (the nearest one in your sights, in reach and in view): it's gone
+; for good. 0: nothing to hit here -- the packet is T's.
 feeders_deauth:
-    PROLOGUE 16
+    PROLOGUE 48
+    ; your aim: forward = (-sin yaw cos pitch, sin pitch, -cos yaw cos pitch)
+    movss xmm0, [p_pitch]
+    call cosf
+    movss [rsp+0], xmm0
+    movss xmm0, [p_pitch]
+    call sinf
+    movss [rsp+8], xmm0
+    movss xmm0, [p_yaw]
+    call sinf
+    mulss xmm0, [rsp+0]
+    xorps xmm0, [c_sign_mask]
+    movss [rsp+4], xmm0
+    movss xmm0, [p_yaw]
+    call cosf
+    mulss xmm0, [rsp+0]
+    xorps xmm0, [c_sign_mask]
+    movss [rsp+12], xmm0
+    mov r12d, -1                        ; the target
+    mov eax, [c_deauth_r]
+    mov [rsp+16], eax                   ; nearest so far
     xor ebx, ebx
 .f:
     cmp ebx, [fd_count]
-    jge .done
-    call dist_to
-    comiss xmm0, [c_deauth_r]
-    jae .n
-    mov dword [fd_state+rbx*4], FD_STUN
-    mov eax, [c_stun]
-    mov [fd_timer+rbx*4], eax
-    cmp dword [fd_carry+rbx*4], 0
+    jge .picked
+    cmp dword [fd_state+rbx*4], FD_DEAD
     je .n
-    call drop_capture
-    lea rdi, [m_dropped]
-    mov esi, 0xFF8FE38F
-    xor edx, edx
-    call hud_message
+    ; direction from your eye to its middle
+    movss xmm0, [fd_x+rbx*4]
+    subss xmm0, [p_x]
+    movss xmm1, [fd_y+rbx*4]
+    addss xmm1, [c_eye]
+    subss xmm1, [p_eye_y]
+    movss xmm2, [fd_z+rbx*4]
+    subss xmm2, [p_z]
+    movss [rsp+20], xmm0
+    movss [rsp+24], xmm1
+    movss [rsp+28], xmm2
+    mulss xmm0, xmm0
+    mulss xmm1, xmm1
+    mulss xmm2, xmm2
+    addss xmm0, xmm1
+    addss xmm0, xmm2
+    sqrtss xmm0, xmm0
+    comiss xmm0, [rsp+16]
+    jae .n
+    movss [rsp+32], xmm0
+    ; in your sights?
+    movss xmm1, [rsp+20]
+    mulss xmm1, [rsp+4]
+    movss xmm2, [rsp+24]
+    mulss xmm2, [rsp+8]
+    addss xmm1, xmm2
+    movss xmm2, [rsp+28]
+    mulss xmm2, [rsp+12]
+    addss xmm1, xmm2
+    movss xmm2, [c_aim]
+    mulss xmm2, xmm0
+    comiss xmm1, xmm2
+    jb .n
+    ; ...and not behind a wall
+    movss xmm0, [p_x]
+    movss xmm1, [p_eye_y]
+    movss xmm2, [p_z]
+    movss xmm3, [fd_x+rbx*4]
+    movss xmm4, [fd_y+rbx*4]
+    addss xmm4, [c_eye]
+    movss xmm5, [fd_z+rbx*4]
+    call line_of_sight_3d
+    test eax, eax
+    jz .n
+    mov r12d, ebx
+    mov eax, [rsp+32]
+    mov [rsp+16], eax
 .n:
     inc ebx
     jmp .f
+.picked:
+    xor eax, eax
+    cmp r12d, 0
+    jl .done
+    mov ebx, r12d
+    mov dword [fd_state+rbx*4], FD_DEAD
+    lea rdi, [m_killed]
+    cmp dword [fd_carry+rbx*4], 0
+    je .say
+    call drop_capture
+    lea rdi, [m_killed_c]
+.say:
+    mov esi, 0xFF8FE38F
+    xor edx, edx
+    call hud_message
+    mov eax, 1
 .done:
     EPILOGUE
 
@@ -248,6 +326,8 @@ feeders_update:
 .f:
     cmp ebx, [fd_count]
     jge .done
+    cmp dword [fd_state+rbx*4], FD_DEAD
+    je .next
     ; ---- timers
     movss xmm0, [fd_timer+rbx*4]
     subss xmm0, [rsp+0]

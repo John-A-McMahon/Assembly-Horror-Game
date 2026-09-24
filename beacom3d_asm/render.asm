@@ -308,10 +308,10 @@ rag_width   dd 0.2, 0.05, 0.06, 0.06, 0.08, 0.08
 %define RAG_DRAW_BONES 6
 ; pickups: half-size of the spinning box, and the colour of the glow under it
 ;              capture deauth map   compass portal
-item_half_x dd 0.21,   0.25,  0.26,  0.17,   0.28,   0.30,  0.10
-item_half_y dd 0.21,   0.15,  0.04,  0.06,   0.12,   0.08,  0.17
-item_half_z dd 0.21,   0.15,  0.19,  0.17,   0.12,   0.10,  0.10
-item_glow   dd 0.16,0.66,1.0,  1.0,0.12,0.12,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35,  0.6,1.0,0.2
+item_half_x dd 0.21,   0.25,  0.26,  0.17,   0.28,   0.30,  0.10,  0.36
+item_half_y dd 0.21,   0.15,  0.04,  0.06,   0.12,   0.08,  0.17,  0.11
+item_half_z dd 0.21,   0.15,  0.19,  0.17,   0.12,   0.10,  0.10,  0.11
+item_glow   dd 0.16,0.66,1.0,  1.0,0.12,0.12,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15,  0.45,1.0,0.35,  0.6,1.0,0.2,  0.75,0.35,1.0
 ; per material: bump strength (texture brightness read as height) and shine
 ;              H    C    G    L    N    #    floor flrB flrS ceil ceilB rack white
 mat_bump    dd 0.55,0.25,0.2, 0.5, 0.4, 0.5, 0.35,0.5, 0.35,0.3, 0.5, 0.4, 0.0
@@ -2952,6 +2952,52 @@ draw_hook:
 .done:
     EPILOGUE
 
+; draw_grod_beam -- the DAUTH CANNON OF GROD firing: a purple bolt from
+; Tyler's cannon to where T stood
+draw_grod_beam:
+    PROLOGUE 48
+    movss xmm0, [grod_beam]
+    comiss xmm0, [c_zero]
+    jbe .done
+    mov eax, [tyler_x]
+    mov [rsp+0], eax
+    movss xmm0, [tyler_y]
+    FLD xmm1, 1.05
+    addss xmm0, xmm1
+    movss [rsp+4], xmm0
+    mov eax, [tyler_z]
+    mov [rsp+8], eax
+    mov eax, [beam_x]
+    mov [rsp+16], eax
+    movss xmm0, [beam_y]
+    FLD xmm1, 1.0
+    addss xmm0, xmm1
+    movss [rsp+20], xmm0
+    mov eax, [beam_z]
+    mov [rsp+24], eax
+    FLD xmm0, 1.0
+    call set_emit
+    mov edi, [white_tex]
+    call bind
+    mov edi, GL_QUADS
+    call glBegin
+    GLF3 glColor3f, 0.8, 0.4, 1.0
+    lea rdi, [rsp+0]
+    lea rsi, [rsp+16]
+    FLD xmm0, 0.07
+    call emit_tube
+    GLF3 glColor3f, 0.7, 1.0, 1.0
+    lea rdi, [rsp+0]
+    lea rsi, [rsp+16]
+    FLD xmm0, 0.025
+    call emit_tube
+    call glEnd
+    GLF3 glColor3f, 1.0, 1.0, 1.0
+    xorps xmm0, xmm0
+    call set_emit
+.done:
+    EPILOGUE
+
 ; emit_b -- B, the lord of networking: a tall robed figure
 emit_b:
     PROLOGUE 32
@@ -3607,6 +3653,8 @@ draw_feeders:
 .f:
     cmp ebx, [fd_count]
     jge .done
+    cmp dword [fd_state+rbx*4], 4       ; deauthed for good
+    je .n
     movss xmm0, [fd_y+rbx*4]
     call floor_of_height
     sub eax, [cur_floor]
@@ -3925,10 +3973,22 @@ draw_items:
     call set_emit
     jmp .n
 .npc:
-    ; NPCs turn to face you
+    ; NPCs turn to face you (the DAUTH CANNON OF GROD tracks T)
+    cmp dword [r12+ITEM_KIND], IT_TYLER
+    jne .face_you
+    cmp dword [tyler_armed], 0
+    je .face_you
+    movss xmm0, [t_x]
+    subss xmm0, [r12+ITEM_X]
+    movss xmm1, [t_z]
+    subss xmm1, [r12+ITEM_Z]
+    call atan2f
+    jmp .faced
+.face_you:
     movss xmm0, [r12+ITEM_X]
     movss xmm1, [r12+ITEM_Z]
     call face_camera_yaw
+.faced:
     movaps xmm3, xmm0
     movss xmm0, [r12+ITEM_X]
     movss xmm1, [r12+ITEM_Y]
@@ -3963,6 +4023,51 @@ draw_items:
     FLD xmm5, 0.36
     mov edi, 10
     call emit_cyl
+    cmp dword [tyler_armed], 0
+    je .unarmed
+    ; the DAUTH CANNON OF GROD on his shoulder: purple barrel, gold bands,
+    ; a glowing cyan muzzle
+    FLD xmm0, 0.34
+    FLD xmm1, 1.0
+    FLD xmm2, 0.2
+    FLD xmm3, 0.11
+    FLD xmm4, 0.22
+    FLD xmm5, 0.5
+    mov edi, 0x5a2a9a
+    call cbox
+    FLD xmm0, 0.34
+    FLD xmm1, 0.98
+    FLD xmm2, 0.0
+    FLD xmm3, 0.13
+    FLD xmm4, 0.26
+    FLD xmm5, 0.04
+    mov edi, 0xe0b030
+    call cbox
+    FLD xmm0, 0.34
+    FLD xmm1, 0.98
+    FLD xmm2, 0.62
+    FLD xmm3, 0.13
+    FLD xmm4, 0.26
+    FLD xmm5, 0.04
+    mov edi, 0xe0b030
+    call cbox
+    FLD xmm0, 0.34
+    FLD xmm1, 1.03
+    FLD xmm2, 0.7
+    FLD xmm3, 0.07
+    FLD xmm4, 0.16
+    FLD xmm5, 0.02
+    mov edi, 0x60f0ff
+    call cbox
+    FLD xmm0, 0.14                      ; the arm holding it up
+    FLD xmm1, 0.85
+    FLD xmm2, 0.2
+    FLD xmm3, 0.09
+    FLD xmm4, 0.3
+    FLD xmm5, 0.09
+    mov edi, 0x3b5d3a
+    call cbox
+.unarmed:
     pop rbx
     pop rbx
     jmp .npc_done
@@ -4377,6 +4482,7 @@ draw_scene:
     call draw_physics
     call draw_ziplines
     call draw_hook
+    call draw_grod_beam
     ; Y's plaque on the cage
     cmp dword [cur_floor], 1
     jg .no_y

@@ -60,7 +60,7 @@ c_fov_kick    dd 0.14
 
 section .bss
 p_mode      resd 1                  ; 0 walk, 1 ladder, 2 zipline
-trav_prompt resd 1                  ; -1, 9 zipline, 10 ladder (hud prompt index)
+trav_prompt resd 1                  ; -1, 10 zipline, 11 ladder (hud prompt index)
 trav_roll   resd 1                  ; extra camera roll (zipline sway)
 trav_shake  resd 1                  ; extra camera height jitter
 trav_fov    resd 1                  ; field-of-view boost, 0..~0.14
@@ -244,7 +244,7 @@ walk_checks:
     cmp eax, 0
     jl .zips
     mov ebx, eax
-    mov dword [trav_prompt], 10
+    mov dword [trav_prompt], 11
     cmp byte [keys_down+0], 0           ; W
     je .zips
     ; facing the wall?
@@ -338,7 +338,7 @@ walk_checks:
     mov [zip_cand_t], eax
     cmp dword [trav_prompt], 0
     jge .nz
-    mov dword [trav_prompt], 9
+    mov dword [trav_prompt], 10
 .nz:
     inc ebx
     jmp .zip

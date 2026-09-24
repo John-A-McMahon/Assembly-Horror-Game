@@ -100,7 +100,8 @@ section .rodata
 %define ACH_SPIDER 19
 %define ACH_DEW 20
 %define ACH_OUTFED 21
-%define NACH 22
+%define ACH_WORTHY 22
+%define NACH 23
 
 ; ---- the special item you carry (one at a time) ------------------------------
 %define SP_NONE   0
@@ -133,11 +134,12 @@ section .rodata
 %define IT_PORTAL  4        ; portal gun
 %define IT_HOOKSHOT 5       ; the hookshot
 %define IT_DEW     6        ; a can of Diet Mountain Dew (you or T can drink it)
-%define IT_TYLER   7        ; "HI I AM TYLER"
-%define IT_JOCKEY  8        ; chicken jockey easter egg
+%define IT_GROD    7        ; the ancient packet weapon (only Tyler is worthy)
+%define IT_TYLER   8        ; "HI I AM TYLER"
+%define IT_JOCKEY  9        ; chicken jockey easter egg
 ; label_tex[] slots (textures.asm): one per pickup kind, then these
-%define LBL_B      7
-%define LBL_Y      8
+%define LBL_B      8
+%define LBL_Y      9
 ; item record layout (32 bytes)
 %define ITEM_KIND   0       ; dword
 %define ITEM_ACTIVE 4       ; dword
@@ -417,5 +419,6 @@ extern fd_count, fd_x, fd_y, fd_z, fd_yaw, fd_anim, fd_carry, fd_state
 
 %ifndef MODULE_MAIN
 extern items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h
-extern special, have_hookshot
+extern special, have_hookshot, have_grod, tyler_armed, tyler_x, tyler_y, tyler_z
+extern grod_beam, beam_x, beam_y, beam_z
 %endif
