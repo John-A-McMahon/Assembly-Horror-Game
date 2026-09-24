@@ -127,7 +127,7 @@ mkdir_shots db "mkdir -p shots",0
 ; ---- in-game messages (strings carried over from the originals) ----
 m_seed      db "Seed %d. Find 3 wireshark packet captures -- one on every floor -- and bring them to B.",0
 m_generated db "This is not the Beacom you know. Seed %d built it tonight -- the atrium, the server room and B's library are the only places that stayed put. (Esc -> Generated layout: maze / classic / open.)",0
-m_controls  db "WASD move - mouse or arrow keys look - SHIFT sprint - C crouch - SPACE jump - F flashlight - E grab - Q deauth - M map - I invert mouse - F3 fps - F4 render scale - F5 shadows",0
+m_controls  db "ESC: menu + CUSTOM RUN settings - WASD move - mouse or arrow keys look - SHIFT sprint - C crouch (sprint+C slide) - SPACE jump / mantle / vault - F flashlight - E grab - Q deauth - M map - I invert mouse - F3 fps - F4 render scale - F5 shadows",0
 m_inv_on    db "Mouse look: vertical inverted.",0
 m_inv_off   db "Mouse look: normal.",0
 env_wsl     db "WSL_DISTRO_NAME",0

@@ -11,7 +11,8 @@
 ;   LEFT/RIGHT,A/D change it             mouse: left click +, right click -
 ;   ENTER / SPACE  resume, restart, ...  mouse wheel: scroll
 ;
-; Rows marked * change how a run is set up and apply when you restart.
+; The actions come first, then the custom run, so both are on screen the
+; moment the menu opens. Rows marked * apply when you restart.
 ; Everything is saved to beacom_settings.cfg when you close the menu, and
 ; loaded again at start-up (not in --shot / --selftest runs).
 ; =============================================================================
@@ -85,7 +86,7 @@ cfg_volume      dd 100
 cfg_grain       dd 50           ; film grain over the whole picture
 
 ; ---- labels -----------------------------------------------------------------
-h_run       db "CUSTOM RUN           (* = applies when you restart)",0
+h_run       db "CUSTOM RUN   (rows marked * apply when you pick RESTART above)",0
 l_building  db "Building *",0
 l_layout    db "Generated layout *",0
 l_t_speed   db "T speed",0
@@ -121,7 +122,6 @@ l_scale     db "Render resolution",0
 l_shadows   db "Flashlight shadows",0
 l_fps       db "FPS counter",0
 l_grain     db "Film grain",0
-h_actions   db " ",0
 a_resume    db "> RESUME",0
 a_restart   db "> RESTART THIS RUN (same seed)",0
 a_newseed   db "> RESTART WITH A NEW SEED",0
@@ -187,6 +187,10 @@ n_crouch    dq s_hold, s_toggle
 n_scale     dq s_full, s_half, s_third
 
 rows:
+    ROW a_resume,    0,           0,              T_ACTION, 0, 0, 0, 0
+    ROW a_restart,   0,           0,              T_ACTION, 1, 0, 0, 0
+    ROW a_newseed,   0,           0,              T_ACTION, 2, 0, 0, 0
+    ROW a_quit,      0,           0,              T_ACTION, 3, 0, 0, 0
     ROW h_run,       0,           0,              T_HEADER, 0, 0, 0, 0
     ROW l_building,  k_building,  cfg_building,   T_CHOICE, 0, 1, 1, n_building
     ROW l_layout,    k_layout,    cfg_layout,     T_CHOICE, 0, 2, 1, n_layout
@@ -223,11 +227,6 @@ rows:
     ROW l_shadows,   k_shadows,   shadows_on,     T_CHOICE, 0, 1, 1, n_offon
     ROW l_fps,       k_fps,       show_fps,       T_CHOICE, 0, 1, 1, n_offon
     ROW l_grain,     k_grain,     cfg_grain,      T_PCT,    0, 200, 25, 0
-    ROW h_actions,   0,           0,              T_HEADER, 0, 0, 0, 0
-    ROW a_resume,    0,           0,              T_ACTION, 0, 0, 0, 0
-    ROW a_restart,   0,           0,              T_ACTION, 1, 0, 0, 0
-    ROW a_newseed,   0,           0,              T_ACTION, 2, 0, 0, 0
-    ROW a_quit,      0,           0,              T_ACTION, 3, 0, 0, 0
 rows_end:
 %define NROWS ((rows_end - rows) / ROW_SIZE)
 
@@ -274,9 +273,10 @@ row_ptr:
     lea rax, [rows+rax]
     ret
 
-; menu_reset -- open on RESUME
+; menu_reset -- open at the top: RESUME, with the custom run right below
 menu_reset:
-    mov dword [menu_sel], NROWS - 4
+    mov dword [menu_sel], 0
+    mov dword [menu_first], 0
     ret
 
 ; selectable(edi=row) -> eax 1 unless it's a header. leaf
