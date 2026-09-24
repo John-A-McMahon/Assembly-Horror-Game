@@ -10,10 +10,14 @@
 %include "common.inc"
 
 global hud_init, hud_draw, hud_message, hud_clear_messages, map_visible, explored
+global draw_text, draw_rect
 global hud_prompt, hud_vignette, hud_safe_tint, hud_flash, hud_update_explored, hud_paused, hud_fps
+global map_floor
+extern have_map, have_compass, items, item_count, t_x, t_y, t_z, b_pos_x, b_pos_z, b_floor
+extern floor_of_height
 
 extern font_hud, font_small, font_big, tt_w, tt_h, t_sees, p_stamina, p_battery
-extern p_flash_on, p_exhausted, player_floor, p_x, p_z, p_yaw, glDeleteTextures
+extern p_flash_on, p_exhausted, player_floor, p_x, p_z, p_yaw, glDeleteTextures, t_dist, t_hear_d
 
 %define MAX_MSG 6
 %define RGBC(r,g,b) (0xFF000000 | ((b)<<16) | ((g)<<8) | (r))
@@ -30,36 +34,52 @@ s_flash     db "FLASHLIGHT",0
 s_sees      db "HE SEES YOU",0
 s_pr0       db "[E] take the packet capture",0
 s_pr1       db "[E] take the deauth packet",0
-s_pr2       db "[E] talk to B",0
-s_pr3       db "[E] give B the captures",0
+s_pr2       db "[E] take the MAP",0
+s_pr3       db "[E] take the COMPASS",0
+s_pr4       db "[E] take the PORTAL GUN",0
+s_pr5       db "[E] talk to B",0
+s_pr6       db "[E] give B the captures",0
+s_pr7       db "[E] grab the zipline",0
+s_pr8       db "[W] climb the ladder",0
+s_mapfull   db "MAP  --  [ ] change floor",0
+s_dirs      db "N",0,"E",0,"S",0,"W",0
 s_paused    db "PAUSED",0
 s_paused2   db "T is waiting.   ESC or click to resume   (Q in the terminal quits)",0
 s_map       db "explored map",0
+s_noise     db "NOISE  (| = T hears)",0
 s_deauth_fmt db "DEAUTH x%d",0
 s_fps_fmt   db "FPS %d",0
 align 8
 floor_names dq s_floor0, s_floor1, s_floor2
-prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3
+prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8
+%define NPROMPTS 9
 
 c_msg_life   dd 7.5
 c_lore_life  dd 15.5
 c_fade       dd 1.5
 c_grain_a    dd 0.07
 c_pulse      dd 9.0
+c_neg_pi     dd -3.14159265
+; compass marker colours by pickup kind: capture deauth map compass portal
+mark_col     dd 0.3,0.85,1.0,  1.0,0.3,0.3,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15
 
 section .bss
 floor_tex   resd NF
 floor_w     resd NF
 floor_h     resd NF
-prompt_tex  resd 4
-prompt_w    resd 4
-prompt_h    resd 4
+prompt_tex  resd 9
+prompt_w    resd 9
+prompt_h    resd 9
+map_floor   resd 1                  ; which storey the map is showing
+dir_tex     resd 4                  ; N E S W for the compass strip
+dir_w       resd 4
+dir_h       resd 4
 deauth_tex  resd 10
 deauth_w    resd 10
 deauth_h    resd 10
-misc_tex    resd 6                  ; stamina, flashlight, sees, paused, paused2, map
-misc_w      resd 6
-misc_h      resd 6
+misc_tex    resd 8                  ; stamina, flashlight, sees, paused, paused2, map, noise, full map
+misc_w      resd 8
+misc_h      resd 8
 msg_tex     resd MAX_MSG
 msg_w       resd MAX_MSG
 msg_h       resd MAX_MSG
@@ -73,6 +93,10 @@ hud_flash   resd 1                  ; float 0..1 deauth flash
 hud_paused  resd 1
 explored    resb NCELLS
 scr_w       resd 1
+map_s       resd 1                  ; open map: pixels per cell and origin
+map_ox      resd 1
+map_oy      resd 1
+hud_time    resd 1
 scr_h       resd 1
 fmt_buf     resb 64
 hud_fps     resd 1                  ; -1 = hidden, else frames last second
@@ -111,7 +135,7 @@ hud_init:
 .fl_done:
     xor ebx, ebx
 .pr:
-    cmp ebx, 4
+    cmp ebx, NPROMPTS
     jge .pr_done
     mov rdi, [font_hud]
     mov rsi, [prompt_strs+rbx*8]
@@ -185,6 +209,39 @@ hud_init:
     mov [misc_tex+20], eax
     mov [misc_w+20], ecx
     mov [misc_h+20], r8d
+    mov rdi, [font_small]
+    lea rsi, [s_noise]
+    mov edx, RGBC(216,212,200)
+    call mk
+    mov [misc_tex+24], eax
+    mov [misc_w+24], ecx
+    mov [misc_h+24], r8d
+    mov rdi, [font_small]
+    lea rsi, [s_mapfull]
+    mov edx, RGBC(230,200,130)
+    call mk
+    mov [misc_tex+28], eax
+    mov [misc_w+28], ecx
+    mov [misc_h+28], r8d
+    ; compass letters
+    xor ebx, ebx
+.dir:
+    cmp ebx, 4
+    jge .dir_done
+    mov rdi, [font_hud]
+    lea rsi, [s_dirs+rbx*2]
+    mov edx, RGBC(240,210,120)
+    cmp ebx, 0
+    jne .dcol
+    mov edx, RGBC(255,80,70)            ; north in red
+.dcol:
+    call mk
+    mov [dir_tex+rbx*4], eax
+    mov [dir_w+rbx*4], ecx
+    mov [dir_h+rbx*4], r8d
+    inc ebx
+    jmp .dir
+.dir_done:
     mov dword [hud_prompt], -1
     mov dword [hud_fps], -1
     mov dword [fps_shown], -1
@@ -523,6 +580,321 @@ diamond:
     call glEnd
     EPILOGUE
 
+; map_mark(xmm0=world x, xmm1=world z, xmm2..4=rgb, xmm5=size px) -- a
+; square marker on the open map. Uses the map layout at [map_s], [map_ox], [map_oy].
+map_mark:
+    PROLOGUE 32
+    movss [rsp+16], xmm5
+    mulss xmm0, [c_inv_cell]
+    mulss xmm0, [map_s]
+    addss xmm0, [map_ox]
+    mulss xmm1, [c_inv_cell]
+    mulss xmm1, [map_s]
+    addss xmm1, [map_oy]
+    movss xmm7, xmm5
+    mulss xmm7, [c_half]
+    subss xmm0, xmm7
+    subss xmm1, xmm7
+    movaps xmm6, xmm4
+    movaps xmm5, xmm3
+    movaps xmm4, xmm2
+    movss xmm2, [rsp+16]
+    movss xmm3, [rsp+16]
+    movss xmm7, [c_one]
+    call draw_rect
+    EPILOGUE
+
+; draw_compass_marks -- what Zelda's compass shows: the treasure (captures,
+; deauths, the other items), B, and the boss -- T -- on the floor being viewed
+draw_compass_marks:
+    PROLOGUE 32
+    xor ebx, ebx
+.it:
+    cmp ebx, [item_count]
+    jge .items_done
+    imul eax, ebx, ITEM_SIZE
+    lea r12, [items+rax]
+    cmp dword [r12+ITEM_ACTIVE], 0
+    je .n
+    mov eax, [r12+ITEM_KIND]
+    cmp eax, IT_TYLER
+    jge .n
+    mov eax, [r12+ITEM_F]
+    cmp eax, [map_floor]
+    jne .n
+    mov eax, [r12+ITEM_KIND]
+    lea rax, [rax*3]
+    movss xmm2, [mark_col+rax*4]
+    movss xmm3, [mark_col+rax*4+4]
+    movss xmm4, [mark_col+rax*4+8]
+    movss xmm0, [r12+ITEM_X]
+    movss xmm1, [r12+ITEM_Z]
+    FLD xmm5, 7.0
+    call map_mark
+.n:
+    inc ebx
+    jmp .it
+.items_done:
+    ; B
+    mov eax, [b_floor]
+    cmp eax, [map_floor]
+    jne .no_b
+    movss xmm0, [b_pos_x]
+    movss xmm1, [b_pos_z]
+    FLD xmm2, 0.37
+    FLD xmm3, 0.85
+    FLD xmm4, 1.0
+    FLD xmm5, 9.0
+    call map_mark
+.no_b:
+    ; T: a pulsing red block
+    movss xmm0, [t_y]
+    call floor_of_height
+    cmp eax, [map_floor]
+    jne .done
+    movss xmm0, [hud_time]
+    FLD xmm1, 8.0
+    mulss xmm0, xmm1
+    call sinf
+    FLD xmm1, 3.0
+    mulss xmm0, xmm1
+    FLD xmm5, 10.0
+    addss xmm5, xmm0
+    movss xmm0, [t_x]
+    movss xmm1, [t_z]
+    FLD xmm2, 1.0
+    FLD xmm3, 0.1
+    FLD xmm4, 0.1
+    call map_mark
+.done:
+    EPILOGUE
+
+; draw_heading_strip -- a Skyrim-style compass bar at the top of the screen:
+; N/E/S/W slide past as you turn; a cyan tick points at the nearest capture
+draw_heading_strip:
+    PROLOGUE 48
+    cvtsi2ss xmm0, dword [scr_w]
+    mulss xmm0, [c_half]
+    movss [rsp+0], xmm0                 ; centre x
+    ; backdrop
+    FLD xmm1, 180.0
+    subss xmm0, xmm1
+    FLD xmm1, 8.0
+    FLD xmm2, 360.0
+    FLD xmm3, 26.0
+    xorps xmm4, xmm4
+    xorps xmm5, xmm5
+    xorps xmm6, xmm6
+    FLD xmm7, 0.45
+    call draw_rect
+    ; centre notch
+    movss xmm0, [rsp+0]
+    FLD xmm1, 1.0
+    subss xmm0, xmm1
+    FLD xmm1, 30.0
+    FLD xmm2, 2.0
+    FLD xmm3, 6.0
+    movss xmm4, [c_one]
+    movss xmm5, [c_one]
+    movss xmm6, [c_one]
+    FLD xmm7, 0.8
+    call draw_rect
+    ; heading: bearing clockwise from north = -yaw
+    movss xmm0, [p_yaw]
+    xorps xmm0, [c_sign_mask]
+    movss [rsp+4], xmm0
+    xor ebx, ebx
+.letter:
+    cmp ebx, 4
+    jge .letters_done
+    cvtsi2ss xmm0, ebx
+    FLD xmm1, 1.5707963
+    mulss xmm0, xmm1                    ; letter bearing
+    subss xmm0, [rsp+4]
+    call wrap_pi
+    ; visible within +/- 90 degrees; 180 px per 90 degrees
+    movaps xmm1, xmm0
+    andps xmm1, [c_abs_mask]
+    FLD xmm2, 1.5707963
+    comiss xmm1, xmm2
+    jae .nl
+    FLD xmm1, 114.59                    ; 180 / (pi/2)
+    mulss xmm0, xmm1
+    addss xmm0, [rsp+0]
+    cvtsi2ss xmm1, dword [dir_w+rbx*4]
+    mulss xmm1, [c_half]
+    subss xmm0, xmm1
+    FLD xmm1, 10.0
+    mov edi, [dir_tex+rbx*4]
+    mov esi, [dir_w+rbx*4]
+    mov edx, [dir_h+rbx*4]
+    movss xmm2, [c_one]
+    call draw_text
+.nl:
+    inc ebx
+    jmp .letter
+.letters_done:
+    ; nearest capture still out there (any floor): a cyan tick
+    mov r13d, -1
+    movss xmm7, [c_big]
+    movss [rsp+8], xmm7
+    xor ebx, ebx
+.cap:
+    cmp ebx, [item_count]
+    jge .cap_done
+    imul eax, ebx, ITEM_SIZE
+    lea r12, [items+rax]
+    cmp dword [r12+ITEM_ACTIVE], 0
+    je .ncap
+    cmp dword [r12+ITEM_KIND], IT_KEY
+    jne .ncap
+    movss xmm0, [r12+ITEM_X]
+    subss xmm0, [p_x]
+    mulss xmm0, xmm0
+    movss xmm1, [r12+ITEM_Z]
+    subss xmm1, [p_z]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    comiss xmm0, [rsp+8]
+    jae .ncap
+    movss [rsp+8], xmm0
+    mov r13d, ebx
+.ncap:
+    inc ebx
+    jmp .cap
+.cap_done:
+    cmp r13d, 0
+    jl .done
+    imul eax, r13d, ITEM_SIZE
+    lea r12, [items+rax]
+    ; bearing of the capture: atan2(dx, -dz) clockwise from north
+    movss xmm0, [r12+ITEM_X]
+    subss xmm0, [p_x]
+    movss xmm1, [p_z]
+    subss xmm1, [r12+ITEM_Z]
+    call atan2f
+    subss xmm0, [rsp+4]
+    call wrap_pi
+    movaps xmm1, xmm0
+    andps xmm1, [c_abs_mask]
+    FLD xmm2, 1.5707963
+    comiss xmm1, xmm2
+    jb .on_strip
+    ; behind you: pin it to the nearer end of the strip
+    FLD xmm1, 1.55
+    comiss xmm0, [c_zero]
+    ja .pin
+    xorps xmm1, [c_sign_mask]
+.pin:
+    movaps xmm0, xmm1
+.on_strip:
+    FLD xmm1, 114.59
+    mulss xmm0, xmm1
+    addss xmm0, [rsp+0]
+    FLD xmm1, 3.0
+    subss xmm0, xmm1
+    FLD xmm1, 26.0
+    FLD xmm2, 6.0
+    FLD xmm3, 7.0
+    FLD xmm4, 0.3
+    FLD xmm5, 0.8
+    movss xmm6, [c_one]
+    movss xmm7, [c_one]
+    call draw_rect
+.done:
+    EPILOGUE
+
+; wrap_pi(xmm0) -> xmm0 in (-pi, pi]. leaf-ish (no calls)
+wrap_pi:
+.lo:
+    comiss xmm0, [c_neg_pi]
+    ja .hi
+    addss xmm0, [c_two_pi]
+    jmp .lo
+.hi:
+    comiss xmm0, [c_pi]
+    jbe .ok
+    subss xmm0, [c_two_pi]
+    jmp .hi
+.ok:
+    ret
+
+; draw_noise_meter -- green -> yellow -> red bar with a tick where T, at his
+; current distance, would start to hear you
+draw_noise_meter:
+    PROLOGUE 32
+    cvtsi2ss xmm0, dword [scr_h]
+    FLD xmm1, 140.0
+    subss xmm0, xmm1
+    movss [rsp+0], xmm0                 ; label y
+    mov edi, [misc_tex+24]
+    mov esi, [misc_w+24]
+    mov edx, [misc_h+24]
+    movaps xmm1, xmm0
+    FLD xmm0, 18.0
+    movss xmm2, [c_one]
+    call draw_text
+    ; colour by level
+    movss xmm5, [noise_level]
+    movss xmm6, xmm5
+    addss xmm6, xmm6                    ; t = 2n
+    comiss xmm5, [c_half]
+    jae .hot
+    ; 0..0.5: green (0.4,0.9,0.4) -> yellow (1.0,0.85,0.3)
+    FLD xmm2, 0.4
+    FLD xmm7, 0.6
+    mulss xmm7, xmm6
+    addss xmm2, xmm7
+    FLD xmm3, 0.9
+    FLD xmm7, 0.05
+    mulss xmm7, xmm6
+    subss xmm3, xmm7
+    FLD xmm4, 0.4
+    FLD xmm7, 0.1
+    mulss xmm7, xmm6
+    subss xmm4, xmm7
+    jmp .bar
+.hot:
+    ; 0.5..1: yellow -> red (1.0,0.25,0.2)
+    subss xmm6, [c_one]                 ; t = 2n - 1
+    movss xmm2, [c_one]
+    FLD xmm3, 0.85
+    FLD xmm7, 0.6
+    mulss xmm7, xmm6
+    subss xmm3, xmm7
+    FLD xmm4, 0.3
+    FLD xmm7, 0.1
+    mulss xmm7, xmm6
+    subss xmm4, xmm7
+.bar:
+    movss xmm0, [rsp+0]
+    FLD xmm1, 20.0
+    addss xmm0, xmm1
+    movss [rsp+4], xmm0                 ; bar y
+    movaps xmm1, xmm5
+    call bar
+    ; tick: meter level at which T hears you (distance + walls and floors between)
+    movss xmm0, [t_hear_d]
+    divss xmm0, [noise_range]
+    comiss xmm0, [c_one]
+    jae .done
+    FLD xmm1, 200.0
+    mulss xmm0, xmm1
+    FLD xmm1, 17.0
+    addss xmm0, xmm1                    ; x = 18 + 200*frac - 1
+    movss xmm1, [rsp+4]
+    FLD xmm2, 3.0
+    subss xmm1, xmm2
+    FLD xmm2, 2.0
+    FLD xmm3, 11.0
+    movss xmm4, [c_one]
+    movss xmm5, [c_one]
+    movss xmm6, [c_one]
+    movss xmm7, [c_one]
+    call draw_rect
+.done:
+    EPILOGUE
+
 ; bar(xmm0=y, xmm1=fraction, xmm2..4 = rgb) -- stamina / flashlight bar
 bar:
     PROLOGUE 32
@@ -572,8 +944,12 @@ draw_map:
     FLD xmm3, 16.0
     subss xmm2, xmm3
     movss [rsp+4], xmm2                 ; ox
-    FLD xmm3, 60.0
+    FLD xmm3, 84.0                      ; below the compass strip
     movss [rsp+8], xmm3                 ; oy
+    movss xmm0, [rsp+0]
+    movss [map_s], xmm0
+    movss [map_ox], xmm2
+    movss [map_oy], xmm3
     ; backdrop
     movss xmm0, [rsp+4]
     FLD xmm6, 8.0
@@ -592,17 +968,34 @@ draw_map:
     xorps xmm6, xmm6
     FLD xmm7, 0.85
     call draw_rect
-    mov edi, [misc_tex+20]
-    mov esi, [misc_w+20]
-    mov edx, [misc_h+20]
+    ; title: the floor's name, and either "explored map" or the MAP hint
+    mov r12d, [map_floor]
+    mov edi, [floor_tex+r12*4]
+    mov esi, [floor_w+r12*4]
+    mov edx, [floor_h+r12*4]
     movss xmm0, [rsp+4]
     movss xmm1, [rsp+8]
-    FLD xmm2, 24.0
+    FLD xmm2, 30.0
     subss xmm1, xmm2
     movss xmm2, [c_one]
     call draw_text
-    call player_floor
-    mov r12d, eax
+    mov edi, [misc_tex+20]
+    mov esi, [misc_w+20]
+    mov edx, [misc_h+20]
+    cmp dword [have_map], 0
+    je .title2
+    mov edi, [misc_tex+28]
+    mov esi, [misc_w+28]
+    mov edx, [misc_h+28]
+.title2:
+    movss xmm0, [rsp+4]
+    FLD xmm1, 190.0
+    addss xmm0, xmm1
+    movss xmm1, [rsp+8]
+    FLD xmm2, 27.0
+    subss xmm1, xmm2
+    movss xmm2, [c_one]
+    call draw_text
     xor r14d, r14d
 .y:
     cmp r14d, MAP_H
@@ -615,8 +1008,12 @@ draw_map:
     mov esi, r13d
     mov edx, r14d
     call cell_index
-    cmp byte [explored+rax], 0
+    movzx r15d, byte [explored+rax]     ; 1 = seen with your own eyes
+    test r15d, r15d
+    jnz .seen
+    cmp dword [have_map], 0             ; the MAP shows the rest, dimmed
     je .nx
+.seen:
     movzx ebx, byte [grid+rax]
     ; colour by type
     FLD xmm4, 0.14
@@ -657,6 +1054,13 @@ draw_map:
     FLD xmm5, 0.85
     FLD xmm6, 1.0
 .c5:
+    test r15d, r15d
+    jnz .bright
+    FLD xmm7, 0.45                      ; not explored yet: Zelda-grey
+    mulss xmm4, xmm7
+    mulss xmm5, xmm7
+    mulss xmm6, xmm7
+.bright:
     cvtsi2ss xmm0, r13d
     mulss xmm0, [rsp+0]
     addss xmm0, [rsp+4]
@@ -674,7 +1078,14 @@ draw_map:
     inc r14d
     jmp .y
 .cells_done:
-    ; player: a red arrow pointing along the view direction
+    cmp dword [have_compass], 0
+    je .no_compass
+    call draw_compass_marks
+.no_compass:
+    ; player: a red arrow pointing along the view direction (your floor only)
+    call player_floor
+    cmp eax, [map_floor]
+    jne .done
     movss xmm0, [p_x]
     mulss xmm0, [c_inv_cell]
     mulss xmm0, [rsp+0]
@@ -748,6 +1159,7 @@ draw_map:
     addss xmm1, [rsp+16]
     call glVertex2f
     call glEnd
+.done:
     EPILOGUE
 
 ; -----------------------------------------------------------------------------
@@ -759,6 +1171,7 @@ hud_draw:
     mov [scr_h], esi
     movss [rsp+0], xmm0
     movss [rsp+4], xmm1
+    movss [hud_time], xmm1
     ; 2D pixel projection
     mov edi, GL_PROJECTION
     call glMatrixMode
@@ -792,6 +1205,8 @@ hud_draw:
     movss xmm1, [c_one]
     movss xmm2, [c_one]
     movss xmm3, [c_grain_a]
+    PCT xmm4, cfg_grain                 ; film grain setting
+    mulss xmm3, xmm4
     call glColor4f
     call rand01
     movss [rsp+8], xmm0
@@ -936,6 +1351,11 @@ hud_draw:
     jmp .cap
 .cap_done:
 
+    cmp dword [have_compass], 0
+    je .no_strip
+    call draw_heading_strip
+.no_strip:
+
     ; ---- HE SEES YOU
     cmp dword [t_state], T_CHASE
     jne .no_sees
@@ -1012,6 +1432,9 @@ hud_draw:
     movss xmm2, [c_one]
     call draw_text
 .no_prompt:
+
+    ; ---- noise meter (above the rest of the bottom-left block)
+    call draw_noise_meter
 
     ; ---- bottom-left: deauth count, stamina, flashlight
     cvtsi2ss xmm0, dword [scr_h]
@@ -1151,42 +1574,12 @@ hud_draw:
     call draw_map
 .no_map:
 
-    ; ---- pause screen
+    ; ---- pause screen: the settings menu (settings.asm)
     cmp dword [hud_paused], 0
     je .no_pause
-    xorps xmm0, xmm0
-    xorps xmm1, xmm1
-    cvtsi2ss xmm2, dword [scr_w]
-    cvtsi2ss xmm3, dword [scr_h]
-    xorps xmm4, xmm4
-    xorps xmm5, xmm5
-    xorps xmm6, xmm6
-    FLD xmm7, 0.85
-    call draw_rect
-    mov edi, [misc_tex+12]
-    mov esi, [misc_w+12]
-    mov edx, [misc_h+12]
-    cvtsi2ss xmm0, dword [scr_w]
-    cvtsi2ss xmm1, esi
-    subss xmm0, xmm1
-    mulss xmm0, [c_half]
-    cvtsi2ss xmm1, dword [scr_h]
-    FLD xmm2, 0.4
-    mulss xmm1, xmm2
-    movss xmm2, [c_one]
-    call draw_text
-    mov edi, [misc_tex+16]
-    mov esi, [misc_w+16]
-    mov edx, [misc_h+16]
-    cvtsi2ss xmm0, dword [scr_w]
-    cvtsi2ss xmm1, esi
-    subss xmm0, xmm1
-    mulss xmm0, [c_half]
-    cvtsi2ss xmm1, dword [scr_h]
-    FLD xmm2, 0.52
-    mulss xmm1, xmm2
-    movss xmm2, [c_one]
-    call draw_text
+    mov edi, [scr_w]
+    mov esi, [scr_h]
+    call menu_draw
 .no_pause:
     movss xmm0, [c_one]
     movss xmm1, [c_one]

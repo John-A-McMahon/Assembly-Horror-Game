@@ -44,7 +44,21 @@ section .rodata
 %define MAP_H       31
 %define NF          3
 %define FLOOR_CELLS (MAP_W*MAP_H)          ; 1829
-%define NCELLS      (NF*MAP_W*MAP_H)       ; 5487 -- also the number of AI nodes
+%define NCELLS      (NF*MAP_W*MAP_H)       ; 5487 -- the grid part of the nav graph
+
+; ---- the 3D navigation graph (world.asm) --------------------------------------
+; Node ids 0..NCELLS-1 are grid cells; NCELLS.. are free waypoints at any XYZ
+; (ramps, mezzanines, catwalks). Every node has a world position in
+; nav_x/nav_y/nav_z. Besides the grid's own neighbours, nodes are joined by
+; links: walk (both ways), drop (one way, off a ledge) and ladder (both ways).
+%define MAX_XNODES  64
+%define NNODES      (NCELLS + MAX_XNODES)
+%define MAX_LINKS   512
+%define LK_WALK     0
+%define LK_DROP     1
+%define LK_LADDER   2
+%define MAX_PLAT    16                     ; walkable platforms and ramps
+%define VIS_FLOORS  (NF-1)                 ; storeys drawn above/below yours (all of them)
 
 ; character classes (bit flags in char_class[], see world.asm)
 %define CF_WALL   1     ; # H C G L N          solid, full-height wall
@@ -66,13 +80,21 @@ section .rodata
 %define GS_WON     3
 %define GS_SECRET  4        ; chicken jockey
 %define GS_QUIT    5
+%define GS_RESTART 6        ; pause menu: start the run again
 
 ; ---- items --------------------------------------------------------------------
-%define MAX_ITEMS  8
+%define MAX_ITEMS  16
+; pickups first (kind < IT_TYLER), then the characters
 %define IT_KEY     0        ; wireshark packet capture
 %define IT_WEAPON  1        ; deauth packet
-%define IT_TYLER   2        ; "HI I AM TYLER"
-%define IT_JOCKEY  3        ; chicken jockey easter egg
+%define IT_MAP     2        ; Zelda-style dungeon map: reveals every floor
+%define IT_COMPASS 3        ; ...and compass: shows captures, B and T on the map
+%define IT_PORTAL  4        ; portal gun
+%define IT_TYLER   5        ; "HI I AM TYLER"
+%define IT_JOCKEY  6        ; chicken jockey easter egg
+; label_tex[] slots (textures.asm): one per pickup kind, then these
+%define LBL_B      5
+%define LBL_Y      6
 ; item record layout (32 bytes)
 %define ITEM_KIND   0       ; dword
 %define ITEM_ACTIVE 4       ; dword
@@ -92,6 +114,7 @@ section .rodata
 %define SDL_PIXELFORMAT_ABGR8888 0x16762004   ; bytes in memory: R G B A
 %define SDL_GL_DOUBLEBUFFER 5
 %define SDL_GL_DEPTH_SIZE   6
+%define SDL_GL_STENCIL_SIZE 7
 %define SDL_GL_MULTISAMPLEBUFFERS 13
 %define SDL_GL_MULTISAMPLESAMPLES 14
 
@@ -101,6 +124,7 @@ section .rodata
 %define SDL_KEYUP          0x301
 %define SDL_MOUSEMOTION    0x400
 %define SDL_MOUSEBUTTONDOWN 0x401
+%define SDL_MOUSEWHEEL     0x403
 %define SDL_WINDOWEVENT_SIZE_CHANGED 6
 %define SDL_WINDOWEVENT_FOCUS_LOST   13
 
@@ -112,6 +136,8 @@ section .rodata
 %define SC_F 9
 %define SC_I 12
 %define SC_M 16
+%define SC_LBRACKET 47
+%define SC_RBRACKET 48
 %define SC_F3 60
 %define SC_F4 61
 %define SC_F5 62
@@ -119,6 +145,7 @@ section .rodata
 %define SC_S 22
 %define SC_W 26
 %define SC_ESC 41
+%define SC_RETURN 40
 %define SC_TAB 43
 %define SC_SPACE 44
 %define SC_RIGHT 79
@@ -221,6 +248,7 @@ c_pi        dd 3.14159265
 c_two_pi    dd 6.2831853
 c_rad2deg   dd 57.2957795
 c_inv_rand  dd 4.656612873e-10       ; 1 / 2^31 (for rand() -> 0..1)
+c_pct       dd 0.01                  ; settings percentages -> factors
 align 16
 c_abs_mask  dd 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff
 c_sign_mask dd 0x80000000, 0x80000000, 0x80000000, 0x80000000
@@ -256,10 +284,14 @@ extern grid, char_class, world_init, cell_at, cell_index, ground_height, collide
 extern floor_of_height, line_of_sight, stair_t, open_cells, open_count
 extern node_center, node_at_pos, st_dx, st_dy, st_len, st_top, st_edge, rand01
 extern rng_seed, rng_next
+extern nav_x, nav_y, nav_z, nav_count, link_head, link_next, link_to, link_type, nav_t_mask
+extern node_walkable, line_of_sight_3d, sound_occlusion, dist3
+extern plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
 %endif
 
 %ifndef MODULE_AI
 extern find_path, enemy_reset, enemy_update, enemy_hear, enemy_deauth, random_node
+extern far_spawn_node, spawn_dist, spawn_maxd
 extern t_x, t_y, t_z, t_state, t_stun, t_sees, t_speed_bonus, t_caught, t_dist, t_same_storey
 extern t_anim_phase, t_moving
 %endif
@@ -291,6 +323,36 @@ extern audio_init, snd_footstep, snd_tstep, snd_heartbeat, snd_pickup, snd_deaut
 extern snd_noise_alert, snd_spotted, snd_thunder, snd_jumpscare, snd_win, snd_set_t
 extern snd_set_floor, snd_mute
 %endif
+
+%ifndef MODULE_NOISE
+extern noise_level, noise_add, noise_update, noise_reset, noise_range
+%endif
+
+%ifndef MODULE_PHYSICS
+extern physics_reset, physics_spawn_props, physics_update, physics_ragdoll
+extern rag_active, rag_time
+%endif
+
+%ifndef MODULE_TRAVERSE
+extern traverse_reset, traverse_update, traverse_try_grab, ladder_dir
+extern p_mode, trav_prompt, trav_roll, trav_shake, trav_fov, climb_phase
+extern zip_count, zip_ax, zip_ay, zip_az, zip_bx, zip_by, zip_bz, zip_active, zip_t
+%endif
+
+%ifndef MODULE_SETTINGS
+extern settings_load, settings_save, settings_apply, menu_key, menu_mouse, menu_click
+extern menu_wheel, menu_draw, menu_reset
+extern cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_ladders
+extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
+extern cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
+extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain
+%endif
+
+; PCT xmm, cfg_var -- xmm = cfg_var / 100 (clobbers nothing else)
+%macro PCT 2
+    cvtsi2ss %1, dword [%2]
+    mulss %1, [c_pct]
+%endmacro
 
 %ifndef MODULE_MAIN
 extern items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h

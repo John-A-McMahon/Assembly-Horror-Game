@@ -19,7 +19,8 @@
 
 global audio_init, snd_footstep, snd_tstep, snd_heartbeat, snd_pickup, snd_deauth
 global snd_noise_alert, snd_spotted, snd_thunder, snd_jumpscare, snd_win, snd_set_t
-global snd_set_floor, snd_mute, audio_cb
+global snd_set_floor, snd_mute, audio_cb, snd_fanfare, snd_clatter, snd_clank, snd_zip
+global snd_portal_open, snd_portal_fizzle, snd_portal_enter
 %ifdef WIN64
 extern audio_cb_win64
 %endif
@@ -86,6 +87,7 @@ c_limit     dd 0.98
 c_neg_limit dd -0.98
 c_mult_a    dd 1664525
 c_attack_tone dd 0.01
+c_vol_k     dd 0.9
 
 section .bss
 alignb 16
@@ -724,6 +726,83 @@ snd_jumpscare:
     BURST 1500.0, 1.2, 1.6, 1.2, FT_BP, 0, 0.0, 0.0
     EPILOGUE
 
+; snd_clatter(edi=0 cardboard box / 1 plastic sign) -- something fell over
+snd_clatter:
+    PROLOGUE 16
+    test edi, edi
+    jnz .plastic
+    BURST 160.0, 0.9, 0.25, 0.7, FT_LP, 0, 0.0, 0.0
+    BURST 700.0, 1.0, 0.08, 0.15, FT_BP, 0, 0.0, 0.0
+    EPILOGUE
+.plastic:
+    BURST 1300.0, 0.6, 0.07, 0.35, FT_BP, 0, 0.0, 0.0
+    BURST 420.0, 0.8, 0.12, 0.3, FT_BP, 0, 0.03, 0.0
+    EPILOGUE
+
+; a ladder rung under your hand/foot: metallic ping + thud
+snd_clank:
+    PROLOGUE 16
+    TONE 1850.0, 1800.0, 0.18, 0.05, W_TRI, 0.0
+    TONE 2710.0, 2650.0, 0.12, 0.03, W_TRI, 0.0
+    BURST 300.0, 0.8, 0.07, 0.25, FT_BP, 0, 0.0, 0.0
+    EPILOGUE
+
+; snd_zip(xmm0=speed) -- one grain of the trolley whirring along the cable
+snd_zip:
+    PROLOGUE 16
+    FLD xmm1, 90.0
+    mulss xmm0, xmm1
+    FLD xmm1, 300.0
+    addss xmm0, xmm1                    ; pitch rises with speed
+    FLD xmm1, 0.35
+    FLD xmm2, 0.09
+    FLD xmm3, 0.12
+    mov edi, FT_BP
+    xor esi, esi
+    xorps xmm4, xmm4
+    FLD xmm5, 0.02
+    call burst
+    EPILOGUE
+
+; snd_portal_open(edi=0 blue / 1 orange) -- a rising "vwoom", orange a fifth higher
+snd_portal_open:
+    PROLOGUE 16
+    test edi, edi
+    jnz .orange
+    TONE 180.0, 520.0, 0.35, 0.14, W_SAW, 0.0
+    TONE 360.0, 1040.0, 0.3, 0.05, W_SINE, 0.0
+    jmp .air
+.orange:
+    TONE 270.0, 780.0, 0.35, 0.14, W_SAW, 0.0
+    TONE 540.0, 1560.0, 0.3, 0.05, W_SINE, 0.0
+.air:
+    BURST 2400.0, 0.9, 0.25, 0.18, FT_BP, 0, 0.0, 0.02
+    EPILOGUE
+
+; the shot hit something portals won't stick to
+snd_portal_fizzle:
+    PROLOGUE 16
+    TONE 600.0, 90.0, 0.25, 0.1, W_SQR, 0.0
+    BURST 5000.0, 1.0, 0.2, 0.15, FT_HP, 0, 0.0, 0.0
+    EPILOGUE
+
+; stepping through: a low whoosh with a bright tail
+snd_portal_enter:
+    PROLOGUE 16
+    BURST 350.0, 0.7, 0.45, 0.45, FT_BP, 0, 0.0, 0.05
+    TONE 900.0, 300.0, 0.4, 0.07, W_SINE, 0.0
+    EPILOGUE
+
+; the "you found a dungeon item" fanfare
+snd_fanfare:
+    PROLOGUE 16
+    TONE 392.0, 392.0, 0.18, 0.13, W_SQR, 0.0
+    TONE 523.2, 523.2, 0.18, 0.13, W_SQR, 0.12
+    TONE 659.3, 659.3, 0.18, 0.13, W_SQR, 0.24
+    TONE 784.0, 784.0, 0.9, 0.13, W_SQR, 0.36
+    TONE 1046.5, 1046.5, 0.9, 0.08, W_TRI, 0.36
+    EPILOGUE
+
 snd_win:
     PROLOGUE 16
     TONE 261.6, 261.6, 2.5, 0.12, W_TRI, 0.0
@@ -769,7 +848,9 @@ snd_set_floor:
 
 ; snd_mute(edi=1 mute / 0 unmute) -- used while paused
 snd_mute:
-    mov dword [master_target], __float32__(0.9)
+    PCT xmm0, cfg_volume
+    mulss xmm0, [c_vol_k]
+    movss [master_target], xmm0
     test edi, edi
     jz .done
     mov dword [master_target], 0

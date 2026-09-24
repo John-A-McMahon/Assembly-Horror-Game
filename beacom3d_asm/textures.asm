@@ -14,6 +14,7 @@
 global textures_init, make_text_texture, tex_ids, face_tex, white_tex, sign_tex, label_tex
 extern glTexParameterf
 global grain_tex, radial_tex, led_tex, tt_w, tt_h, font_hud, font_small, font_big
+global prop_tex, skin_tex, cloth_tex
 global sign_count, sign_f, sign_x, sign_z, sign_face, sign_exit
 
 %define RGB(r,g,b) (0xFF000000 | ((b)<<16) | ((g)<<8) | (r))
@@ -101,6 +102,11 @@ lbl_pcap    db ".pcap",0
 lbl_deauth  db "DEAUTH",0
 lbl_b       db "B",0
 lbl_y       db "Y HELP",0
+lbl_map     db "MAP",0
+lbl_box     db "FRAGILE",0
+lbl_sign    db "CAUTION",10,10,"WET",10,"FLOOR",0
+lbl_compass db "N",0
+lbl_portal  db "PORTAL",0
 
 section .bss
 alignb 16
@@ -114,7 +120,8 @@ grain_tex   resd 1
 radial_tex  resd 1
 led_tex     resd 1
 sign_tex    resd NSIGNS
-label_tex   resd 4                    ; .pcap, DEAUTH, B, Y HELP
+prop_tex    resd 2                    ; cardboard box, wet-floor sign
+label_tex   resd 8                    ; .pcap DEAUTH MAP COMPASS PORTAL B "Y HELP"
 tt_w        resd 1                    ; size of the last text texture made
 tt_h        resd 1
 font_hud    resq 1
@@ -122,6 +129,8 @@ font_small  resq 1
 font_big    resq 1
 font_label  resq 1
 tmp_id      resd 1
+skin_tex    resd 1
+cloth_tex   resd 1
 
 section .text
 
@@ -753,6 +762,104 @@ tex_concrete:
     call blend_rect                     ; form-work seam
     mov edi, 90
     mov esi, 45
+    call grime
+    mov edi, 1
+    call upload
+    EPILOGUE
+
+; skin: smooth and warm. At arm's length real skin reads as gentle colour
+; variation, not texture: broad soft patches a touch redder or paler than the
+; skin around them, and nothing sharp or speckled.
+tex_skin:
+    PROLOGUE 16
+    mov edi, 128
+    mov esi, 128
+    call canvas
+    xor edi, edi
+    xor esi, esi
+    mov edx, 128
+    mov ecx, 128
+    mov r8d, RGB(218,166,142)
+    call fill_rect
+    mov ebx, 140                        ; broad redder patches (blood near the surface)
+.red:
+    mov edi, 128
+    call rand_n
+    mov r12d, eax
+    mov edi, 128
+    call rand_n
+    mov r13d, eax
+    mov edi, 12
+    call rand_n
+    lea edx, [rax+8]
+    mov edi, r12d
+    mov esi, r13d
+    mov ecx, RGB(208,138,120)
+    mov r8d, 16
+    call blotch
+    dec ebx
+    jnz .red
+    mov ebx, 110                        ; broad paler patches
+.pale:
+    mov edi, 128
+    call rand_n
+    mov r12d, eax
+    mov edi, 128
+    call rand_n
+    mov r13d, eax
+    mov edi, 10
+    call rand_n
+    lea edx, [rax+7]
+    mov edi, r12d
+    mov esi, r13d
+    mov ecx, RGB(230,186,162)
+    mov r8d, 14
+    call blotch
+    dec ebx
+    jnz .pale
+    mov edi, 1
+    call upload
+    EPILOGUE
+
+; cloth: dark navy hoodie cotton -- a fine weave, fuzz and wear
+tex_cloth:
+    PROLOGUE 16
+    mov edi, 64
+    mov esi, 64
+    call canvas
+    xor edi, edi
+    xor esi, esi
+    mov edx, 64
+    mov ecx, 64
+    mov r8d, RGB(40,44,58)
+    call fill_rect
+    xor ebx, ebx
+.weave:
+    cmp ebx, 64
+    jge .woven
+    mov edi, 0                          ; darker thread every other row...
+    mov esi, ebx
+    mov edx, 64
+    mov ecx, 1
+    mov r8d, RGB(18,20,28)
+    mov r9d, 70
+    call blend_rect
+    mov edi, ebx                        ; ...and a lighter one every other column
+    mov esi, 0
+    mov edx, 1
+    mov ecx, 64
+    mov r8d, RGB(80,86,104)
+    mov r9d, 40
+    call blend_rect
+    add ebx, 2
+    jmp .weave
+.woven:
+    mov edi, 900
+    mov esi, RGB(120,126,146)
+    mov edx, 60
+    call speckle
+    mov edi, 20
+    mov esi, 30
     call grime
     mov edi, 1
     call upload
@@ -1593,6 +1700,10 @@ textures_init:
     call tex_radial
     mov [radial_tex], eax
     call tex_face
+    call tex_skin
+    mov [skin_tex], eax
+    call tex_cloth
+    mov [cloth_tex], eax
 
     ; ---- fonts
     call TTF_Init
@@ -1658,7 +1769,7 @@ textures_init:
     mov r8d, RGB(4,18,28)
     mov r9, [font_big]
     call make_plaque
-    mov [label_tex+8], eax
+    mov [label_tex+LBL_B*4], eax
     lea rdi, [lbl_y]
     mov esi, 128
     mov edx, 128
@@ -1666,5 +1777,47 @@ textures_init:
     mov r8d, RGB(232,224,200)
     mov r9, [font_label]
     call make_plaque
-    mov [label_tex+12], eax
+    mov [label_tex+LBL_Y*4], eax
+    ; the Zelda items and the portal gun
+    lea rdi, [lbl_map]
+    mov esi, 128
+    mov edx, 128
+    mov ecx, RGB(90,50,20)
+    mov r8d, RGB(222,196,140)           ; parchment
+    mov r9, [font_label]
+    call make_plaque
+    mov [label_tex+IT_MAP*4], eax
+    lea rdi, [lbl_compass]
+    mov esi, 128
+    mov edx, 128
+    mov ecx, RGB(200,30,30)
+    mov r8d, RGB(214,170,60)            ; brass
+    mov r9, [font_big]
+    call make_plaque
+    mov [label_tex+IT_COMPASS*4], eax
+    lea rdi, [lbl_portal]
+    mov esi, 128
+    mov edx, 128
+    mov ecx, RGB(255,150,40)
+    mov r8d, RGB(235,235,235)
+    mov r9, [font_label]
+    call make_plaque
+    mov [label_tex+IT_PORTAL*4], eax
+    ; props: a cardboard box and a yellow wet-floor sign
+    lea rdi, [lbl_box]
+    mov esi, 128
+    mov edx, 128
+    mov ecx, RGB(120,60,30)
+    mov r8d, RGB(176,134,84)
+    mov r9, [font_small]
+    call make_plaque
+    mov [prop_tex+0], eax
+    lea rdi, [lbl_sign]
+    mov esi, 128
+    mov edx, 256
+    mov ecx, RGB(20,20,20)
+    mov r8d, RGB(250,210,20)
+    mov r9, [font_hud]
+    call make_plaque
+    mov [prop_tex+4], eax
     EPILOGUE

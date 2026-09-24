@@ -6,7 +6,7 @@
 #   make shots      render test screenshots into shots/ (needs xvfb)
 
 NAME = beacom3d
-SRCS = main.asm world.asm ai.asm player.asm render.asm textures.asm hud.asm audio.asm
+SRCS = main.asm world.asm ai.asm player.asm render.asm textures.asm hud.asm audio.asm noise.asm physics.asm traverse.asm portal.asm settings.asm worldgen.asm hands.asm
 OBJS = $(SRCS:.asm=.o)
 
 all: $(NAME)
@@ -25,6 +25,7 @@ $(NAME): $(OBJS)
 # for table lookups (like -no-pie on Linux).
 SDL_WIN   ?= /opt/sdl
 SDL_DIRS   = $(SDL_WIN)/SDL2-2.30.9/x86_64-w64-mingw32 $(SDL_WIN)/SDL2_image-2.8.2/x86_64-w64-mingw32 $(SDL_WIN)/SDL2_ttf-2.22.0/x86_64-w64-mingw32
+WIN_EXE   ?= $(NAME).exe
 WIN_OBJS   = $(addprefix build-win/,$(SRCS:.asm=.obj)) build-win/win64_thunks.obj
 
 build-win/%.obj: %.asm common.inc win64_names.inc
@@ -32,18 +33,18 @@ build-win/%.obj: %.asm common.inc win64_names.inc
 	nasm -f win64 -DWIN64 -o $@ $<
 
 windows: $(WIN_OBJS)
-	x86_64-w64-mingw32-gcc -mconsole -o $(NAME).exe $(WIN_OBJS) $(addprefix -L,$(addsuffix /lib,$(SDL_DIRS))) \
+	x86_64-w64-mingw32-gcc -mconsole -o $(WIN_EXE) $(WIN_OBJS) $(addprefix -L,$(addsuffix /lib,$(SDL_DIRS))) \
 	    -lmingw32 -lSDL2main -lSDL2 -lSDL2_image -lSDL2_ttf -lopengl32 \
 	    -Wl,--image-base=0x400000 -Wl,--disable-dynamicbase -Wl,--disable-high-entropy-va
-	cp $(addsuffix /bin/*.dll,$(SDL_DIRS)) .
-	x86_64-w64-mingw32-strip --strip-unneeded *.dll
+	-cp -u $(addsuffix /bin/*.dll,$(SDL_DIRS)) . 2>/dev/null
+	-x86_64-w64-mingw32-strip --strip-unneeded *.dll 2>/dev/null
 
 # render test screenshots into shots/ without a real display (needs xvfb)
 shots: $(NAME)
 	SDL_AUDIODRIVER=dummy xvfb-run -a -s "-screen 0 1280x720x24" ./$(NAME) --shot
 
 clean:
-	rm -f $(OBJS) $(NAME) $(NAME).exe *.dll
+	rm -f $(OBJS) $(NAME) $(NAME).exe $(NAME)_dev.exe *.dll
 	-rm -rf shots build-win
 
 .PHONY: all clean shots windows

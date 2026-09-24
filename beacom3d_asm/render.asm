@@ -53,10 +53,14 @@ global p_glCheckFramebufferStatus, p_glActiveTexture, shadows_on, render_toggle_
 
 global render_init, render_frame, world_lights_update, fixtures, fixture_count
 global b_pos_x, b_pos_y, b_pos_z, b_floor, y_pos_x, y_pos_z, render_jumpscare
-global lightning, save_screenshot, choose_render_scale, render_cycle_scale, render_scale
+global draw_scene, use_program, upload_frame_uniforms, bind, cam_x, cam_y, cam_z, cur_floor
+global lightning, save_screenshot, choose_render_scale, render_cycle_scale, render_scale, shadows_ok
 
 extern glPushMatrix, glPopMatrix, glMultMatrixf, glDeleteLists, glCopyTexSubImage2D, glGetString, getenv, strstr
 extern glLoadMatrixf, glColorMask, glPolygonOffset, glDrawBuffer, glReadBuffer
+extern portal_views, portal_draw_rims, draw_viewmodel
+global render_rebuild_world, set_material, set_emit, model_end, u_model, u_fpos, u_fdir, u_flash, u_son
+extern phys_nb, px, py, pz, body_type, body_p0, body_active, rag_active, prop_tex
 %define GL_RENDERER 0x1F01
 %define SHADOW_SIZE 1024
 %define GL_DEPTH_COMPONENT 0x1902
@@ -160,6 +164,7 @@ vs_src:
     db "  vUV = gl_MultiTexCoord0.xy;",10
     db "  vC = gl_Color;",10
     db "  gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;",10
+    db "  gl_ClipVertex = gl_ModelViewMatrix * gl_Vertex;",10     ; portal clip plane
     db "}",10,0
 ; two fragment programs share this body: program 0 (the world) has no
 ; alpha test, program 1 (T's face) does. A shader that can discard stops a
@@ -296,6 +301,16 @@ mat_tex     dd TX_H, TX_C, TX_G, TX_L, TX_N, TX_CONC, TX_FLOOR, TX_FLOOR_B, TX_F
             dd TX_CEIL, TX_CEIL_B, TX_RACK, -1, -2, -1
 
 identity    dd 1.0,0.0,0.0,0.0, 0.0,1.0,0.0,0.0, 0.0,0.0,1.0,0.0, 0.0,0.0,0.0,1.0
+; T's ragdoll as drawn: torso, neck, arms, legs (particle pairs) and widths
+rag_draw    dd 1,2, 0,1, 1,3, 1,4, 2,5, 2,6
+rag_width   dd 0.2, 0.05, 0.06, 0.06, 0.08, 0.08
+%define RAG_DRAW_BONES 6
+; pickups: half-size of the spinning box, and the colour of the glow under it
+;              capture deauth map   compass portal
+item_half_x dd 0.21,   0.25,  0.26,  0.17,   0.28
+item_half_y dd 0.21,   0.15,  0.04,  0.06,   0.12
+item_half_z dd 0.21,   0.15,  0.19,  0.17,   0.12
+item_glow   dd 0.16,0.66,1.0,  1.0,0.12,0.12,  1.0,0.85,0.4,  1.0,0.75,0.2,  1.0,0.55,0.15
 ; per material: bump strength (texture brightness read as height) and shine
 ;              H    C    G    L    N    #    floor flrB flrS ceil ceilB rack white
 mat_bump    dd 0.55,0.25,0.2, 0.5, 0.4, 0.5, 0.35,0.5, 0.35,0.3, 0.5, 0.4, 0.0
@@ -320,7 +335,8 @@ fog_color   dd 0.008, 0.008, 0.012, 1.0
 
 c_near      dq 0.05
 c_far       dq 45.0                  ; exp2 fog is fully opaque by ~40 units
-c_fovtan    dq 0.7265425            ; tan(36 deg): 72 degree vertical FOV
+fovtan_cur  dq 0.7265425            ; tan(fov/2) -- 72 degree vertical FOV by default
+c_half_deg  dd 0.00872664626        ; pi / 360: degrees -> half-angle radians
 c_fog       dd 0.055
 c_amb_r     dd 0.043
 c_amb_g     dd 0.050
@@ -1300,12 +1316,9 @@ shadow_pass:
     xor edi, edi
     call use_program
     ; the static world on the storeys around you...
-    mov r12d, [cur_floor]
-    dec r12d
+    xor r12d, r12d                      ; every storey: the atrium sees them all
 .fl:
-    mov eax, [cur_floor]
-    inc eax
-    cmp r12d, eax
+    cmp r12d, NF-1
     jg .world_done
     cmp r12d, 0
     jl .fl_next
@@ -1325,8 +1338,9 @@ shadow_pass:
     inc r12d
     jmp .fl
 .world_done:
-    ; ...and T, whose silhouette is the whole point
+    ; ...and T, whose silhouette is the whole point (and anything physical)
     call draw_t
+    call draw_physics
     mov edi, GL_POLYGON_OFFSET_FILL
     call glDisable
     mov edi, 1
@@ -1344,6 +1358,347 @@ shadow_pass:
     call bind
     mov edi, GL_TEXTURE0
     GL2CALL glActiveTexture
+    EPILOGUE
+
+; =============================================================================
+; physics bodies (physics.asm): props are drawn straight from their 8 corner
+; particles, so they tumble exactly as simulated; T's ragdoll gets proper
+; limbs between its particles and his face on the head
+; =============================================================================
+
+; pvec(eax=particle, rdi=out vec3) -- copy a particle position. leaf
+pvec:
+    mov ecx, [px+rax*4]
+    mov [rdi], ecx
+    mov ecx, [py+rax*4]
+    mov [rdi+4], ecx
+    mov ecx, [pz+rax*4]
+    mov [rdi+8], ecx
+    ret
+
+; sub3(rdi=out, rsi=a, rdx=b) -- out = a - b. leaf
+sub3:
+    movss xmm0, [rsi]
+    subss xmm0, [rdx]
+    movss [rdi], xmm0
+    movss xmm0, [rsi+4]
+    subss xmm0, [rdx+4]
+    movss [rdi+4], xmm0
+    movss xmm0, [rsi+8]
+    subss xmm0, [rdx+8]
+    movss [rdi+8], xmm0
+    ret
+
+; draw_prop(r12d=body) -- 6 faces from the corner particles
+draw_prop:
+    PROLOGUE 96
+    ; [rsp+0] TL [rsp+16] TR [rsp+32] BL [rsp+48] e1 [rsp+64] e2 [rsp+80] n
+    mov eax, [body_type+r12*4]
+    mov edi, [prop_tex+rax*4]
+    call bind
+    mov edi, GL_QUADS
+    call glBegin
+    mov r13d, [body_p0+r12*4]
+    xor ebx, ebx                        ; face
+.face:
+    cmp ebx, 6
+    jge .faces_done
+    ; normal = (BL - TL) x (TR - TL), outward
+    movzx eax, byte [face_corner+rbx*4+0]
+    add eax, r13d
+    lea rdi, [rsp+0]
+    call pvec
+    movzx eax, byte [face_corner+rbx*4+1]
+    add eax, r13d
+    lea rdi, [rsp+16]
+    call pvec
+    movzx eax, byte [face_corner+rbx*4+3]
+    add eax, r13d
+    lea rdi, [rsp+32]
+    call pvec
+    lea rdi, [rsp+48]
+    lea rsi, [rsp+32]
+    lea rdx, [rsp+0]
+    call sub3
+    lea rdi, [rsp+64]
+    lea rsi, [rsp+16]
+    lea rdx, [rsp+0]
+    call sub3
+    lea rdi, [rsp+80]
+    lea rsi, [rsp+48]
+    lea rdx, [rsp+64]
+    call cross3
+    lea rdi, [rsp+80]
+    call normalize3
+    movss xmm0, [rsp+80]
+    movss xmm1, [rsp+84]
+    movss xmm2, [rsp+88]
+    call glNormal3f
+    xor r14d, r14d                      ; corner
+.corner:
+    cmp r14d, 4
+    jge .next_face
+    movss xmm0, [corner_u+r14*4]
+    movss xmm1, [corner_v+r14*4]
+    call glTexCoord2f
+    lea eax, [rbx*4+r14]
+    movzx eax, byte [face_corner+rax]
+    add eax, r13d
+    movss xmm0, [px+rax*4]
+    movss xmm1, [py+rax*4]
+    movss xmm2, [pz+rax*4]
+    call glVertex3f
+    inc r14d
+    jmp .corner
+.next_face:
+    inc ebx
+    jmp .face
+.faces_done:
+    call glEnd
+    EPILOGUE
+
+; emit_bone(edi=particle a, esi=particle b, xmm0=half width)
+emit_bone:
+    PROLOGUE 48
+    mov eax, edi
+    lea rdi, [rsp+0]
+    call pvec
+    mov eax, esi
+    lea rdi, [rsp+16]
+    call pvec
+    lea rdi, [rsp+0]
+    lea rsi, [rsp+16]
+    call emit_tube
+    EPILOGUE
+
+; emit_tube(rdi=&A, rsi=&B, xmm0=half width) -- a 4-sided tube between two
+; points in any orientation (limbs, cables, arms)
+emit_tube:
+    PROLOGUE 160
+    ; [rsp+0] A [rsp+16] B [rsp+32] d [rsp+48] up [rsp+64] u [rsp+80] v
+    ; [rsp+96] ring offsets 4 x vec3 (48 bytes) [rsp+144] w
+    movss [rsp+144], xmm0
+    mov eax, [rdi]
+    mov [rsp+0], eax
+    mov eax, [rdi+4]
+    mov [rsp+4], eax
+    mov eax, [rdi+8]
+    mov [rsp+8], eax
+    mov eax, [rsi]
+    mov [rsp+16], eax
+    mov eax, [rsi+4]
+    mov [rsp+20], eax
+    mov eax, [rsi+8]
+    mov [rsp+24], eax
+    lea rdi, [rsp+32]
+    lea rsi, [rsp+16]
+    lea rdx, [rsp+0]
+    call sub3
+    lea rdi, [rsp+32]
+    call normalize3
+    ; a helper axis not parallel to the bone
+    mov dword [rsp+48], 0
+    mov dword [rsp+52], __float32__(1.0)
+    mov dword [rsp+56], 0
+    movss xmm0, [rsp+36]
+    andps xmm0, [c_abs_mask]
+    FLD xmm1, 0.9
+    comiss xmm0, xmm1
+    jb .up_ok
+    mov dword [rsp+48], __float32__(1.0)
+    mov dword [rsp+52], 0
+.up_ok:
+    lea rdi, [rsp+64]
+    lea rsi, [rsp+32]
+    lea rdx, [rsp+48]
+    call cross3
+    lea rdi, [rsp+64]
+    call normalize3
+    lea rdi, [rsp+80]
+    lea rsi, [rsp+32]
+    lea rdx, [rsp+64]
+    call cross3
+    ; ring: (+u+v) (-u+v) (-u-v) (+u-v), scaled by w
+    xor ebx, ebx
+.ring:
+    cmp ebx, 4
+    jge .ring_done
+    movss xmm6, [rsp+144]               ; su*w
+    cmp ebx, 1
+    je .neg_u
+    cmp ebx, 2
+    jne .u_ok
+.neg_u:
+    xorps xmm6, [c_sign_mask]
+.u_ok:
+    movss xmm7, [rsp+144]               ; sv*w
+    cmp ebx, 2
+    jl .v_ok
+    xorps xmm7, [c_sign_mask]
+.v_ok:
+    imul eax, ebx, 12
+    xor ecx, ecx
+.comp:
+    cmp ecx, 3
+    jge .comp_done
+    movss xmm0, [rsp+64+rcx*4]
+    mulss xmm0, xmm6
+    movss xmm1, [rsp+80+rcx*4]
+    mulss xmm1, xmm7
+    addss xmm0, xmm1
+    lea edx, [rax+rcx*4]
+    movss [rsp+96+rdx], xmm0
+    inc ecx
+    jmp .comp
+.comp_done:
+    inc ebx
+    jmp .ring
+.ring_done:
+    ; four sides: ring i -> ring i+1, from A to B
+    xor ebx, ebx
+.side:
+    cmp ebx, 4
+    jge .done
+    imul r12d, ebx, 12                  ; ring i
+    lea eax, [rbx+1]
+    and eax, 3
+    imul r13d, eax, 12                  ; ring i+1
+    ; normal ~ ring i + ring i+1
+    movss xmm0, [rsp+96+r12]
+    addss xmm0, [rsp+96+r13]
+    movss xmm1, [rsp+100+r12]
+    addss xmm1, [rsp+100+r13]
+    movss xmm2, [rsp+104+r12]
+    addss xmm2, [rsp+104+r13]
+    call glNormal3f
+    ; A + ring i, A + ring i+1, B + ring i+1, B + ring i
+    xor r14d, r14d
+.v:
+    cmp r14d, 4
+    jge .next
+    mov r15d, r12d
+    cmp r14d, 1
+    je .ri1
+    cmp r14d, 2
+    jne .rsel
+.ri1:
+    mov r15d, r13d
+.rsel:
+    xor eax, eax                        ; A (0) or B (16)
+    cmp r14d, 2
+    jl .pa
+    mov eax, 16
+.pa:
+    movss xmm0, [rsp+rax]
+    addss xmm0, [rsp+96+r15]
+    movss xmm1, [rsp+rax+4]
+    addss xmm1, [rsp+100+r15]
+    movss xmm2, [rsp+rax+8]
+    addss xmm2, [rsp+104+r15]
+    call glVertex3f
+    inc r14d
+    jmp .v
+.next:
+    inc ebx
+    jmp .side
+.done:
+    EPILOGUE
+
+; draw_ragdoll(r12d=body) -- T, collapsed
+draw_ragdoll:
+    PROLOGUE 32
+    mov r13d, [body_p0+r12*4]
+    mov edi, [white_tex]
+    call bind
+    GLF3 glColor3f, 0.043, 0.043, 0.05
+    mov edi, GL_QUADS
+    call glBegin
+    xor ebx, ebx
+.bone:
+    cmp ebx, RAG_DRAW_BONES
+    jge .bones_done
+    mov edi, [rag_draw+rbx*8]
+    add edi, r13d
+    mov esi, [rag_draw+rbx*8+4]
+    add esi, r13d
+    movss xmm0, [rag_width+rbx*4]
+    call emit_bone
+    inc ebx
+    jmp .bone
+.bones_done:
+    call glEnd
+    GLF3 glColor3f, 1.0, 1.0, 1.0
+    ; the face, on the head particle, turned toward you and glitching
+    movss xmm0, [px+r13*4]
+    movss xmm1, [pz+r13*4]
+    call face_camera_yaw
+    movaps xmm3, xmm0
+    movss xmm0, [px+r13*4]
+    movss xmm1, [py+r13*4]              ; face sits on the head, above the floor
+    movss xmm2, [pz+r13*4]
+    call model_begin
+    mov edi, 1
+    call use_program
+    mov edi, [u_model]
+    mov esi, 1
+    xor edx, edx
+    lea rcx, [model_mat]
+    GL2CALL glUniformMatrix4fv
+    call rand01
+    FLD xmm1, 0.9
+    mulss xmm0, xmm1
+    call set_emit                       ; flickering glow: the deauth at work
+    mov edi, [face_tex]
+    call bind
+    GLF3 glColor3f, 0.7, 0.9, 1.0
+    mov edi, GL_QUADS
+    call glBegin
+    FLD xmm0, 0.31
+    xorps xmm1, xmm1
+    FLD xmm2, 0.62
+    FLD xmm3, 0.05
+    call quad_xy
+    call glEnd
+    GLF3 glColor3f, 1.0, 1.0, 1.0
+    xorps xmm0, xmm0
+    call set_emit
+    call model_end
+    xor edi, edi
+    call use_program
+    mov edi, [u_model]
+    mov esi, 1
+    xor edx, edx
+    lea rcx, [identity]
+    GL2CALL glUniformMatrix4fv
+    EPILOGUE
+
+; draw_physics -- every active body within a floor of you
+draw_physics:
+    PROLOGUE 16
+    xor r12d, r12d
+.body:
+    cmp r12d, [phys_nb]
+    jge .done
+    cmp dword [body_active+r12*4], 0
+    je .nb
+    mov eax, [body_p0+r12*4]
+    movss xmm0, [py+rax*4]
+    call floor_of_height
+    sub eax, [cur_floor]
+    cmp eax, VIS_FLOORS
+    jg .nb
+    cmp eax, -VIS_FLOORS
+    jl .nb
+    cmp dword [body_type+r12*4], 2      ; B_RAG
+    je .rag
+    call draw_prop
+    jmp .nb
+.rag:
+    call draw_ragdoll
+.nb:
+    inc r12d
+    jmp .body
+.done:
     EPILOGUE
 
 ; bind(edi=GL texture id)
@@ -1787,6 +2142,13 @@ build_material:
     call emit_cage_cell
     jmp .next
 .not_cage:
+    cmp eax, 'u'
+    jne .not_ladder
+    cmp ecx, M_WHITE
+    jne .next
+    call emit_ladder
+    jmp .next
+.not_ladder:
     cmp eax, 'B'
     jne .next
     cmp ecx, M_WHITE
@@ -1799,6 +2161,162 @@ build_material:
     inc r14d
     jmp .y
 .done:
+    ; ramps and platforms (world.asm) are bare concrete
+    cmp dword [rsp+32], M_FLOOR_B
+    jne .out
+    call build_platforms
+.out:
+    EPILOGUE
+
+; build_platforms(r12d = storey) -- every platform whose low end is on this
+; storey, as a (possibly sloped) slab: top, bottom and four sides
+build_platforms:
+    PROLOGUE 32
+    xor ebx, ebx
+.p:
+    cmp ebx, [plat_count]
+    jge .done
+    movss xmm0, [plat_ya+rbx*4]
+    minss xmm0, [plat_yb+rbx*4]
+    call floor_of_height
+    cmp eax, r12d
+    jne .n
+    ; corners 0 (x0,z0) 1 (x1,z0) 2 (x1,z1) 3 (x0,z1)
+    mov eax, [plat_x0+rbx*4]
+    mov [pc_x+0], eax
+    mov [pc_x+12], eax
+    mov eax, [plat_x1+rbx*4]
+    mov [pc_x+4], eax
+    mov [pc_x+8], eax
+    mov eax, [plat_z0+rbx*4]
+    mov [pc_z+0], eax
+    mov [pc_z+4], eax
+    mov eax, [plat_z1+rbx*4]
+    mov [pc_z+8], eax
+    mov [pc_z+12], eax
+    ; heights: flat, rising along X (corners 1,2 high) or along Z (2,3 high)
+    mov eax, [plat_ya+rbx*4]
+    mov ecx, [plat_yb+rbx*4]
+    mov [pc_t+0], eax
+    mov [pc_t+4], eax
+    mov [pc_t+8], eax
+    mov [pc_t+12], eax
+    cmp dword [plat_axis+rbx*4], 1
+    jne .not_x
+    mov [pc_t+4], ecx
+    mov [pc_t+8], ecx
+.not_x:
+    cmp dword [plat_axis+rbx*4], 2
+    jne .heights
+    mov [pc_t+8], ecx
+    mov [pc_t+12], ecx
+.heights:
+    xor ecx, ecx
+.bot:
+    movss xmm0, [pc_t+rcx*4]
+    subss xmm0, [plat_thick+rbx*4]
+    movss [pc_b+rcx*4], xmm0
+    inc ecx
+    cmp ecx, 4
+    jl .bot
+    ; top and bottom, textured in world space
+    GLF3 glNormal3f, 0.0, 1.0, 0.0
+    xor esi, esi
+    call plat_cap
+    GLF3 glNormal3f, 0.0, -1.0, 0.0
+    mov esi, 1
+    call plat_cap
+    ; sides: edge i -> j, outward normal (dz, 0, -dx)
+    xor r13d, r13d
+.side:
+    cmp r13d, 4
+    jge .n
+    lea r14d, [r13d+1]
+    and r14d, 3
+    movss xmm0, [pc_z+r14*4]
+    subss xmm0, [pc_z+r13*4]
+    movss xmm2, [pc_x+r13*4]
+    subss xmm2, [pc_x+r14*4]
+    movaps xmm3, xmm0
+    mulss xmm3, xmm3
+    movaps xmm4, xmm2
+    mulss xmm4, xmm4
+    addss xmm3, xmm4
+    sqrtss xmm3, xmm3
+    divss xmm0, xmm3
+    divss xmm2, xmm3
+    xorps xmm1, xmm1
+    call glNormal3f
+    movss xmm0, [pc_x+r13*4]
+    addss xmm0, [pc_z+r13*4]
+    mulss xmm0, [c_half]
+    movss [rsp+0], xmm0                 ; u at i
+    movss xmm0, [pc_x+r14*4]
+    addss xmm0, [pc_z+r14*4]
+    mulss xmm0, [c_half]
+    movss [rsp+4], xmm0                 ; u at j
+    mov edi, r13d
+    xor esi, esi
+    movss xmm0, [rsp+0]
+    xorps xmm1, xmm1
+    call plat_v
+    mov edi, r14d
+    xor esi, esi
+    movss xmm0, [rsp+4]
+    xorps xmm1, xmm1
+    call plat_v
+    mov edi, r14d
+    mov esi, 1
+    movss xmm0, [rsp+4]
+    FLD xmm1, 0.1
+    call plat_v
+    mov edi, r13d
+    mov esi, 1
+    movss xmm0, [rsp+0]
+    FLD xmm1, 0.1
+    call plat_v
+    inc r13d
+    jmp .side
+.n:
+    inc ebx
+    jmp .p
+.done:
+    EPILOGUE
+
+; plat_cap(esi = 0 top / 1 bottom) -- the four corners, uv = world xz / 2
+plat_cap:
+    PROLOGUE 16
+    mov r12d, esi
+    xor r13d, r13d
+.c:
+    cmp r13d, 4
+    jge .done
+    movss xmm0, [pc_x+r13*4]
+    mulss xmm0, [c_half]
+    movss xmm1, [pc_z+r13*4]
+    mulss xmm1, [c_half]
+    mov edi, r13d
+    mov esi, r12d
+    call plat_v
+    inc r13d
+    jmp .c
+.done:
+    EPILOGUE
+
+; plat_v(edi = corner, esi = 0 top / 1 bottom, xmm0/xmm1 = u/v) -- one vertex
+plat_v:
+    PROLOGUE 16
+    mov ebx, edi
+    mov r12d, esi
+    call glTexCoord2f
+    movss xmm0, [pc_x+rbx*4]
+    movss xmm1, [pc_t+rbx*4]
+    test r12d, r12d
+    jz .top
+    movss xmm1, [pc_b+rbx*4]
+.top:
+    movss xmm2, [pc_z+rbx*4]
+    call glVertex3f
     EPILOGUE
 
 ; emit_stair_cell -- two steps; the step top follows the ramp so each step's
@@ -2142,6 +2660,207 @@ emit_cage_cell:
 .done:
     EPILOGUE
 
+; emit_ladder -- two rails and rungs against the wall, running up through
+; the hatch and a metre past it as a handhold (r12..r14 = f, x, y)
+emit_ladder:
+    PROLOGUE 48
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call ladder_dir
+    cmp eax, 0
+    jl .done
+    mov r15d, eax
+    call cell_centre
+    movss [rsp+0], xmm0                 ; cell centre x
+    movss [rsp+4], xmm1                 ; floor y
+    movss [rsp+8], xmm2                 ; cell centre z
+    ; the ladder plane: 0.85 from the centre toward the wall
+    FLD xmm3, 0.85
+    cmp r15d, 1
+    je .neg
+    cmp r15d, 3
+    jne .pos
+.neg:
+    xorps xmm3, [c_sign_mask]
+.pos:
+    movss [rsp+12], xmm3
+    ; two rails, then rungs every 0.3m
+    xor ebx, ebx
+.rail:
+    cmp ebx, 2
+    jge .rungs
+    FLD xmm6, 0.32
+    test ebx, ebx
+    jz .r0
+    xorps xmm6, [c_sign_mask]
+.r0:
+    movss xmm0, [rsp+0]
+    movss xmm2, [rsp+8]
+    cmp r15d, 2
+    jge .rail_z
+    addss xmm0, [rsp+12]
+    addss xmm2, xmm6
+    FLD xmm3, 0.03
+    FLD xmm5, 0.035
+    jmp .rail_emit
+.rail_z:
+    addss xmm2, [rsp+12]
+    addss xmm0, xmm6
+    FLD xmm3, 0.035
+    FLD xmm5, 0.03
+.rail_emit:
+    movss xmm1, [rsp+4]
+    movss xmm4, [c_fh]
+    FLD xmm7, 1.0
+    addss xmm4, xmm7
+    mov edi, 0x6d7074
+    call cbox
+    inc ebx
+    jmp .rail
+.rungs:
+    FLD xmm0, 0.25
+    movss [rsp+16], xmm0                ; rung height
+.rung:
+    movss xmm0, [c_fh]
+    FLD xmm1, 0.9
+    addss xmm0, xmm1
+    comiss xmm0, [rsp+16]
+    jb .done
+    movss xmm0, [rsp+0]
+    movss xmm2, [rsp+8]
+    movss xmm1, [rsp+4]
+    addss xmm1, [rsp+16]
+    cmp r15d, 2
+    jge .rung_z
+    addss xmm0, [rsp+12]
+    FLD xmm3, 0.022
+    FLD xmm5, 0.3
+    jmp .rung_emit
+.rung_z:
+    addss xmm2, [rsp+12]
+    FLD xmm3, 0.3
+    FLD xmm5, 0.022
+.rung_emit:
+    FLD xmm4, 0.035
+    mov edi, 0x8a8f94
+    call cbox
+    movss xmm0, [rsp+16]
+    FLD xmm1, 0.3
+    addss xmm0, xmm1
+    movss [rsp+16], xmm0
+    jmp .rung
+.done:
+    mov ebx, 0xffffff
+    call set_rgb
+    EPILOGUE
+
+; draw_ziplines -- cables, their wall anchors and the trolley
+draw_ziplines:
+    PROLOGUE 64
+    mov edi, [white_tex]
+    call bind
+    mov edi, GL_QUADS
+    call glBegin
+    xor ebx, ebx
+.z:
+    cmp ebx, [zip_count]
+    jge .done
+    movss xmm0, [zip_ay+rbx*4]
+    call floor_of_height
+    sub eax, [cur_floor]
+    cmp eax, VIS_FLOORS
+    jg .nz
+    cmp eax, -VIS_FLOORS
+    jl .nz
+    ; cable
+    GLF3 glColor3f, 0.3, 0.3, 0.32
+    mov eax, [zip_ax+rbx*4]
+    mov [rsp+0], eax
+    mov eax, [zip_ay+rbx*4]
+    mov [rsp+4], eax
+    mov eax, [zip_az+rbx*4]
+    mov [rsp+8], eax
+    mov eax, [zip_bx+rbx*4]
+    mov [rsp+16], eax
+    mov eax, [zip_by+rbx*4]
+    mov [rsp+20], eax
+    mov eax, [zip_bz+rbx*4]
+    mov [rsp+24], eax
+    lea rdi, [rsp+0]
+    lea rsi, [rsp+16]
+    FLD xmm0, 0.015
+    call emit_tube
+    ; anchor plates at both ends
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    FLD xmm6, 0.12
+    subss xmm1, xmm6
+    movss xmm2, [rsp+8]
+    FLD xmm3, 0.08
+    FLD xmm4, 0.24
+    FLD xmm5, 0.08
+    mov edi, 0x404448
+    call cbox
+    movss xmm0, [rsp+16]
+    movss xmm1, [rsp+20]
+    FLD xmm6, 0.12
+    subss xmm1, xmm6
+    movss xmm2, [rsp+24]
+    FLD xmm3, 0.08
+    FLD xmm4, 0.24
+    FLD xmm5, 0.08
+    mov edi, 0x404448
+    call cbox
+    ; trolley: parked at the top end, or wherever you are on it
+    xorps xmm7, xmm7
+    cmp ebx, [zip_active]
+    jne .parked
+    movss xmm7, [zip_t]
+.parked:
+    FLD xmm6, 0.02
+    maxss xmm7, xmm6
+    movss xmm0, [rsp+16]
+    subss xmm0, [rsp+0]
+    mulss xmm0, xmm7
+    addss xmm0, [rsp+0]
+    movss xmm1, [rsp+20]
+    subss xmm1, [rsp+4]
+    mulss xmm1, xmm7
+    addss xmm1, [rsp+4]
+    FLD xmm6, 0.1
+    subss xmm1, xmm6
+    movss xmm2, [rsp+24]
+    subss xmm2, [rsp+8]
+    mulss xmm2, xmm7
+    addss xmm2, [rsp+8]
+    movss [rsp+32], xmm0
+    movss [rsp+36], xmm1
+    movss [rsp+40], xmm2
+    FLD xmm3, 0.1
+    FLD xmm4, 0.14
+    FLD xmm5, 0.06
+    mov edi, 0xb03020                   ; red trolley
+    call cbox
+    ; handle bar hanging below it
+    movss xmm0, [rsp+32]
+    movss xmm1, [rsp+36]
+    FLD xmm6, 0.32
+    subss xmm1, xmm6
+    movss xmm2, [rsp+40]
+    FLD xmm3, 0.2
+    FLD xmm4, 0.03
+    FLD xmm5, 0.03
+    mov edi, 0x202020
+    call cbox
+.nz:
+    inc ebx
+    jmp .z
+.done:
+    call glEnd
+    GLF3 glColor3f, 1.0, 1.0, 1.0
+    EPILOGUE
+
 ; emit_b -- B, the lord of networking: a tall robed figure
 emit_b:
     PROLOGUE 32
@@ -2214,6 +2933,10 @@ collect_fixtures:
     cmp ebx, ' '
     je .ok
     cmp ebx, 'S'
+    je .ok
+    cmp ebx, '.'                        ; the atrium's roof has lights too
+    jne .nx
+    cmp r12d, NF-1
     jne .nx
 .ok:
     ; no fixture where the ceiling is open
@@ -2334,6 +3057,29 @@ render_init:
     mov edi, NF*NMAT
     call glGenLists
     mov [list_base], eax
+    mov eax, [sign_count]
+    mov [signs_classic], eax
+    call build_world
+    call choose_render_scale
+    call init_shadows
+    EPILOGUE
+
+; render_rebuild_world -- after world_select: new geometry, lights and (for a
+; generated building, which has none of the real room signs) no signs
+render_rebuild_world:
+    PROLOGUE 16
+    mov eax, [signs_classic]
+    cmp dword [cfg_building], 0
+    je .signs
+    xor eax, eax
+.signs:
+    mov [sign_count], eax
+    call build_world
+    EPILOGUE
+
+; build_world -- compile every storey's display lists and find the fixtures
+build_world:
+    PROLOGUE 16
     xor ebx, ebx                        ; storey
 .lf:
     cmp ebx, NF
@@ -2370,8 +3116,7 @@ render_init:
     lea rdi, [pool_idx]
     mov eax, -1
     rep stosd
-    call choose_render_scale
-    call init_shadows
+    mov dword [pool_timer], 0
     EPILOGUE
 
 ; =============================================================================
@@ -2604,6 +3349,12 @@ setup_camera:
     PROLOGUE 32
     mov r12d, edi
     mov r13d, esi
+    ; field of view from the settings: tan(fov / 2)
+    cvtsi2ss xmm0, dword [cfg_fov]
+    mulss xmm0, [c_half_deg]
+    call tanf
+    cvtss2sd xmm0, xmm0
+    movsd [fovtan_cur], xmm0
     xor edi, edi
     xor esi, esi
     mov edx, r12d
@@ -2614,7 +3365,11 @@ setup_camera:
     call glLoadIdentity
     ; glFrustum(-r, r, -t, t, near, far) in doubles
     movsd xmm2, [c_near]
-    mulsd xmm2, [c_fovtan]              ; t
+    mulsd xmm2, [fovtan_cur]            ; t
+    movss xmm6, [trav_fov]              ; zipline speed widens the view
+    addss xmm6, [c_one]
+    cvtss2sd xmm6, xmm6
+    mulsd xmm2, xmm6
     movsd xmm3, xmm2
     cvtsi2sd xmm4, r12d
     cvtsi2sd xmm5, r13d
@@ -2716,9 +3471,9 @@ draw_signs:
     jne .n
     mov eax, [sign_f+rbx*4]
     sub eax, [cur_floor]
-    cmp eax, 1
+    cmp eax, VIS_FLOORS
     jg .n
-    cmp eax, -1
+    cmp eax, -VIS_FLOORS
     jl .n
     movss xmm0, [sign_x+rbx*4]
     addss xmm0, [c_half]
@@ -2769,9 +3524,9 @@ draw_items:
     je .n
     mov eax, [r12+ITEM_F]
     sub eax, [cur_floor]
-    cmp eax, 1
+    cmp eax, VIS_FLOORS
     jg .n
-    cmp eax, -1
+    cmp eax, -VIS_FLOORS
     jl .n
     mov eax, [r12+ITEM_KIND]
     cmp eax, IT_TYLER
@@ -2802,13 +3557,20 @@ draw_items:
     call bind
     mov edi, GL_QUADS
     call glBegin
-    cmp dword [r12+ITEM_KIND], IT_KEY
-    jne .weapon
-    BOX -0.21, -0.21, -0.21, 0.21, 0.21, 0.21
-    jmp .emit
-.weapon:
-    BOX -0.25, -0.15, -0.15, 0.25, 0.15, 0.15
-.emit:
+    ; the shape depends on the kind (half sizes from item_half_*)
+    mov eax, [r12+ITEM_KIND]
+    movss xmm0, [item_half_x+rax*4]
+    movss xmm1, [item_half_y+rax*4]
+    movss xmm2, [item_half_z+rax*4]
+    movss [bx1], xmm0
+    movss [by1], xmm1
+    movss [bz1], xmm2
+    xorps xmm0, [c_sign_mask]
+    xorps xmm1, [c_sign_mask]
+    xorps xmm2, [c_sign_mask]
+    movss [bx0], xmm0
+    movss [by0], xmm1
+    movss [bz0], xmm2
     mov dword [u_rep], __float32__(1.0)
     mov dword [v_rep], __float32__(1.0)
     mov edi, F_ALL
@@ -2928,12 +3690,14 @@ draw_items:
 ; at you. Glitches while stunned. Glows red while chasing.
 draw_t:
     PROLOGUE 64
+    cmp dword [rag_active], 0
+    jne .done
     movss xmm0, [t_y]
     call floor_of_height
     sub eax, [cur_floor]
-    cmp eax, 1
+    cmp eax, VIS_FLOORS
     jg .done
-    cmp eax, -1
+    cmp eax, -VIS_FLOORS
     jl .done
     ; stunned: flicker out 35% of frames, jitter
     xorps xmm6, xmm6
@@ -3116,9 +3880,9 @@ draw_fixtures:
     jge .n
     mov eax, [fx_f+rbx*4]
     sub eax, [cur_floor]
-    cmp eax, 1
+    cmp eax, VIS_FLOORS
     jg .n
-    cmp eax, -1
+    cmp eax, -VIS_FLOORS
     jl .n
     movss xmm3, [fx_level+rbx*4]
     maxss xmm3, [c_fix_dead]
@@ -3164,11 +3928,13 @@ draw_glows:
     mov eax, [r12+ITEM_KIND]
     cmp eax, IT_TYLER
     jge .n
-    GLF4 glColor4f, 0.16, 0.66, 1.0, 0.35
-    cmp dword [r12+ITEM_KIND], IT_KEY
-    je .col
-    GLF4 glColor4f, 1.0, 0.12, 0.12, 0.35
-.col:
+    mov eax, [r12+ITEM_KIND]
+    lea rax, [rax*3]
+    movss xmm0, [item_glow+rax*4]
+    movss xmm1, [item_glow+rax*4+4]
+    movss xmm2, [item_glow+rax*4+8]
+    FLD xmm3, 0.35
+    call glColor4f
     movss xmm0, [r12+ITEM_X]
     movss xmm1, [r12+ITEM_Y]
     FLD xmm6, 0.02
@@ -3186,6 +3952,195 @@ draw_glows:
 .done:
     call glEnd
     GLF4 glColor4f, 1.0, 1.0, 1.0, 1.0
+    EPILOGUE
+
+; -----------------------------------------------------------------------------
+; draw_scene(xmm0=time) -- everything in the 3D world, seen from the current
+; camera (cam_x/y/z, the GL matrices and cur_floor). render_frame draws it
+; once for your eyes and portal.asm again through each portal.
+; -----------------------------------------------------------------------------
+draw_scene:
+    PROLOGUE 64
+    movss [rsp+8], xmm0
+    xor edi, edi
+    call use_program
+    ; ---- static world: storeys within one of the player's
+    xor r12d, r12d                      ; every storey: the atrium sees them all
+.fl:
+    cmp r12d, NF-1
+    jg .fl_done
+    cmp r12d, 0
+    jl .fl_next
+    cmp r12d, NF
+    jge .fl_next
+    xor r13d, r13d
+.mat:
+    cmp r13d, NLIT
+    jge .fl_next
+    ; texture
+    mov eax, [mat_tex+r13*4]
+    mov edi, [white_tex]
+    cmp eax, 0
+    jl .tx
+    mov edi, [tex_ids+rax*4]
+.tx:
+    call bind
+    ; emission: safe-room walls pulse, racks glow a little
+    xorps xmm0, xmm0
+    cmp r13d, M_N
+    jne .e1
+    movss xmm0, [rsp+8]
+    FLD xmm1, 1.5
+    mulss xmm0, xmm1
+    call sinf
+    mulss xmm0, [c_n_pulse]
+    addss xmm0, [c_n_emit]
+.e1:
+    cmp r13d, M_RACK
+    jne .e2
+    movss xmm0, [c_rack_emit]
+.e2:
+    call set_emit
+    movss xmm0, [mat_bump+r13*4]
+    movss xmm1, [mat_spec+r13*4]
+    call set_material
+    imul edi, r12d, NMAT
+    add edi, r13d
+    add edi, [list_base]
+    call glCallList
+    inc r13d
+    jmp .mat
+.fl_next:
+    inc r12d
+    jmp .fl
+.fl_done:
+    xorps xmm0, xmm0
+    call set_emit
+    xorps xmm0, xmm0                    ; moving things: smooth, nearly matte
+    FLD xmm1, 0.08
+    call set_material
+
+    ; ---- lit dynamic things
+    movss xmm0, [c_sign_emit]
+    call set_emit
+    xor edi, edi
+    call draw_signs
+    xorps xmm0, xmm0
+    call set_emit
+    call draw_items
+    call draw_t
+    call draw_physics
+    call draw_ziplines
+    ; Y's plaque on the cage
+    cmp dword [cur_floor], 1
+    jg .no_y
+    movss xmm0, [y_pos_x]
+    FLD xmm1, 1.9
+    movss xmm2, [y_pos_z]
+    FLD xmm3, 0.3
+    mov edi, [label_tex+LBL_Y*4]
+    call draw_billboard_label
+
+.no_y:
+    ; ---- unlit pass: things that glow
+    xor edi, edi
+    GL2CALL glUseProgram
+    mov edi, GL_FOG
+    call glEnable
+    call draw_fixtures
+    mov edi, 1
+    call draw_signs
+    ; monitors left on + rack LEDs (LEDs blink by modulating their colour)
+    mov edi, GL_BLEND
+    call glEnable
+    mov edi, GL_SRC_ALPHA
+    mov esi, GL_ONE_MINUS_SRC_ALPHA
+    call glBlendFunc
+    xor r12d, r12d                      ; every storey: the atrium sees them all
+.ul:
+    cmp r12d, NF-1
+    jg .ul_done
+    cmp r12d, 0
+    jl .ul_next
+    cmp r12d, NF
+    jge .ul_next
+    mov edi, [white_tex]
+    call bind
+    imul edi, r12d, NMAT
+    add edi, M_SCREEN
+    add edi, [list_base]
+    call glCallList
+    mov edi, [led_tex]
+    call bind
+    movss xmm0, [rsp+8]
+    mulss xmm0, [c_led_speed]
+    call sinf
+    mulss xmm0, [c_led_b]
+    addss xmm0, [c_led_a]
+    movaps xmm1, xmm0
+    movaps xmm2, xmm0
+    movss xmm3, [c_one]
+    call glColor4f
+    imul edi, r12d, NMAT
+    add edi, M_LED
+    add edi, [list_base]
+    call glCallList
+    GLF4 glColor4f, 1.0, 1.0, 1.0, 1.0
+.ul_next:
+    inc r12d
+    jmp .ul
+.ul_done:
+    ; B's halo and floating name tag
+    mov eax, [b_floor]
+    sub eax, [cur_floor]
+    cmp eax, VIS_FLOORS
+    jg .no_b
+    cmp eax, -VIS_FLOORS
+    jl .no_b
+    mov edi, [white_tex]
+    call bind
+    GLF3 glColor3f, 0.37, 0.85, 1.0
+    mov edi, GL_QUADS
+    call glBegin
+    movss xmm0, [rsp+8]
+    FLD xmm1, 2.0
+    mulss xmm0, xmm1
+    call sinf
+    FLD xmm1, 0.15
+    mulss xmm0, xmm1
+    addss xmm0, [b_pos_y]
+    FLD xmm1, 0.9
+    addss xmm0, xmm1
+    movaps xmm1, xmm0
+    movss xmm0, [b_pos_x]
+    movss xmm2, [b_pos_z]
+    FLD xmm3, 0.7
+    FLD xmm4, 0.07
+    call emit_ring
+    call glEnd
+    GLF3 glColor3f, 1.0, 1.0, 1.0
+    movss xmm0, [b_pos_x]
+    movss xmm1, [b_pos_y]
+    FLD xmm6, 2.35
+    addss xmm1, xmm6
+    movss xmm2, [b_pos_z]
+    FLD xmm3, 0.25
+    mov edi, [label_tex+LBL_B*4]
+    call draw_billboard_label
+.no_b:
+    ; glows under items (no depth writes so they don't hide each other)
+    xor edi, edi
+    call glDepthMask
+    call draw_glows
+    mov edi, 1
+    call glDepthMask
+    ; portal rims glow like everything else in this pass
+    movss xmm0, [rsp+8]
+    call portal_draw_rims
+    mov edi, GL_FOG
+    call glDisable
+    mov edi, GL_BLEND
+    call glDisable
     EPILOGUE
 
 ; -----------------------------------------------------------------------------
@@ -3259,6 +4214,8 @@ render_frame:
     jne .amb
     movss xmm3, [c_amb_basem]
 .amb:
+    PCT xmm4, cfg_bright                ; brightness setting
+    mulss xmm3, xmm4
     movss xmm4, [lightning]
     FLD xmm5, 12.0
     mulss xmm4, xmm5
@@ -3279,184 +4236,14 @@ render_frame:
     call use_program
     call upload_frame_uniforms
 
-    ; ---- static world: storeys within one of the player's
-    mov r12d, [cur_floor]
-    dec r12d
-.fl:
-    mov eax, [cur_floor]
-    inc eax
-    cmp r12d, eax
-    jg .fl_done
-    cmp r12d, 0
-    jl .fl_next
-    cmp r12d, NF
-    jge .fl_next
-    xor r13d, r13d
-.mat:
-    cmp r13d, NLIT
-    jge .fl_next
-    ; texture
-    mov eax, [mat_tex+r13*4]
-    mov edi, [white_tex]
-    cmp eax, 0
-    jl .tx
-    mov edi, [tex_ids+rax*4]
-.tx:
-    call bind
-    ; emission: safe-room walls pulse, racks glow a little
-    xorps xmm0, xmm0
-    cmp r13d, M_N
-    jne .e1
     movss xmm0, [rsp+8]
-    FLD xmm1, 1.5
-    mulss xmm0, xmm1
-    call sinf
-    mulss xmm0, [c_n_pulse]
-    addss xmm0, [c_n_emit]
-.e1:
-    cmp r13d, M_RACK
-    jne .e2
-    movss xmm0, [c_rack_emit]
-.e2:
-    call set_emit
-    movss xmm0, [mat_bump+r13*4]
-    movss xmm1, [mat_spec+r13*4]
-    call set_material
-    imul edi, r12d, NMAT
-    add edi, r13d
-    add edi, [list_base]
-    call glCallList
-    inc r13d
-    jmp .mat
-.fl_next:
-    inc r12d
-    jmp .fl
-.fl_done:
-    xorps xmm0, xmm0
-    call set_emit
-    xorps xmm0, xmm0                    ; moving things: smooth, nearly matte
-    FLD xmm1, 0.08
-    call set_material
-
-    ; ---- lit dynamic things
-    movss xmm0, [c_sign_emit]
-    call set_emit
-    xor edi, edi
-    call draw_signs
-    xorps xmm0, xmm0
-    call set_emit
-    call draw_items
-    call draw_t
-    ; Y's plaque on the cage
-    cmp dword [cur_floor], 1
-    jg .no_y
-    movss xmm0, [y_pos_x]
-    FLD xmm1, 1.9
-    movss xmm2, [y_pos_z]
-    FLD xmm3, 0.3
-    mov edi, [label_tex+12]
-    call draw_billboard_label
-
-.no_y:
-    ; ---- unlit pass: things that glow
-    xor edi, edi
-    GL2CALL glUseProgram
-    mov edi, GL_FOG
-    call glEnable
-    call draw_fixtures
-    mov edi, 1
-    call draw_signs
-    ; monitors left on + rack LEDs (LEDs blink by modulating their colour)
-    mov edi, GL_BLEND
-    call glEnable
-    mov edi, GL_SRC_ALPHA
-    mov esi, GL_ONE_MINUS_SRC_ALPHA
-    call glBlendFunc
-    mov r12d, [cur_floor]
-    dec r12d
-.ul:
-    mov eax, [cur_floor]
-    inc eax
-    cmp r12d, eax
-    jg .ul_done
-    cmp r12d, 0
-    jl .ul_next
-    cmp r12d, NF
-    jge .ul_next
-    mov edi, [white_tex]
-    call bind
-    imul edi, r12d, NMAT
-    add edi, M_SCREEN
-    add edi, [list_base]
-    call glCallList
-    mov edi, [led_tex]
-    call bind
+    call draw_scene
+    ; what you see through the portals (portal.asm)
     movss xmm0, [rsp+8]
-    mulss xmm0, [c_led_speed]
-    call sinf
-    mulss xmm0, [c_led_b]
-    addss xmm0, [c_led_a]
-    movaps xmm1, xmm0
-    movaps xmm2, xmm0
-    movss xmm3, [c_one]
-    call glColor4f
-    imul edi, r12d, NMAT
-    add edi, M_LED
-    add edi, [list_base]
-    call glCallList
-    GLF4 glColor4f, 1.0, 1.0, 1.0, 1.0
-.ul_next:
-    inc r12d
-    jmp .ul
-.ul_done:
-    ; B's halo and floating name tag
-    mov eax, [b_floor]
-    sub eax, [cur_floor]
-    cmp eax, 1
-    jg .no_b
-    cmp eax, -1
-    jl .no_b
-    mov edi, [white_tex]
-    call bind
-    GLF3 glColor3f, 0.37, 0.85, 1.0
-    mov edi, GL_QUADS
-    call glBegin
+    call portal_views
+    ; your hands, on top of everything
     movss xmm0, [rsp+8]
-    FLD xmm1, 2.0
-    mulss xmm0, xmm1
-    call sinf
-    FLD xmm1, 0.15
-    mulss xmm0, xmm1
-    addss xmm0, [b_pos_y]
-    FLD xmm1, 0.9
-    addss xmm0, xmm1
-    movaps xmm1, xmm0
-    movss xmm0, [b_pos_x]
-    movss xmm2, [b_pos_z]
-    FLD xmm3, 0.7
-    FLD xmm4, 0.07
-    call emit_ring
-    call glEnd
-    GLF3 glColor3f, 1.0, 1.0, 1.0
-    movss xmm0, [b_pos_x]
-    movss xmm1, [b_pos_y]
-    FLD xmm6, 2.35
-    addss xmm1, xmm6
-    movss xmm2, [b_pos_z]
-    FLD xmm3, 0.25
-    mov edi, [label_tex+8]
-    call draw_billboard_label
-.no_b:
-    ; glows under items (no depth writes so they don't hide each other)
-    xor edi, edi
-    call glDepthMask
-    call draw_glows
-    mov edi, 1
-    call glDepthMask
-    mov edi, GL_FOG
-    call glDisable
-    mov edi, GL_BLEND
-    call glDisable
+    call draw_viewmodel
     cmp dword [render_scale], 1
     je .done
     mov edi, [rsp+0]
@@ -3852,3 +4639,10 @@ mode_wb db "wb",0
 env_scale db "BEACOM_SCALE",0
 s_llvmpipe db "llvmpipe",0
 s_softpipe db "softpipe",0
+
+section .bss
+pc_x        resd 4                      ; corners of the platform being built
+pc_z        resd 4
+pc_t        resd 4                      ; top and bottom heights
+pc_b        resd 4
+signs_classic resd 1

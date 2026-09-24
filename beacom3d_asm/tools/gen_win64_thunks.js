@@ -19,7 +19,7 @@ const fs = require("fs");
 const SIGS = {
   // C library
   scanf: "V", puts: "i", putchar: "i", getchar: "",
-  system: "i", fopen: "ii", fread: "iiii", fgetc: "i", fclose: "i", fflush: "i",
+  system: "i", fopen: "ii", fread: "iiii", fgetc: "i", fclose: "i", fflush: "i", fwrite: "iiii",
   exit: "i", time: "i", getenv: "i", strstr: "ii", strlen: "i",
   memset: "iii", memcpy: "iii",
   sinf: "f", cosf: "f", sqrtf: "f", expf: "f", logf: "f", tanf: "f",
@@ -56,6 +56,9 @@ const SIGS = {
   glDeleteLists: "ii", glCopyTexSubImage2D: "iiiiiiii", glGetString: "i",
   glLoadMatrixf: "i", glColorMask: "iiii", glPolygonOffset: "ff", glDrawBuffer: "i",
   glReadBuffer: "i", glTexParameterf: "iif",
+  // portal.asm: stencil-buffer portals
+  glStencilFunc: "iii", glStencilOp: "iii", glStencilMask: "i", glClearStencil: "i",
+  glDepthFunc: "i", glDepthRange: "dd", glClipPlane: "ii", glGetFloatv: "ii",
 };
 
 // GL 2.0 entry points reached through pointers (p_NAME in render.asm)

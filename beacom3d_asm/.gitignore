@@ -5,3 +5,5 @@ beacom3d.exe
 *.dll
 build-win/
 shots/
+beacom3d_dev.exe
+beacom_settings.cfg

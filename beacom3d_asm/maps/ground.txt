@@ -7,7 +7,7 @@
 ###H   CCCCCCCC####^^#####H   CCCCCCCC####..#####H   CCCCC#
 ###H   CCCCCCCC####^^#####H   CCCCCCCC####..#####H   NNNNN#
 ###H          C####^^#####H          C####..#####H   SSSSS#
-###H   C      C####^^#####H   C      C####..#####H   NSSSS#
+###Hu  C      C####^^#####H   C      C####..#####H   NSSSS#
 ###H   C      C####^^#####H   C      C####..#####H   NSSSS#
 ###H   C      C####^^#####H   C      C####..#####H   NSSSS#
 ###H   CCCCCCCC####  #####H   CCCCCCCC####  #####H   NNNNN#
@@ -15,12 +15,12 @@
 #                                                         #
 #                                                         #
 #                                                         #
-# GGGGGGGGGH   HHHHHHHHHHHH   HHHHHHHHHH  HH   HHHHHHHHHHH#
-#         GH   H##########H   H#########  #H  LLLLLLLLLLLL#
-#         GH   H#<<<<<<       CCCCCCCC##  #H              #
-#   G  G  GH   H#<<<<<<              C##..#H  L           #
-#         GH   H##########H   C      C##..#H  L           #
-#         GH   H##########H   C      C##..#H  L           #
+# GGGGGGGGGH   HHHHHHHHHHHH   H HHHHHHHH  HH   HHHHHHHHHHH#
+#         GH   H##########H   H  ... C##  #H  LLLLLLLLLLLL#
+#         GH   H#<<<<<<       C  ... C##  #H              #
+#   G  G  GH   H#<<<<<<          ... C##..#H  L           #
+#         GH   H##########H   C  ... C##..#H  L           #
+# .       GH   H##########H   C  ... C##..#H  L           #
 #   G  G  GH   H##########H   C      C##..#H  L           #
 #         GH   NNNNNN#####H   CCCCCCCC##..#H  L     B     #
 #         GH   SSSSSN#####H          C##..#H  L           #

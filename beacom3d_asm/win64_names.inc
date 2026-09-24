@@ -10,6 +10,7 @@
 %define fgetc sv_fgetc
 %define fclose sv_fclose
 %define fflush sv_fflush
+%define fwrite sv_fwrite
 %define exit sv_exit
 %define time sv_time
 %define getenv sv_getenv
@@ -121,5 +122,13 @@
 %define glDrawBuffer sv_glDrawBuffer
 %define glReadBuffer sv_glReadBuffer
 %define glTexParameterf sv_glTexParameterf
+%define glStencilFunc sv_glStencilFunc
+%define glStencilOp sv_glStencilOp
+%define glStencilMask sv_glStencilMask
+%define glClearStencil sv_glClearStencil
+%define glDepthFunc sv_glDepthFunc
+%define glDepthRange sv_glDepthRange
+%define glClipPlane sv_glClipPlane
+%define glGetFloatv sv_glGetFloatv
 %define printf sv_printf
 %define snprintf sv_snprintf

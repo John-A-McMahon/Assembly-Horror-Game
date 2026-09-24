@@ -158,6 +158,25 @@ sv_fflush:
     leave
     ret
 
+global sv_fwrite
+extern fwrite
+; fwrite(iiii)
+sv_fwrite:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 64
+    mov [rsp+32], rdi
+    mov [rsp+40], rsi
+    mov [rsp+48], rdx
+    mov [rsp+56], rcx
+    mov rcx, [rsp+32]
+    mov rdx, [rsp+40]
+    mov r8, [rsp+48]
+    mov r9, [rsp+56]
+    call fwrite
+    leave
+    ret
+
 global sv_exit
 extern exit
 ; exit(i)
@@ -1836,6 +1855,124 @@ sv_glTexParameterf:
     mov rdx, [rsp+40]
     movss xmm2, [rsp+48]
     call glTexParameterf
+    leave
+    ret
+
+global sv_glStencilFunc
+extern glStencilFunc
+; glStencilFunc(iii)
+sv_glStencilFunc:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 64
+    mov [rsp+32], rdi
+    mov [rsp+40], rsi
+    mov [rsp+48], rdx
+    mov rcx, [rsp+32]
+    mov rdx, [rsp+40]
+    mov r8, [rsp+48]
+    call glStencilFunc
+    leave
+    ret
+
+global sv_glStencilOp
+extern glStencilOp
+; glStencilOp(iii)
+sv_glStencilOp:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 64
+    mov [rsp+32], rdi
+    mov [rsp+40], rsi
+    mov [rsp+48], rdx
+    mov rcx, [rsp+32]
+    mov rdx, [rsp+40]
+    mov r8, [rsp+48]
+    call glStencilOp
+    leave
+    ret
+
+global sv_glStencilMask
+extern glStencilMask
+; glStencilMask(i)
+sv_glStencilMask:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+    mov [rsp+32], rdi
+    mov rcx, [rsp+32]
+    call glStencilMask
+    leave
+    ret
+
+global sv_glClearStencil
+extern glClearStencil
+; glClearStencil(i)
+sv_glClearStencil:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+    mov [rsp+32], rdi
+    mov rcx, [rsp+32]
+    call glClearStencil
+    leave
+    ret
+
+global sv_glDepthFunc
+extern glDepthFunc
+; glDepthFunc(i)
+sv_glDepthFunc:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+    mov [rsp+32], rdi
+    mov rcx, [rsp+32]
+    call glDepthFunc
+    leave
+    ret
+
+global sv_glDepthRange
+extern glDepthRange
+; glDepthRange(dd)
+sv_glDepthRange:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+    movsd [rsp+32], xmm0
+    movsd [rsp+40], xmm1
+    movsd xmm0, [rsp+32]
+    movsd xmm1, [rsp+40]
+    call glDepthRange
+    leave
+    ret
+
+global sv_glClipPlane
+extern glClipPlane
+; glClipPlane(ii)
+sv_glClipPlane:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+    mov [rsp+32], rdi
+    mov [rsp+40], rsi
+    mov rcx, [rsp+32]
+    mov rdx, [rsp+40]
+    call glClipPlane
+    leave
+    ret
+
+global sv_glGetFloatv
+extern glGetFloatv
+; glGetFloatv(ii)
+sv_glGetFloatv:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+    mov [rsp+32], rdi
+    mov [rsp+40], rsi
+    mov rcx, [rsp+32]
+    mov rdx, [rsp+40]
+    call glGetFloatv
     leave
     ret
 

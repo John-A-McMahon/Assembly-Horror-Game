@@ -21,8 +21,65 @@ global grid, char_class, world_init, cell_at, cell_index, ground_height, collide
 global floor_of_height, line_of_sight, stair_t, open_cells, open_count
 global node_center, node_at_pos, st_dx, st_dy, st_len, st_top, st_edge, rand01
 global rng_seed, rng_next
+global nav_x, nav_y, nav_z, nav_count, link_head, link_next, link_to, link_type, nav_t_mask
+global node_walkable, line_of_sight_3d, sound_occlusion, dist3, link_count
+global classic_grid, compute_stairs, world_select
+extern worldgen_generate
+global plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
+
+%define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
+%define XN(i) (NCELLS + (i))
 
 section .data
+; -----------------------------------------------------------------------------
+; "The Stack" -- the three-storey atrium. Over the basement pillar hall the
+; ground and 2nd floors are open ('.' at grid x 33..35, y 18..22, which is
+; world X 66..72, Z 36..46), so you can look down two storeys. Inside it:
+;   ramp A   along the west edge, ground-floor balcony (y 3.2) up to...
+;   the bridge across the void at half-storey height (y 4.8), and
+;   ramp B   along the east edge, up to the 2nd-floor server room (y 6.4).
+; Walk off any edge and you land in the basement (loudly).
+;
+; platform: x0, x1, z0, z1, height at the low end, height at the high end,
+;           slope axis (0 flat, 1 along X, 2 along Z), slab thickness
+plat_def:
+    dd 66.0, 67.4, 40.0, 46.0, 4.8, 3.2, 2, 0.2     ; ramp A
+    dd 66.0, 72.0, 38.6, 40.0, 4.8, 4.8, 0, 0.2     ; the bridge
+    dd 70.6, 72.0, 40.0, 46.0, 4.8, 6.4, 2, 0.2     ; ramp B
+%define NPLAT_DEF 3
+
+; free waypoints (world X, feet Y, Z): node ids XN(0), XN(1), ...
+xnode_def:
+    dd 66.7, 3.733, 44.0                ; 0 ramp A, low
+    dd 66.7, 4.267, 42.0                ; 1 ramp A, high
+    dd 66.7, 4.8,   39.3                ; 2 bridge, west end
+    dd 69.0, 4.8,   39.3                ; 3 bridge, middle
+    dd 71.3, 4.8,   39.3                ; 4 bridge, east end
+    dd 71.3, 5.333, 42.0                ; 5 ramp B, low
+    dd 71.3, 5.867, 44.0                ; 6 ramp B, high
+%define NXNODE_DEF 7
+; authored links: from, to, type (walk and ladder links go both ways)
+xlink_def:
+    dd NODE(1,33,23), XN(0), LK_WALK    ; south balcony -> ramp A
+    dd XN(0), XN(1), LK_WALK
+    dd XN(1), XN(2), LK_WALK
+    dd XN(2), XN(3), LK_WALK
+    dd XN(3), XN(4), LK_WALK
+    dd XN(4), XN(5), LK_WALK
+    dd XN(5), XN(6), LK_WALK
+    dd XN(6), NODE(2,35,23), LK_WALK    ; ramp B -> server room
+    dd XN(3), NODE(0,34,19), LK_DROP    ; off the bridge into the basement
+%define NXLINK_DEF 9
+
+c_hear_slab dd 6.0        ; a floor/ceiling slab muffles sound like 6m of air
+c_hear_wall dd 0.75       ; ...each half metre of solid wall like 0.75m
+c_los3_step dd 0.25
+c_snd_step  dd 0.5
+c_xn_reach  dd 2.1        ; how close (horizontally) you must be to a waypoint
+c_xn_dy     dd 0.9
+; the four grid directions, in ladder_dir order: +x, -x, +y, -y
+dir4_dx     dd 1, -1, 0, 0
+dir4_dy     dd 0, 0, 1, -1
 map_name0   db "maps/basement.txt",0
 map_name1   db "maps/ground.txt",0
 map_name2   db "maps/second.txt",0
@@ -37,6 +94,7 @@ c_los_step  dd 0.5        ; line-of-sight sample spacing (world units)
 
 section .bss
 grid        resb NCELLS
+classic_grid resb NCELLS  ; the real Beacom, as loaded from maps/
 char_class  resb 256
 ; per-cell stair info (only meaningful where the cell is a stair)
 st_dx       resb NCELLS   ; signed direction the stair rises (+1/-1/0)
@@ -48,6 +106,27 @@ st_edge     resd NCELLS   ; world coordinate (X or Z) where the ramp height is 0
 open_cells  resd NCELLS   ; node ids of every plain ' ' floor cell
 open_count  resd 1
 rng_state   resd 1
+; the navigation graph
+nav_x       resd NNODES   ; world position of every node (feet height)
+nav_y       resd NNODES
+nav_z       resd NNODES
+nav_count   resd 1        ; NCELLS + free waypoints in use
+link_head   resd NNODES   ; first link leaving each node, -1 none
+link_next   resd MAX_LINKS
+link_to     resd MAX_LINKS
+link_type   resd MAX_LINKS
+link_count  resd 1
+nav_t_mask  resd 1        ; bit per LK_ type that T may use
+; walkable platforms and ramps
+plat_count  resd 1
+plat_x0     resd MAX_PLAT
+plat_x1     resd MAX_PLAT
+plat_z0     resd MAX_PLAT
+plat_z1     resd MAX_PLAT
+plat_ya     resd MAX_PLAT
+plat_yb     resd MAX_PLAT
+plat_axis   resd MAX_PLAT
+plat_thick  resd MAX_PLAT
 
 section .text
 
@@ -156,9 +235,42 @@ world_init:
     mov byte [rbx+'>'], CF_STAIR | CF_OPEN | CF_TWALK | CF_SIGHT
     mov byte [rbx+'d'], CF_SIGHT            ; desks are low: you can see over them
     mov byte [rbx+'B'], CF_SIGHT
+    mov byte [rbx+'u'], CF_OPEN | CF_TWALK | CF_FLAT | CF_SIGHT   ; foot of a ladder
 
     call load_maps
+    lea rdi, [classic_grid]
+    lea rsi, [grid]
+    mov edx, NCELLS
+    call memcpy
+    call world_analyse
+    EPILOGUE
+
+; -----------------------------------------------------------------------------
+; world_select(edi = 0 the real Beacom / 1 generated, esi = seed) -- put that
+; building in grid and re-derive everything from it
+; -----------------------------------------------------------------------------
+world_select:
+    PROLOGUE 16
+    test edi, edi
+    jnz .generate
+    lea rdi, [grid]
+    lea rsi, [classic_grid]
+    mov edx, NCELLS
+    call memcpy
+    jmp .analyse
+.generate:
+    mov edi, esi
+    call worldgen_generate
+.analyse:
+    call world_analyse
+    EPILOGUE
+
+; world_analyse -- stairs, platforms, the nav graph and the spawn list
+world_analyse:
+    PROLOGUE 16
     call compute_stairs
+    call load_platforms
+    call build_nav
 
     ; ---- open_cells = every ' ' cell (spawn points for items and T)
     xor ecx, ecx
@@ -475,8 +587,120 @@ ground_height:
     inc ebx
     jmp .loop
 .done:
+    ; ramps and platforms (anything off the grid)
+    xor ebx, ebx
+.plat:
+    cmp ebx, [plat_count]
+    jge .plats_done
+    mov ecx, ebx
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    xorps xmm2, xmm2
+    call plat_inside
+    test eax, eax
+    jz .pnext
+    mov ecx, ebx
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    call plat_height
+    comiss xmm0, [rsp+8]
+    ja .pnext
+    comiss xmm0, [rsp+12]
+    jbe .pnext
+    movss [rsp+12], xmm0
+.pnext:
+    inc ebx
+    jmp .plat
+.plats_done:
     movss xmm0, [rsp+12]
     EPILOGUE
+
+; -----------------------------------------------------------------------------
+; plat_inside(ecx=platform, xmm0=X, xmm1=Z, xmm2=margin) -> eax 1 if the
+; point is over it (its rectangle grown by margin). leaf.
+; plat_height(ecx=platform, xmm0=X, xmm1=Z) -> xmm0 = walking surface height
+; there (a ramp is a straight slope; outside it the end height). leaf.
+; -----------------------------------------------------------------------------
+plat_inside:
+    xor eax, eax
+    movss xmm3, xmm0
+    addss xmm3, xmm2
+    comiss xmm3, [plat_x0+rcx*4]
+    jbe .no
+    movss xmm3, xmm0
+    subss xmm3, xmm2
+    comiss xmm3, [plat_x1+rcx*4]
+    jae .no
+    movss xmm3, xmm1
+    addss xmm3, xmm2
+    comiss xmm3, [plat_z0+rcx*4]
+    jbe .no
+    movss xmm3, xmm1
+    subss xmm3, xmm2
+    comiss xmm3, [plat_z1+rcx*4]
+    jae .no
+    mov eax, 1
+.no:
+    ret
+
+plat_height:
+    movss xmm2, [plat_ya+rcx*4]
+    mov eax, [plat_axis+rcx*4]
+    test eax, eax
+    jz .flat
+    cmp eax, 1
+    jne .along_z
+    subss xmm0, [plat_x0+rcx*4]
+    movss xmm3, [plat_x1+rcx*4]
+    subss xmm3, [plat_x0+rcx*4]
+    jmp .lerp
+.along_z:
+    movaps xmm0, xmm1
+    subss xmm0, [plat_z0+rcx*4]
+    movss xmm3, [plat_z1+rcx*4]
+    subss xmm3, [plat_z0+rcx*4]
+.lerp:
+    divss xmm0, xmm3
+    maxss xmm0, [c_zero]
+    minss xmm0, [c_one]
+    movss xmm3, [plat_yb+rcx*4]
+    subss xmm3, xmm2
+    mulss xmm0, xmm3
+    addss xmm0, xmm2
+    ret
+.flat:
+    movaps xmm0, xmm2
+    ret
+
+; load_platforms() -- copy plat_def into the platform arrays
+load_platforms:
+    xor ecx, ecx
+    lea rdx, [plat_def]
+.p:
+    cmp ecx, NPLAT_DEF
+    jge .done
+    mov eax, [rdx+0]
+    mov [plat_x0+rcx*4], eax
+    mov eax, [rdx+4]
+    mov [plat_x1+rcx*4], eax
+    mov eax, [rdx+8]
+    mov [plat_z0+rcx*4], eax
+    mov eax, [rdx+12]
+    mov [plat_z1+rcx*4], eax
+    mov eax, [rdx+16]
+    mov [plat_ya+rcx*4], eax
+    mov eax, [rdx+20]
+    mov [plat_yb+rcx*4], eax
+    mov eax, [rdx+24]
+    mov [plat_axis+rcx*4], eax
+    mov eax, [rdx+28]
+    mov [plat_thick+rcx*4], eax
+    add rdx, 32
+    inc ecx
+    jmp .p
+.done:
+    mov [plat_count], ecx
+    ret
 
 ; -----------------------------------------------------------------------------
 ; floor_of_height(xmm0=y) -> eax = storey index 0..NF-1. leaf.
@@ -502,8 +726,49 @@ floor_of_height:
 ; that the body reaches into. The 0.25 bias lets you walk onto stairs.
 ; -----------------------------------------------------------------------------
 collides:
-    PROLOGUE 32
+    PROLOGUE 64
     ; [rsp+0] f0  [rsp+4] f1  [rsp+8] x0 [rsp+12] x1 [rsp+16] y0 [rsp+20] y1
+    ; [rsp+32] X [rsp+36] Z [rsp+40] feet [rsp+44] radius [rsp+48] body
+    movss [rsp+32], xmm0
+    movss [rsp+36], xmm1
+    movss [rsp+40], xmm2
+    movss [rsp+44], xmm3
+    movss [rsp+48], xmm4
+    ; ---- platform slabs: solid from (surface - thickness) up to the surface
+    xor ebx, ebx
+.plat:
+    cmp ebx, [plat_count]
+    jge .grid
+    mov ecx, ebx
+    movss xmm0, [rsp+32]
+    movss xmm1, [rsp+36]
+    movss xmm2, [rsp+44]
+    call plat_inside
+    test eax, eax
+    jz .pnext
+    mov ecx, ebx
+    movss xmm0, [rsp+32]
+    movss xmm1, [rsp+36]
+    call plat_height                    ; surface under the body's centre
+    movss xmm1, [rsp+40]
+    addss xmm1, [c_step_bias]
+    comiss xmm1, xmm0                   ; body bottom at/above the surface: clear
+    jae .pnext
+    subss xmm0, [plat_thick+rbx*4]
+    movss xmm1, [rsp+40]
+    addss xmm1, [rsp+48]
+    comiss xmm1, xmm0                   ; body top under the slab: clear
+    jbe .pnext
+    jmp .hit
+.pnext:
+    inc ebx
+    jmp .plat
+.grid:
+    movss xmm0, [rsp+32]
+    movss xmm1, [rsp+36]
+    movss xmm2, [rsp+40]
+    movss xmm3, [rsp+44]
+    movss xmm4, [rsp+48]
     movaps xmm5, xmm2
     addss xmm5, [c_step_bias]
     divss xmm5, [c_fh]
@@ -629,11 +894,13 @@ line_of_sight:
     xor eax, eax
     EPILOGUE
 
-; -----------------------------------------------------------------------------
-; node_center(edi=node id) -> xmm0=X, xmm1=Y, xmm2=Z  (world centre of a
-; cell, with the ramp height if it is a stair)
-; -----------------------------------------------------------------------------
-node_center:
+; =============================================================================
+; The 3D navigation graph
+; =============================================================================
+
+; grid_node_pos(edi=grid node id) -> xmm0=X, xmm1=Y, xmm2=Z  (world centre of
+; a cell, with the ramp height if it is a stair)
+grid_node_pos:
     PROLOGUE 16
     mov ebx, edi
     ; decompose id -> f, y, x
@@ -674,18 +941,287 @@ node_center:
     movss xmm2, [rsp+4]
     EPILOGUE
 
-; -----------------------------------------------------------------------------
-; node_at_pos(xmm0=X, xmm1=feetY, xmm2=Z) -> eax = node id under a body.
-; If the storey computed from the feet is an open shaft, the body is really
-; on the stair of the storey below.
-; -----------------------------------------------------------------------------
-node_at_pos:
+; node_center(edi=node id) -> xmm0=X, xmm1=Y (feet), xmm2=Z. leaf.
+; Works for grid cells and free waypoints alike.
+node_center:
+    movss xmm0, [nav_x+rdi*4]
+    movss xmm1, [nav_y+rdi*4]
+    movss xmm2, [nav_z+rdi*4]
+    ret
+
+; node_walkable(edi=node id) -> eax 1 if T may stand there. leaf.
+node_walkable:
+    mov eax, 1
+    cmp edi, NCELLS
+    jae .done                           ; waypoints are always walkable
+    movzx eax, byte [grid+rdi]
+    movzx eax, byte [char_class+rax]
+    and eax, CF_TWALK
+    shr eax, 3
+.done:
+    ret
+
+; add_link(edi=from, esi=to, edx=type) -- one directed edge. leaf.
+add_link:
+    mov eax, [link_count]
+    cmp eax, MAX_LINKS
+    jge .full
+    mov [link_to+rax*4], esi
+    mov [link_type+rax*4], edx
+    mov ecx, [link_head+rdi*4]
+    mov [link_next+rax*4], ecx
+    mov [link_head+rdi*4], eax
+    inc dword [link_count]
+.full:
+    ret
+
+; build_nav() -- node positions, waypoints, authored + automatic links
+build_nav:
     PROLOGUE 16
+    xor ebx, ebx
+.grid:
+    cmp ebx, NCELLS
+    jge .grid_done
+    mov edi, ebx
+    call grid_node_pos
+    movss [nav_x+rbx*4], xmm0
+    movss [nav_y+rbx*4], xmm1
+    movss [nav_z+rbx*4], xmm2
+    inc ebx
+    jmp .grid
+.grid_done:
+    xor ecx, ecx
+    lea rdx, [xnode_def]
+.xn:
+    cmp ecx, NXNODE_DEF
+    jge .xn_done
+    lea eax, [rcx+NCELLS]
+    mov r8d, [rdx]
+    mov [nav_x+rax*4], r8d
+    mov r8d, [rdx+4]
+    mov [nav_y+rax*4], r8d
+    mov r8d, [rdx+8]
+    mov [nav_z+rax*4], r8d
+    add rdx, 12
+    inc ecx
+    jmp .xn
+.xn_done:
+    mov dword [nav_count], NCELLS + NXNODE_DEF
+    lea rdi, [link_head]
+    mov ecx, NNODES
+    mov eax, -1
+    rep stosd
+    mov dword [link_count], 0
+    mov dword [nav_t_mask], (1 << LK_WALK) | (1 << LK_DROP)   ; T can't climb (yet)
+    xor ebx, ebx
+.xl:
+    cmp ebx, NXLINK_DEF
+    jge .xl_done
+    imul eax, ebx, 12
+    lea r12, [xlink_def+rax]
+    mov edi, [r12]
+    mov esi, [r12+4]
+    mov edx, [r12+8]
+    call add_link
+    cmp dword [r12+8], LK_DROP
+    je .xl_next
+    mov edi, [r12+4]                    ; walk / ladder links go both ways
+    mov esi, [r12]
+    mov edx, [r12+8]
+    call add_link
+.xl_next:
+    inc ebx
+    jmp .xl
+.xl_done:
+    call auto_links
+    EPILOGUE
+
+; auto_links() -- links the maps imply:
+;   drop:   a floor cell next to an open shaft/void -> wherever you'd land
+;           below (only onto flat floor: never onto a stair or into a wall)
+;   ladder: a ladder foot 'u' <-> the cell you step off onto upstairs
+auto_links:
+    PROLOGUE 32
+    ; [rsp+0] from node  [rsp+4] nx  [rsp+8] ny
+    mov r12d, 1
+.f:
+    cmp r12d, NF
+    jge .ladders
+    xor r14d, r14d
+.y:
+    cmp r14d, MAP_H
+    jge .fn
+    xor r13d, r13d
+.x:
+    cmp r13d, MAP_W
+    jge .yn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    movzx eax, byte [char_class+rax]
+    and eax, CF_TWALK | CF_FLAT
+    cmp eax, CF_TWALK | CF_FLAT
+    jne .xnext
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_index
+    mov [rsp+0], eax
+    xor ebx, ebx
+.d:
+    cmp ebx, 4
+    jge .xnext
+    mov esi, r13d
+    add esi, [dir4_dx+rbx*4]
+    mov edx, r14d
+    add edx, [dir4_dy+rbx*4]
+    mov [rsp+4], esi
+    mov [rsp+8], edx
+    mov edi, r12d
+    call cell_at
+    cmp eax, '.'
+    jne .dnext
+    mov r15d, r12d                      ; fall down the shaft...
+.down:
+    dec r15d
+    js .dnext
+    mov edi, r15d
+    mov esi, [rsp+4]
+    mov edx, [rsp+8]
+    call cell_at
+    cmp eax, '.'
+    je .down
+    movzx eax, byte [char_class+rax]    ; ...and land on flat floor
+    and eax, CF_TWALK | CF_FLAT
+    cmp eax, CF_TWALK | CF_FLAT
+    jne .dnext
+    mov edi, r15d
+    mov esi, [rsp+4]
+    mov edx, [rsp+8]
+    call cell_index
+    mov esi, eax
+    mov edi, [rsp+0]
+    mov edx, LK_DROP
+    call add_link
+.dnext:
+    inc ebx
+    jmp .d
+.xnext:
+    inc r13d
+    jmp .x
+.yn:
+    inc r14d
+    jmp .y
+.fn:
+    inc r12d
+    jmp .f
+.ladders:
+    xor r12d, r12d
+.lf:
+    cmp r12d, NF-1
+    jge .done
+    xor r14d, r14d
+.ly:
+    cmp r14d, MAP_H
+    jge .lfn
+    xor r13d, r13d
+.lx:
+    cmp r13d, MAP_W
+    jge .lyn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, 'u'
+    jne .lxn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call ladder_dir                     ; traverse.asm: which wall it's on
+    cmp eax, 0
+    jl .lxn
+    mov ebx, eax
+    lea edi, [r12d+1]
+    mov esi, r13d
+    add esi, [dir4_dx+rbx*4]
+    mov edx, r14d
+    add edx, [dir4_dy+rbx*4]
+    call cell_index
+    mov [rsp+4], eax                    ; top
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_index
+    mov [rsp+0], eax                    ; foot
+    mov edi, eax
+    mov esi, [rsp+4]
+    mov edx, LK_LADDER
+    call add_link
+    mov edi, [rsp+4]
+    mov esi, [rsp+0]
+    mov edx, LK_LADDER
+    call add_link
+.lxn:
+    inc r13d
+    jmp .lx
+.lyn:
+    inc r14d
+    jmp .ly
+.lfn:
+    inc r12d
+    jmp .lf
+.done:
+    EPILOGUE
+
+; node_at_pos(xmm0=X, xmm1=feetY, xmm2=Z) -> eax = node id under a body.
+; Standing on a ramp or platform: the nearest free waypoint. Otherwise the
+; grid cell -- and if the storey computed from the feet is an open shaft, the
+; body is really on the stair of the storey below.
+node_at_pos:
+    PROLOGUE 32
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    mov r15d, -1
+    movss xmm6, [c_xn_reach]
+    mulss xmm6, xmm6                    ; best distance^2 so far
+    mov ebx, NCELLS
+.xn:
+    cmp ebx, [nav_count]
+    jge .xn_done
+    movss xmm0, [nav_y+rbx*4]
+    subss xmm0, [rsp+4]
+    andps xmm0, [c_abs_mask]
+    comiss xmm0, [c_xn_dy]
+    jae .xn_next
+    movss xmm0, [nav_x+rbx*4]
+    subss xmm0, [rsp+0]
+    mulss xmm0, xmm0
+    movss xmm1, [nav_z+rbx*4]
+    subss xmm1, [rsp+8]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    comiss xmm0, xmm6
+    jae .xn_next
+    movaps xmm6, xmm0
+    mov r15d, ebx
+.xn_next:
+    inc ebx
+    jmp .xn
+.xn_done:
+    test r15d, r15d
+    js .grid
+    mov eax, r15d
+    EPILOGUE
+.grid:
+    movss xmm0, [rsp+0]
     mulss xmm0, [c_inv_cell]
     cvttss2si r13d, xmm0                ; gx
+    movss xmm2, [rsp+8]
     mulss xmm2, [c_inv_cell]
     cvttss2si r14d, xmm2                ; gy
-    movaps xmm0, xmm1
+    movss xmm0, [rsp+4]
     call floor_of_height
     mov r12d, eax                       ; f
     mov edi, r12d
@@ -702,4 +1238,158 @@ node_at_pos:
     mov esi, r13d
     mov edx, r14d
     call cell_index
+    EPILOGUE
+
+; dist3(xmm0..2 = a, xmm3..5 = b) -> xmm0 = |a - b|. leaf.
+dist3:
+    subss xmm0, xmm3
+    mulss xmm0, xmm0
+    subss xmm1, xmm4
+    mulss xmm1, xmm1
+    subss xmm2, xmm5
+    mulss xmm2, xmm2
+    addss xmm0, xmm1
+    addss xmm0, xmm2
+    sqrtss xmm0, xmm0
+    ret
+
+; storey_of(xmm0=y) -> eax = floor(y / FH), not clamped (-1 below the
+; basement, NF above the roof). leaf.
+storey_of:
+    divss xmm0, [c_fh]
+    roundss xmm0, xmm0, 1
+    cvttss2si eax, xmm0
+    ret
+
+; line_of_sight_3d(xmm0..2 = eye A, xmm3..5 = point B) -> eax 1 if clear.
+; The real 3D segment through the building: walls, racks and pillars block
+; it, and it may only pass a floor/ceiling where that is open ('.' -- stair
+; wells, hatches, the atrium). So you can look down the atrium at T.
+line_of_sight_3d:
+    xor edi, edi
+    jmp ray_march
+
+; sound_occlusion(xmm0..2 = source, xmm3..5 = listener) -> xmm0 = extra
+; distance the sound travels "through" the building: each solid slab adds
+; c_hear_slab, each half metre of wall c_hear_wall. Open shafts carry sound.
+sound_occlusion:
+    mov edi, 1
+    jmp ray_march
+
+; ray_march(xmm0..5 = A, B; edi = 0 sight / 1 sound)
+ray_march:
+    PROLOGUE 64
+    ; [rsp+0..8] A  [rsp+12..20] B-A  [rsp+24] steps  [rsp+28] extra
+    ; [rsp+32] mode  [rsp+36] t  [rsp+40] gy
+    mov [rsp+32], edi
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    subss xmm3, xmm0
+    movss [rsp+12], xmm3
+    subss xmm4, xmm1
+    movss [rsp+16], xmm4
+    subss xmm5, xmm2
+    movss [rsp+20], xmm5
+    mulss xmm3, xmm3
+    mulss xmm4, xmm4
+    mulss xmm5, xmm5
+    addss xmm3, xmm4
+    addss xmm3, xmm5
+    sqrtss xmm3, xmm3
+    movss xmm0, [c_los3_step]
+    test edi, edi
+    jz .st
+    movss xmm0, [c_snd_step]
+.st:
+    divss xmm3, xmm0
+    cvttss2si r12d, xmm3
+    inc r12d                            ; samples
+    cvtsi2ss xmm0, r12d
+    movss [rsp+24], xmm0
+    mov dword [rsp+28], 0
+    movss xmm0, [rsp+4]
+    call storey_of
+    mov r13d, eax                       ; storey of the previous sample
+    mov ebx, 1
+.loop:
+    cmp ebx, r12d
+    jge .end
+    cvtsi2ss xmm0, ebx
+    divss xmm0, [rsp+24]
+    movss [rsp+36], xmm0
+    movss xmm0, [rsp+16]
+    mulss xmm0, [rsp+36]
+    addss xmm0, [rsp+4]
+    call storey_of
+    mov r14d, eax
+    movss xmm0, [rsp+12]
+    mulss xmm0, [rsp+36]
+    addss xmm0, [rsp+0]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si r15d, xmm0                ; gx
+    movss xmm0, [rsp+20]
+    mulss xmm0, [rsp+36]
+    addss xmm0, [rsp+8]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si eax, xmm0
+    mov [rsp+40], eax                   ; gy
+    cmp r14d, r13d
+    je .in_cell
+    ; crossed a floor/ceiling: open only where the upper storey is '.' --
+    ; checked at the exact point the ray passes that height
+    mov edi, r14d
+    cmp r13d, r14d
+    cmovg edi, r13d
+    mov [rsp+44], edi
+    cvtsi2ss xmm0, edi
+    mulss xmm0, [c_fh]
+    subss xmm0, [rsp+4]
+    divss xmm0, [rsp+16]                ; t where y = that floor's height
+    movss xmm1, [rsp+12]
+    mulss xmm1, xmm0
+    addss xmm1, [rsp+0]
+    mulss xmm1, [c_inv_cell]
+    cvttss2si esi, xmm1
+    movss xmm1, [rsp+20]
+    mulss xmm1, xmm0
+    addss xmm1, [rsp+8]
+    mulss xmm1, [c_inv_cell]
+    cvttss2si edx, xmm1
+    call cell_at
+    cmp eax, '.'
+    je .crossed
+    cmp dword [rsp+32], 0
+    je .blocked
+    movss xmm0, [rsp+28]
+    addss xmm0, [c_hear_slab]
+    movss [rsp+28], xmm0
+.crossed:
+    mov r13d, r14d
+.in_cell:
+    mov edi, r14d
+    mov esi, r15d
+    mov edx, [rsp+40]
+    call cell_at                        ; outside the building reads as '#'
+    movzx eax, byte [char_class+rax]
+    cmp dword [rsp+32], 0
+    jne .sound
+    test eax, CF_SIGHT
+    jz .blocked
+    jmp .next
+.sound:
+    test eax, CF_WALL
+    jz .next
+    movss xmm0, [rsp+28]
+    addss xmm0, [c_hear_wall]
+    movss [rsp+28], xmm0
+.next:
+    inc ebx
+    jmp .loop
+.end:
+    mov eax, 1
+    movss xmm0, [rsp+28]
+    EPILOGUE
+.blocked:
+    xor eax, eax
     EPILOGUE

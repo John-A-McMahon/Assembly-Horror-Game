@@ -17,10 +17,12 @@
 %include "common.inc"
 
 global main, items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h
-global on_t_spotted
+global on_t_spotted, have_map, have_compass, have_portal, invert_y, show_fps
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
-extern dump_shadow_map, glFinish, p_eye_y, getenv, SDL_SetHint, hud_fps, render_cycle_scale, render_toggle_shadows
+extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
+extern portal_reset, portal_fire, portal_check_teleport, world_select, render_rebuild_world
+extern add_box, snd_fanfare, map_floor, dump_shadow_map, glFinish, p_eye_y, getenv, SDL_SetHint, hud_fps, render_cycle_scale, render_toggle_shadows
 
 %define START_F 1                   ; STARTX/STARTY from game.asm
 %define START_X 1
@@ -75,11 +77,33 @@ st_n_down   db "walk down stairs B (ground->basement)",0
 st_n_d      db "walk up stairs D (basement->ground)",0
 st_n_desc   db "walk down from the 2nd floor landing",0
 st_n_wall   db "walk into the start room wall",0
+st_n_lad1   db "climb ladder ground->2nd (office 201)",0
+st_n_lad2   db "climb ladder basement->ground (gym)",0
+st_n_ramp_a db "atrium: up ramp A onto the bridge (y 4.8)",0
+st_n_ramp_b db "atrium: bridge + ramp B -> 2nd floor",0
+st_n_drop   db "atrium: walk off the balcony -> basement",0
+st_zip2_fmt db "[selftest] atrium zipline: grabbed=%d, ended on floor %d at x=%.1f y=%.2f (expect floor 1, x~63)",10,0
+st_los_fmt  db "[selftest] 3D sight from the basement: up the atrium=%d (expect 1), through a solid floor=%d (expect 0)",10,0
+st_snd_fmt  db "[selftest] sound occlusion over 2 storeys: open atrium=%.1f (expect 0), two slabs=%.1f (expect 12)",10,0
+st_nav_up   db "[selftest] nav ground balcony -> 2nd floor via ramps: found=%d, %d nodes (expect <= 10)",10,0
+st_nav_drop db "[selftest] nav 2nd floor -> basement off the ledge: found=%d, %d nodes (expect 3)",10,0
+st_bridge_ok db "[selftest] T came up the ramps and caught you on the bridge after %.1fs (T at y=%.2f) -- PASS",10,0
+st_bridge_fail db "[selftest] T never reached you on the bridge -- FAIL",10,0
+st_gen_fmt  db "[selftest] generated Beacom, seed %2d: %4d open cells, %2d stair cells, %d/40 random spots unreachable (expect 0)",10,0
+st_row_fmt  db "%.59s",10,0
+env_gensweep db "BEACOM_GENSWEEP",0
+st_sweep_fmt db "[selftest] seed sweep 1..%d: seeds missing a stairwell %d, storeys without open floor %d, seeds with unreachable spots %d (%d cells)",10,0
+st_sweep_fmt3 db "[selftest] T's spawn, generated buildings: never closer than %d steps from you, never under %d%% of the longest walk (expect >= 55)",10,0
+st_sweep_fmt4 db "[selftest] T's spawn, the real Beacom, seeds 1..2000: never closer than %d steps, never under %d%% of the longest walk (expect >= 55)",10,0
+st_sweep_fmt2 db "[selftest] seed sweep: duplicate layouts %d, open cells per building %d..%d",10,0
+env_gendump db "BEACOM_GENDUMP",0
+st_zip_fmt  db "[selftest] zipline: grabbed=%d, ended on floor %d at x=%.1f y=%.2f (cable ends x=111)",10,0
 st_path_fmt db "[selftest] path basement(3,3) -> 2nd floor(5,3): found=%d, %d cells",10,0
 st_t_fmt    db "[selftest] t=%5.1fs  T on floor %d at (%d,%d)  state=%d  dist=%.1f",10,0
 st_caught   db "[selftest] T reached the player after %.1f simulated seconds -- PASS",10,0
 st_notcaught db "[selftest] T did not reach the player -- FAIL",10,0
 st_fps_fmt  db "[selftest] render benchmark: %.1f frames per second at %dx%d",10,0
+st_rag_fmt  db "[selftest] ragdoll after 2s: head y=%.2f pelvis y=%.2f (floor is 3.20)",10,0
 st_safe_fmt db "[selftest] player hiding in the 2nd-floor safe room: caught=%d after 60s (expect 0)",10,0
 %ifdef WIN64
 mkdir_shots db "if not exist shots mkdir shots",0
@@ -89,6 +113,7 @@ mkdir_shots db "mkdir -p shots",0
 
 ; ---- in-game messages (strings carried over from the originals) ----
 m_seed      db "Seed %d. Find 3 wireshark packet captures -- one on every floor -- and bring them to B.",0
+m_generated db "This is not the Beacom you know. Seed %d built it tonight -- the atrium, the server room and B's library are the only places that stayed put.",0
 m_controls  db "WASD move - mouse or arrow keys look - SHIFT sprint - C crouch - SPACE jump - F flashlight - E grab - Q deauth - M map - I invert mouse - F3 fps - F4 render scale - F5 shadows",0
 m_inv_on    db "Mouse look: vertical inverted.",0
 m_inv_off   db "Mouse look: normal.",0
@@ -101,6 +126,9 @@ env_mouse   db "BEACOM_MOUSE",0
 hint_warp   db "SDL_MOUSE_RELATIVE_MODE_WARP",0
 hint_one    db "1",0
 m_see_key   db "You see a wireshark packet capture flicker in the dark...",0
+m_got_map   db "You got the MAP! Press M to see every floor -- [ and ] page through them.",0
+m_got_compass db "You got the COMPASS! The map now shows the captures, B... and where T is.",0
+m_got_portal db "You got the PORTAL GUN! Left click: blue portal, right click: orange portal.",0
 m_got_key   db "Packet capture acquired (%d/3). Bring them to B.",0
 m_all_keys  db "That's all three. Get back to B in the library -- ground floor.",0
 m_see_b     db "Lord of networking: 'Pull up wireshark and get a capture going! This Beacom building is very dangerous! Mr. T lurks the halls. Mr. Y has gone missing -- you must find 3 wireshark packet captures before it is too late. If you are ever scared, I have used my networking magic to secure some rooms. T cannot enter them! Good luck on your quest!'",0
@@ -110,7 +138,6 @@ m_safe_out  db "You step back out into the dark...",0
 m_weapon    db "You grabbed a deauth packet! Press Q to fire it and scramble T's tracking.",0
 m_fired     db "*** DEAUTH PACKET FIRED -- T's connection drops! ***",0
 m_no_weapon db "You have no deauth packets.",0
-m_noise     db "shh! You made a noise!",0
 m_prox1     db "You think you hear something moving in the halls...",0
 m_prox2     db "Footsteps are getting louder -- %s!",0
 m_prox3     db "*** T IS RIGHT ON TOP OF YOU -- %s! COVER IS BLOWN! ***",0
@@ -140,6 +167,17 @@ sh_n6 db "shots/07_T.bmp",0
 sh_n7 db "shots/08_cyber_lab.bmp",0
 sh_n8 db "shots/09_safe_room.bmp",0
 sh_n9 db "shots/10_map_hud.bmp",0
+sh_n10 db "shots/11_ragdoll_props.bmp",0
+sh_n11 db "shots/12_atrium_down.bmp",0
+sh_n12 db "shots/13_atrium_up.bmp",0
+sh_menu db "shots/14_pause_menu.bmp",0
+sh_gen_map db "shots/15_generated_map_ground.bmp",0
+sh_gen_map0 db "shots/16_generated_map_basement.bmp",0
+sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
+sh_gen_view db "shots/18_generated_hallway.bmp",0
+sh_hands_gun db "shots/19_hands_torch_gun.bmp",0
+sh_hands_zip db "shots/20_hands_zipline.bmp",0
+sh_hands_ladder db "shots/21_hands_ladder.bmp",0
 align 8
 shots:
     SHOT 1,  1,  1, -2.356,  0.0,  0, 0, sh_n0
@@ -152,22 +190,23 @@ shots:
     SHOT 2, 23,  8, -1.5708, -0.15, 0, 0, sh_n7
     SHOT 1, 56,  9,  1.5708, 0.0,  0, 0, sh_n8
     SHOT 1, 14, 15, -1.5708, 0.0,  0, 1, sh_n9
-%define NSHOTS 10
+    SHOT 1, 30, 15, -1.5708, -0.25, 2, 0, sh_n10
+    SHOT 2, 36, 21,  1.5708, -0.95, 0, 0, sh_n11
+    SHOT 0, 34, 16,  3.1416,  0.9,  0, 0, sh_n12
+%define NSHOTS 13
 %define SHOT_SIZE 36
 
 c_dt_shot   dd 0.016
 c_reach     dd 1.9
 c_b_reach   dd 2.6
-c_same      dd 1.4
 c_see_dist  dd 7.0
 c_tyler_d   dd 2.4
 c_jockey_d  dd 0.9
 c_cage_d    dd 5.0
 c_max_dt    dd 0.05
-c_sens_walk dd 7.0
-c_sens_run  dd 22.0
-c_noise_r   dd 26.0
-c_noise_p   dd 45                    ; 1 in 45 steps makes a noise (int)
+step_noise_amt dd 0.0, 0.03, 0.10, 0.26, 0.12
+c_noise_deauth dd 0.5
+c_noise_click  dd 0.04
 c_bonus     dd 0.3
 c_b_talk_cd dd 8.0
 c_hb_3      dd 0.42
@@ -195,6 +234,10 @@ c_jump_time dd 1.3
 
 section .bss
 alignb 8
+%define MAX_SWEEP 20000
+sweep_hash  resd MAX_SWEEP
+sw_min_pct  resd 1
+sw_min_steps resd 1
 window      resq 1
 glctx       resq 1
 event       resb 64
@@ -229,10 +272,17 @@ warp_x      resd 1
 warp_y      resd 1
 warp_pending resd 1
 invert_y    resd 1
+have_map    resd 1
+have_compass resd 1
+have_portal resd 1
 mouse_edge_mode resd 1
 show_fps    resd 1
 fps_frames  resd 1
 fps_time    resd 1
+crouch_latch resd 1
+restart_new resd 1                  ; the menu asked for a new seed
+built_mode  resd 1                  ; which building is in grid: 0 real, 1 generated
+built_seed  resd 1                  ; ...and from which seed
 
 section .text
 
@@ -244,6 +294,29 @@ lore:
     mov esi, COL_LORE
     mov edx, 1
     jmp hud_message
+
+; atoi_simple(rdi = digits) -> eax. leaf
+atoi_simple:
+    xor eax, eax
+.d:
+    movzx ecx, byte [rdi]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja .done
+    imul eax, eax, 10
+    add eax, ecx
+    inc rdi
+    jmp .d
+.done:
+    ret
+
+; dist_to_player(xmm0..2 = a point on some floor) -> xmm0 = straight-line
+; distance from your feet. leaf.
+dist_to_player:
+    movss xmm3, [p_x]
+    movss xmm4, [p_y]
+    movss xmm5, [p_z]
+    jmp dist3
 
 ; =============================================================================
 ; terminal part (identical in spirit to the assembly originals)
@@ -542,6 +615,16 @@ new_game:
     mov edx, NCELLS
     call memset
     call hud_clear_messages
+    call noise_reset
+    call traverse_reset
+    call portal_reset
+    mov dword [crouch_latch], 0
+    xor edi, edi
+    call snd_mute                       ; (volume setting)
+    xor eax, eax
+    mov [have_map], eax
+    mov [have_compass], eax
+    mov [have_portal], eax
     mov edi, START_F
     mov esi, START_X
     mov edx, START_Y
@@ -562,8 +645,45 @@ new_game:
     inc ebx
     jmp .keys
 .keys_done:
-    ; three deauth packets anywhere
-    mov ebx, 3
+    ; the Zelda map and compass, somewhere in the building
+    mov edi, -1
+    xor esi, esi
+    xor edx, edx
+    call random_cell
+    mov esi, eax
+    mov edi, IT_MAP
+    call add_item
+    mov edi, -1
+    xor esi, esi
+    xor edx, edx
+    call random_cell
+    mov esi, eax
+    mov edi, IT_COMPASS
+    call add_item
+    ; ...and the portal gun (custom run: hidden / in your hands / none)
+    cmp dword [cfg_portal], 1
+    jne .portal_hidden
+    mov dword [have_portal], 1
+.portal_hidden:
+    cmp dword [cfg_portal], 0
+    jne .portal_done
+    mov edi, -1
+    xor esi, esi
+    xor edx, edx
+    call random_cell
+    mov esi, eax
+    mov edi, IT_PORTAL
+    call add_item
+.portal_done:
+    cmp dword [cfg_start_map], 0
+    je .map_hidden
+    mov dword [have_map], 1
+    mov dword [have_compass], 1
+.map_hidden:
+    ; deauth packets anywhere (3 unless the custom run says otherwise)
+    mov ebx, [cfg_deauths]
+    test ebx, ebx
+    jz .weap_done
 .weap:
     mov edi, -1
     xor esi, esi
@@ -574,6 +694,7 @@ new_game:
     call add_item
     dec ebx
     jnz .weap
+.weap_done:
     ; Tyler in the second-floor faculty lounge, the chicken jockey in the gym
     mov edi, 2
     mov esi, 12
@@ -590,14 +711,14 @@ new_game:
     mov edi, IT_JOCKEY
     call add_item
 
-    ; T starts far away (SPAWN_MIN_DIST was 15 in the asm; storeys count 12)
-    mov edi, -1
-    mov esi, 1
-    mov edx, START_F
-    mov ecx, START_X
-    mov r8d, START_Y
-    mov r9d, 22
-    call random_node
+    ; boxes and wet-floor signs to knock over
+    call physics_reset
+    call physics_spawn_props
+
+    ; T starts on the far side of the building from you (whatever the seed:
+    ; at least 55% of the longest walk away -- see far_spawn_node)
+    mov edi, (START_F*MAP_H + START_Y)*MAP_W + START_X
+    call far_spawn_node
     mov edi, eax
     call enemy_reset
 
@@ -614,6 +735,17 @@ new_game:
     lea rdi, [m_controls]
     mov esi, COL_INFO
     call msg
+    cmp dword [cfg_building], 0
+    je .real_beacom
+    lea rdi, [msg_buf]
+    mov esi, 512
+    lea rdx, [m_generated]
+    mov ecx, [seed_val]
+    xor eax, eax
+    call snprintf
+    lea rdi, [msg_buf]
+    call lore
+.real_beacom:
     call SDL_GetTicks
     mov [start_ticks], eax
     EPILOGUE
@@ -641,19 +773,10 @@ nearest_item:
     cmp dword [r13+ITEM_KIND], IT_TYLER
     jge .n
 .kind_ok:
-    movss xmm0, [r13+ITEM_Y]
-    subss xmm0, [p_y]
-    andps xmm0, [c_abs_mask]
-    comiss xmm0, [c_same]
-    jae .n
-    movss xmm0, [r13+ITEM_X]
-    subss xmm0, [p_x]
-    mulss xmm0, xmm0
-    movss xmm1, [r13+ITEM_Z]
-    subss xmm1, [p_z]
-    mulss xmm1, xmm1
-    addss xmm0, xmm1
-    sqrtss xmm0, xmm0
+    movss xmm0, [r13+ITEM_X]            ; true 3D distance: an item on the
+    movss xmm1, [r13+ITEM_Y]            ; floor above/below is out of reach,
+    movss xmm2, [r13+ITEM_Z]            ; one on a ramp beside you isn't
+    call dist_to_player
     comiss xmm0, [rsp+0]
     jae .n
     movss [rsp+0], xmm0
@@ -668,17 +791,10 @@ nearest_item:
 ; near_b() -> eax 1 if B is within talking distance
 near_b:
     PROLOGUE 16
-    call player_floor
-    cmp eax, [b_floor]
-    jne .no
     movss xmm0, [b_pos_x]
-    subss xmm0, [p_x]
-    mulss xmm0, xmm0
-    movss xmm1, [b_pos_z]
-    subss xmm1, [p_z]
-    mulss xmm1, xmm1
-    addss xmm0, xmm1
-    sqrtss xmm0, xmm0
+    movss xmm1, [b_pos_y]
+    movss xmm2, [b_pos_z]
+    call dist_to_player
     comiss xmm0, [c_b_reach]
     jae .no
     mov eax, 1
@@ -701,10 +817,13 @@ interact:
     cmp dword [rbx+ITEM_KIND], IT_KEY
     jne .weapon
     inc dword [inventory]
-    ; T gets angrier with every capture
+    ; T gets angrier with every capture (unless the custom run says no)
+    cmp dword [cfg_t_angry], 0
+    je .not_angry
     cvtsi2ss xmm0, dword [inventory]
     mulss xmm0, [c_bonus]
     movss [t_speed_bonus], xmm0
+.not_angry:
     lea rdi, [msg_buf]
     mov esi, 512
     lea rdx, [m_got_key]
@@ -721,12 +840,44 @@ interact:
     call msg
     jmp .done
 .weapon:
+    cmp dword [rbx+ITEM_KIND], IT_WEAPON
+    jne .zelda
     inc dword [deauths]
     lea rdi, [m_weapon]
     mov esi, COL_GOOD
     call msg
     jmp .done
+.zelda:
+    ; the dungeon items get a fanfare
+    call snd_fanfare
+    mov eax, [rbx+ITEM_KIND]
+    cmp eax, IT_MAP
+    jne .not_map
+    mov dword [have_map], 1
+    lea rdi, [m_got_map]
+    mov esi, COL_GOOD
+    call msg
+    jmp .done
+.not_map:
+    cmp eax, IT_COMPASS
+    jne .not_compass
+    mov dword [have_compass], 1
+    lea rdi, [m_got_compass]
+    mov esi, COL_GOOD
+    call msg
+    jmp .done
+.not_compass:
+    cmp eax, IT_PORTAL
+    jne .done
+    mov dword [have_portal], 1
+    lea rdi, [m_got_portal]
+    mov esi, COL_GOOD
+    call msg
+    jmp .done
 .try_b:
+    call traverse_try_grab              ; a zipline overhead?
+    test eax, eax
+    jnz .done
     call near_b
     test eax, eax
     jz .done
@@ -766,11 +917,61 @@ fire_deauth:
 .have:
     dec dword [deauths]
     call snd_deauth
+    movss xmm0, [c_noise_deauth]        ; the zap is loud
+    call noise_add
     lea rdi, [m_fired]
     mov esi, COL_GOOD
     call msg
     mov eax, [c_one]
     mov [hud_flash], eax
+    ; close enough to see it? T collapses as a ragdoll first (physics.asm),
+    ; and only vanishes when that ends
+    cmp dword [rag_active], 0
+    jne .teleport
+    movss xmm0, [t_stun]
+    comiss xmm0, [c_zero]
+    ja .teleport
+    movss xmm0, [t_dist]
+    FLD xmm1, 30.0
+    comiss xmm0, xmm1
+    jae .teleport
+    ; push him away from you
+    movss xmm3, [t_x]
+    subss xmm3, [p_x]
+    movss xmm4, [t_z]
+    subss xmm4, [p_z]
+    movaps xmm0, xmm3
+    mulss xmm0, xmm3
+    movaps xmm1, xmm4
+    mulss xmm1, xmm4
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    FLD xmm1, 0.01
+    maxss xmm0, xmm1
+    divss xmm3, xmm0
+    divss xmm4, xmm0
+    movss [rsp+0], xmm3
+    movss [rsp+4], xmm4
+    ; he faces you as he falls
+    movss xmm0, [p_x]
+    subss xmm0, [t_x]
+    movss xmm1, [p_z]
+    subss xmm1, [t_z]
+    call atan2f
+    movaps xmm5, xmm0
+    movss xmm0, [t_x]
+    movss xmm1, [t_y]
+    movss xmm2, [t_z]
+    movss xmm3, [rsp+0]
+    movss xmm4, [rsp+4]
+    call physics_ragdoll
+    ; frozen until the ragdoll is done
+    movss xmm0, [rag_time]
+    FLD xmm1, 0.5
+    addss xmm0, xmm1
+    movss [t_stun], xmm0
+    EPILOGUE
+.teleport:
     call player_floor
     mov edi, eax
     movss xmm0, [p_x]
@@ -791,10 +992,66 @@ on_t_spotted:
     call msg
     EPILOGUE
 
+; menu_action(edi = -1 nothing, 0 resume, 1 restart, 2 new seed, 3 quit)
+menu_action:
+    PROLOGUE 16
+    cmp edi, 0
+    jl .done
+    jne .not_resume
+    xor edi, edi
+    call set_paused
+    jmp .done
+.not_resume:
+    cmp edi, 3
+    jne .restart
+    call settings_save
+    mov dword [game_state], GS_QUIT
+    jmp .done
+.restart:
+    xor eax, eax
+    cmp edi, 2
+    sete al
+    mov [restart_new], eax
+    mov dword [game_state], GS_RESTART
+.done:
+    EPILOGUE
+
+; prepare_world -- the building this run needs: the real Beacom, or one
+; generated from the seed (rebuilt only when that changes)
+prepare_world:
+    PROLOGUE 16
+    mov eax, [cfg_building]
+    cmp eax, [built_mode]
+    jne .build
+    test eax, eax
+    jz .apply
+    mov ecx, [seed_val]
+    cmp ecx, [built_seed]
+    je .apply
+.build:
+    mov edi, [cfg_building]
+    mov esi, [seed_val]
+    call world_select
+    call render_rebuild_world
+    mov eax, [cfg_building]
+    mov [built_mode], eax
+    mov eax, [seed_val]
+    mov [built_seed], eax
+.apply:
+    call settings_apply                 ; (after build_nav, which resets T's links)
+    EPILOGUE
+
 ; set_paused(edi=1/0)
 set_paused:
     PROLOGUE 16
     mov ebx, edi
+    test ebx, ebx
+    jz .closing
+    call menu_reset
+    jmp .state
+.closing:
+    call settings_save
+.state:
     mov [hud_paused], ebx
     mov eax, GS_PLAYING
     test ebx, ebx
@@ -1020,6 +1277,13 @@ handle_events:
 .not_win:
     cmp eax, SDL_MOUSEMOTION
     jne .not_motion
+    cmp dword [game_state], GS_PAUSED
+    jne .motion_play
+    mov edi, [event+20]                 ; the menu follows the cursor
+    mov esi, [event+24]
+    call menu_mouse
+    jmp .poll
+.motion_play:
     cmp dword [game_state], GS_PLAYING
     jne .poll
     cmp dword [shot_mode], 0
@@ -1048,19 +1312,44 @@ handle_events:
     movzx ecx, byte [event+16]
     cmp dword [game_state], GS_PAUSED
     jne .btn_play
-    cmp ecx, 1
-    jne .poll
-    xor edi, edi
-    call set_paused
+    mov edi, ecx
+    mov esi, [event+20]
+    mov edx, [event+24]
+    call menu_click
+    mov edi, eax
+    call menu_action
     jmp .poll
 .btn_play:
     cmp dword [game_state], GS_PLAYING
     jne .poll
+    ; with the portal gun: left = blue, right = orange; otherwise right = deauth
+    cmp dword [have_portal], 0
+    je .btn_deauth
+    cmp ecx, 1
+    jne .btn_orange
+    xor edi, edi
+    call portal_fire
+    jmp .poll
+.btn_orange:
+    cmp ecx, 3
+    jne .poll
+    mov edi, 1
+    call portal_fire
+    jmp .poll
+.btn_deauth:
     cmp ecx, 3
     jne .poll
     call fire_deauth
     jmp .poll
 .not_button:
+    cmp eax, SDL_MOUSEWHEEL
+    jne .not_wheel
+    cmp dword [game_state], GS_PAUSED
+    jne .poll
+    mov edi, [event+20]
+    call menu_wheel
+    jmp .poll
+.not_wheel:
     cmp eax, SDL_KEYDOWN
     jne .poll
     cmp byte [event+13], 0              ; ignore key repeat
@@ -1076,8 +1365,25 @@ handle_events:
     call set_paused
     jmp .poll
 .not_esc:
+    cmp dword [game_state], GS_PAUSED
+    jne .key_play
+    mov edi, ecx
+    call menu_key
+    mov edi, eax
+    call menu_action
+    jmp .poll
+.key_play:
     cmp dword [game_state], GS_PLAYING
     jne .poll
+    ; crouch in toggle mode: each press flips it
+    cmp ecx, SC_C
+    je .crouch_key
+    cmp ecx, SC_LCTRL
+    jne .not_crouch_key
+.crouch_key:
+    xor dword [crouch_latch], 1
+    jmp .poll
+.not_crouch_key:
     cmp ecx, SC_F
     jne .k1
     ; flashlight (won't turn on with a flat battery)
@@ -1090,11 +1396,15 @@ handle_events:
     mov dword [p_flash_on], 1
     xor edi, edi
     call snd_footstep                   ; click
+    movss xmm0, [c_noise_click]
+    call noise_add
     jmp .poll
 .flash_off:
     mov dword [p_flash_on], 0
     xor edi, edi
     call snd_footstep
+    movss xmm0, [c_noise_click]
+    call noise_add
     jmp .poll
 .k1:
     cmp ecx, SC_E
@@ -1140,9 +1450,33 @@ handle_events:
     cmp ecx, SC_M
     je .map
     cmp ecx, SC_TAB
-    jne .poll
+    jne .k8
 .map:
     xor dword [map_visible], 1
+    call player_floor
+    mov [map_floor], eax                ; the map opens on your floor
+    jmp .poll
+.k8:
+    ; [ / ] : page the map through the floors (needs the MAP)
+    cmp dword [map_visible], 0
+    je .poll
+    cmp dword [have_map], 0
+    je .poll
+    mov eax, [map_floor]
+    cmp ecx, SC_LBRACKET
+    jne .page_up
+    dec eax
+    jmp .page
+.page_up:
+    cmp ecx, SC_RBRACKET
+    jne .poll
+    inc eax
+.page:
+    cmp eax, 0
+    jl .poll
+    cmp eax, NF
+    jge .poll
+    mov [map_floor], eax
     jmp .poll
 .done:
     ; held keys straight from SDL's keyboard state
@@ -1173,6 +1507,10 @@ handle_events:
     xor eax, eax
     or al, [rbx+SC_C]
     or al, [rbx+SC_LCTRL]
+    cmp dword [cfg_crouch_toggle], 0
+    je .crouch_hold
+    mov eax, [crouch_latch]
+.crouch_hold:
     mov [keys_down+K_CROUCH], al
     mov al, [rbx+SC_SPACE]
     mov [keys_down+K_JUMP], al
@@ -1182,36 +1520,18 @@ handle_events:
 ; per-frame game logic
 ; =============================================================================
 
-; footstep noise: walking has the original 1-in-N chance to make a noise,
-; sprinting and hard landings always carry
+; footsteps feed the noise meter (noise.asm): how loud depends on the step
+; step_noise_amt[event]: 1 crouch step, 2 walk step, 3 sprint step / hard
+; landing, 4 jump
 step_noise:
     PROLOGUE 16
     mov eax, [p_step_event]
     test eax, eax
     jz .done
-    cmp eax, 1                          ; crouching: silent
-    je .done
-    movss xmm3, [c_sens_run]
-    cmp eax, 3
-    je .hear
-    movss xmm3, [c_sens_walk]
-    movss [rsp+0], xmm3
-    call rng_next
-    xor edx, edx
-    div dword [c_noise_p]
-    movss xmm3, [rsp+0]
-    test edx, edx
-    jnz .hear
-    lea rdi, [m_noise]
-    mov esi, COL_WARN
-    call msg
-    call snd_noise_alert
-    movss xmm3, [c_noise_r]
-.hear:
-    movss xmm0, [p_x]
-    movss xmm1, [p_y]
-    movss xmm2, [p_z]
-    call enemy_hear
+    cmp eax, 4
+    ja .done
+    movss xmm0, [step_noise_amt+rax*4]
+    call noise_add
 .done:
     EPILOGUE
 
@@ -1226,19 +1546,10 @@ update_items:
     lea r12, [items+rax]
     cmp dword [r12+ITEM_ACTIVE], 0
     je .n
-    movss xmm0, [r12+ITEM_Y]
-    subss xmm0, [p_y]
-    andps xmm0, [c_abs_mask]
-    comiss xmm0, [c_same]
-    jae .n
     movss xmm0, [r12+ITEM_X]
-    subss xmm0, [p_x]
-    mulss xmm0, xmm0
-    movss xmm1, [r12+ITEM_Z]
-    subss xmm1, [p_z]
-    mulss xmm1, xmm1
-    addss xmm0, xmm1
-    sqrtss xmm0, xmm0
+    movss xmm1, [r12+ITEM_Y]
+    movss xmm2, [r12+ITEM_Z]
+    call dist_to_player
     mov eax, [r12+ITEM_KIND]
     cmp eax, IT_KEY
     jne .tyler
@@ -1246,6 +1557,17 @@ update_items:
     jne .n
     comiss xmm0, [c_see_dist]
     jae .n
+    ; you notice it only if you can actually see it (down the atrium counts)
+    movss xmm0, [p_x]
+    movss xmm1, [p_eye_y]
+    movss xmm2, [p_z]
+    movss xmm3, [r12+ITEM_X]
+    movss xmm4, [r12+ITEM_Y]
+    addss xmm4, [c_half]
+    movss xmm5, [r12+ITEM_Z]
+    call line_of_sight_3d
+    test eax, eax
+    jz .n
     mov dword [r12+ITEM_SEEN], 1
     lea rdi, [m_see_key]
     mov esi, COL_INFO
@@ -1431,6 +1753,8 @@ update_threat:
     mov eax, [c_hb_3]
 .h3:
     mov [heart_t], eax
+    cmp dword [cfg_heart], 0
+    je .no_heart
     cvtsi2ss xmm0, ebx
     divss xmm0, [c_three]
     call snd_heartbeat
@@ -1532,23 +1856,28 @@ update_weather:
 ; which interaction prompt to show
 update_prompt:
     PROLOGUE 16
-    mov dword [hud_prompt], -1
+    mov eax, [trav_prompt]              ; ladder / zipline (items win below)
+    mov [hud_prompt], eax
     movss xmm0, [c_reach]
     xor edi, edi
     call nearest_item
     test rax, rax
     jz .b
+    cmp dword [p_mode], 0
+    jne .done
     mov ecx, [rax+ITEM_KIND]
-    mov [hud_prompt], ecx               ; 0 capture, 1 deauth
+    mov [hud_prompt], ecx               ; pickups: the prompt index is the kind
     EPILOGUE
 .b:
+    cmp dword [p_mode], 0
+    jne .done
     call near_b
     test eax, eax
     jz .done
-    mov dword [hud_prompt], 2
+    mov dword [hud_prompt], 5
     cmp dword [inventory], 3
     jl .done
-    mov dword [hud_prompt], 3
+    mov dword [hud_prompt], 6
 .done:
     EPILOGUE
 
@@ -1564,9 +1893,17 @@ game_tick:
     movss [b_cooldown], xmm1
 
     movss xmm0, [rsp+0]
+    call traverse_update
+    movss xmm0, [rsp+0]
     movss xmm1, [elapsed_time]
     call player_update
+    movss xmm0, [rsp+0]
+    call portal_check_teleport
     call step_noise
+    movss xmm0, [rsp+0]
+    call noise_update
+    movss xmm0, [rsp+0]
+    call physics_update
     movss xmm0, [rsp+0]
     call enemy_update
     movss xmm0, [rsp+0]
@@ -1577,17 +1914,10 @@ game_tick:
     ; Y's cage
     cmp dword [cage_hint], 0
     jne .no_cage
-    call player_floor
-    test eax, eax
-    jnz .no_cage
     movss xmm0, [y_pos_x]
-    subss xmm0, [p_x]
-    mulss xmm0, xmm0
-    movss xmm1, [y_pos_z]
-    subss xmm1, [p_z]
-    mulss xmm1, xmm1
-    addss xmm0, xmm1
-    sqrtss xmm0, xmm0
+    xorps xmm1, xmm1                    ; the cage stands on the basement floor
+    movss xmm2, [y_pos_z]
+    call dist_to_player
     comiss xmm0, [c_cage_d]
     jae .no_cage
     mov dword [cage_hint], 1
@@ -1679,6 +2009,7 @@ frame_dt:
 ; play_round -- runs until caught, won, secret or quit. Returns game_state.
 play_round:
     PROLOGUE 16
+    call prepare_world
     call new_game
     mov edi, 1
     call mouse_capture
@@ -1689,6 +2020,8 @@ play_round:
     call frame_dt
     movss [rsp+0], xmm0
     mov eax, [game_state]
+    cmp eax, GS_RESTART
+    je .restart
     cmp eax, GS_PAUSED
     je .draw
     cmp eax, GS_PLAYING
@@ -1698,6 +2031,22 @@ play_round:
 .draw:
     movss xmm0, [rsp+0]
     call present
+    jmp .loop
+.restart:
+    ; from the pause menu: same seed, or a fresh one
+    cmp dword [restart_new], 0
+    je .same_seed
+    xor edi, edi
+    call time
+    imul eax, eax, 1103515245           ; (so quick restarts still differ)
+    add eax, [perf_last]
+    and eax, 0x7fffffff
+    mov [seed_val], eax
+.same_seed:
+    call prepare_world
+    call new_game
+    xor edi, edi
+    call set_paused
     jmp .loop
 .over:
     ; the jumpscare: T's face fills the screen, shaking, for 1.3 seconds
@@ -1785,6 +2134,9 @@ shot_mode_run:
     call system
     mov dword [seed_val], 42
     call new_game
+    mov dword [have_map], 1             ; show off the MAP + COMPASS in the shots
+    mov dword [have_compass], 1
+    mov dword [map_floor], 1
     lea rdi, [m_see_b]
     call lore
     xor r12d, r12d
@@ -1807,6 +2159,8 @@ shot_mode_run:
     mov dword [t_stun], __float32__(100.0)
     mov dword [t_x], __float32__(1000.0)
     mov dword [t_z], __float32__(1000.0)
+    cmp dword [r13+20], 2
+    je .ragdoll_shot
     cmp dword [r13+20], 0
     je .no_t
     ; T 3.5 units in front of the camera, chasing
@@ -1826,6 +2180,45 @@ shot_mode_run:
     movss [t_z], xmm0
     mov eax, [p_y]
     mov [t_y], eax
+    jmp .no_t
+.ragdoll_shot:
+    ; T collapses 3.5m ahead, next to a box and a wet-floor sign; let it fall
+    call physics_reset
+    movss xmm0, [p_x]
+    FLD xmm1, 3.5
+    addss xmm0, xmm1
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    FLD xmm3, 1.0
+    xorps xmm4, xmm4
+    FLD xmm5, -1.5708
+    call physics_ragdoll
+    mov edi, 0
+    movss xmm0, [p_x]
+    FLD xmm1, 2.5
+    addss xmm0, xmm1
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    FLD xmm3, 1.3
+    subss xmm2, xmm3
+    FLD xmm3, 0.4
+    call add_box
+    mov edi, 1
+    movss xmm0, [p_x]
+    FLD xmm1, 2.2
+    addss xmm0, xmm1
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    FLD xmm3, 1.1
+    addss xmm2, xmm3
+    FLD xmm3, 1.5708
+    call add_box
+    mov ebx, 50
+.fall:
+    movss xmm0, [c_dt_shot]
+    call physics_update
+    dec ebx
+    jnz .fall
 .no_t:
     ; settle the camera and the light pool for a few frames
     mov ebx, 20
@@ -1874,6 +2267,107 @@ shot_mode_run:
     inc r12d
     jmp .shot
 .done:
+    ; and the pause menu over the last view
+    mov dword [hud_paused], 1
+    call menu_reset
+    mov ebx, 2
+.menu_frames:                           ; (twice: the menu makes its textures lazily)
+    mov edi, [win_w]
+    mov esi, [win_h]
+    movss xmm0, [elapsed_time]
+    call render_frame
+    mov edi, [win_w]
+    mov esi, [win_h]
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call hud_draw
+    dec ebx
+    jnz .menu_frames
+    lea rdi, [sh_menu]
+    mov esi, [win_w]
+    mov edx, [win_h]
+    call save_screenshot
+    ; a building generated from seed 42: its map, then the view from the start
+    mov dword [hud_paused], 0
+    mov dword [cfg_building], 1
+    call prepare_world
+    call new_game
+    mov dword [have_map], 1
+    mov dword [have_compass], 1
+    mov dword [map_visible], 1
+    mov dword [map_floor], 1
+    lea rdi, [sh_gen_map]
+    call shot_now
+    mov dword [map_floor], 0
+    lea rdi, [sh_gen_map0]
+    call shot_now
+    mov dword [map_floor], 2
+    lea rdi, [sh_gen_map2]
+    call shot_now
+    mov dword [map_visible], 0
+    mov edi, 1
+    mov esi, 3
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    lea rdi, [sh_gen_view]
+    call shot_now
+    ; the hands in every pose, in the real Beacom's main hallway
+    mov dword [cfg_building], 0
+    call prepare_world
+    call new_game
+    call hud_clear_messages
+    mov edi, 1
+    mov esi, 8
+    mov edx, 15
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], __float32__(-0.12)
+    mov dword [have_portal], 1
+    lea rdi, [sh_hands_gun]
+    call shot_now
+    mov dword [have_portal], 0
+    mov dword [p_mode], 2
+    mov dword [p_pitch], __float32__(0.25)
+    lea rdi, [sh_hands_zip]
+    call shot_now
+    mov dword [p_mode], 1
+    mov dword [p_pitch], __float32__(0.0)
+    lea rdi, [sh_hands_ladder]
+    call shot_now
+    mov dword [p_mode], 0
+    EPILOGUE
+
+; shot_now(rdi=file) -- settle a few frames and save what's on screen
+shot_now:
+    PROLOGUE 16
+    mov r12, rdi
+    mov ebx, 10
+.settle:
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call player_update
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call world_lights_update
+    call hud_update_explored
+    dec ebx
+    jnz .settle
+    mov edi, [win_w]
+    mov esi, [win_h]
+    movss xmm0, [elapsed_time]
+    call render_frame
+    mov edi, [win_w]
+    mov esi, [win_h]
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call hud_draw
+    mov rdi, r12
+    mov esi, [win_w]
+    mov edx, [win_h]
+    call save_screenshot
+    mov rdi, [window]
+    call SDL_GL_SwapWindow
     EPILOGUE
 
 ; =============================================================================
@@ -1891,6 +2385,19 @@ walk_test:
     mov esi, edx
     mov edx, ecx
     call player_spawn
+    mov rdi, [rsp+16]
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    call walk_leg
+    EPILOGUE
+
+; walk_leg(rdi=name or 0 to stay quiet, xmm0=yaw, xmm1=seconds) -- carry on
+; walking from wherever you are
+walk_leg:
+    PROLOGUE 32
+    mov [rsp+16], rdi
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
     mov eax, [rsp+0]
     mov [p_yaw], eax
     mov byte [keys_down+K_FWD], 1
@@ -1898,13 +2405,20 @@ walk_test:
     FLD xmm1, 60.0
     mulss xmm0, xmm1
     cvttss2si ebx, xmm0                 ; frames at 60 fps
+    cmp ebx, 1
+    jge .step
+    mov ebx, 1                          ; (at least one)
 .step:
+    movss xmm0, [c_dt_shot]
+    call traverse_update
     movss xmm0, [c_dt_shot]
     movss xmm1, [elapsed_time]
     call player_update
     dec ebx
     jnz .step
     mov byte [keys_down+K_FWD], 0
+    cmp qword [rsp+16], 0
+    je .quiet
     call player_floor
     mov edx, eax
     lea rdi, [st_walk_fmt]
@@ -1914,10 +2428,454 @@ walk_test:
     cvtss2sd xmm2, [p_z]
     mov eax, 3
     call printf
+.quiet:
     EPILOGUE
 
 %define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
-extern path_len
+%define XN(i) (NCELLS + (i))
+extern path_len, path
+
+; gen_sweep(edi = N) -- BEACOM_GENSWEEP=N: build seeds 1..N and check each one
+; completely: all four stairwells placed, open floor on every storey, every
+; open cell reachable from the start (one flood over T's graph), and no two
+; seeds giving the same building (FNV-1a hash of the whole grid)
+extern seen, stamp
+gen_sweep:
+    PROLOGUE 64
+    ; [rsp+0] N [rsp+4] stair fails [rsp+8] unreachable seeds [rsp+12] floor
+    ; fails [rsp+16] duplicates [rsp+20] min open [rsp+24] max open
+    ; [rsp+28] unreachable cells total
+    mov [rsp+0], edi
+    xor eax, eax
+    mov [rsp+4], eax
+    mov [rsp+8], eax
+    mov [rsp+12], eax
+    mov [rsp+16], eax
+    mov [rsp+24], eax
+    mov [rsp+28], eax
+    mov dword [rsp+20], 0x7fffffff
+    mov dword [sw_min_pct], 1000
+    mov dword [sw_min_steps], 0x7fffffff
+    mov dword [cfg_building], 1
+    mov r12d, 1
+.seed:
+    cmp r12d, [rsp+0]
+    jg .dups
+    mov edi, 1
+    mov esi, r12d
+    call world_select
+    ; stairwells + hash
+    xor r13d, r13d                      ; '^' cells
+    mov r14d, 0x811C9DC5                ; FNV-1a
+    xor ecx, ecx
+.cell:
+    cmp ecx, NCELLS
+    jge .cells_done
+    movzx eax, byte [grid+rcx]
+    cmp eax, '^'
+    jne .h
+    inc r13d
+.h:
+    xor r14d, eax
+    imul r14d, r14d, 0x01000193
+    inc ecx
+    jmp .cell
+.cells_done:
+    lea eax, [r12d-1]
+    mov [sweep_hash+rax*4], r14d
+    cmp r13d, 48
+    je .stairs_ok
+    inc dword [rsp+4]
+.stairs_ok:
+    mov eax, [open_count]
+    cmp eax, [rsp+20]
+    jge .mn
+    mov [rsp+20], eax
+.mn:
+    cmp eax, [rsp+24]
+    jle .mx
+    mov [rsp+24], eax
+.mx:
+    ; flood everything T can reach from the start (a target that can't exist)
+    mov edi, NODE(1,1,1)
+    mov esi, NNODES + 1
+    call find_path
+    mov r15d, [stamp]
+    xor r13d, r13d                      ; unreachable cells this seed
+    xor ebx, ebx                        ; storeys seen (bits)
+    xor ecx, ecx
+.oc:
+    cmp ecx, [open_count]
+    jge .oc_done
+    mov eax, [open_cells+rcx*4]
+    cmp [seen+rax*4], r15d
+    je .reached
+    cmp eax, NODE(1,1,1)
+    je .reached
+    inc r13d
+.reached:
+    xor edx, edx
+    mov r8d, FLOOR_CELLS
+    div r8d
+    bts ebx, eax
+    inc ecx
+    jmp .oc
+.oc_done:
+    test r13d, r13d
+    jz .all_reached
+    inc dword [rsp+8]
+    add [rsp+28], r13d
+.all_reached:
+    cmp ebx, 7
+    je .floors_ok
+    inc dword [rsp+12]
+.floors_ok:
+    ; where would T start? (far_spawn_node floods from your start)
+    mov edi, r12d
+    call rng_seed
+    call spawn_check
+    inc r12d
+    jmp .seed
+.dups:
+    xor r12d, r12d
+.di:
+    lea eax, [r12d+1]
+    cmp eax, [rsp+0]
+    jge .report
+    mov r13d, [sweep_hash+r12*4]
+    lea r14d, [r12d+1]
+.dj:
+    cmp r14d, [rsp+0]
+    jge .dnext
+    cmp r13d, [sweep_hash+r14*4]
+    jne .dn
+    inc dword [rsp+16]
+.dn:
+    inc r14d
+    jmp .dj
+.dnext:
+    inc r12d
+    jmp .di
+.report:
+    ; (two lines: the Windows printf thunk takes up to 6 arguments)
+    lea rdi, [st_sweep_fmt]
+    mov esi, [rsp+0]
+    mov edx, [rsp+4]
+    mov ecx, [rsp+12]
+    mov r8d, [rsp+8]
+    mov r9d, [rsp+28]
+    xor eax, eax
+    call printf
+    lea rdi, [st_sweep_fmt2]
+    mov esi, [rsp+16]
+    mov edx, [rsp+20]
+    mov ecx, [rsp+24]
+    xor eax, eax
+    call printf
+    lea rdi, [st_sweep_fmt3]
+    mov esi, [sw_min_steps]
+    mov edx, [sw_min_pct]
+    xor eax, eax
+    call printf
+    ; the real Beacom too: T's start for the first 2000 seeds
+    mov dword [cfg_building], 0
+    xor edi, edi
+    xor esi, esi
+    call world_select
+    mov dword [sw_min_pct], 1000
+    mov dword [sw_min_steps], 0x7fffffff
+    mov r12d, 1
+.classic:
+    cmp r12d, 2000
+    jg .classic_done
+    mov edi, r12d
+    call rng_seed
+    call spawn_check
+    inc r12d
+    jmp .classic
+.classic_done:
+    lea rdi, [st_sweep_fmt4]
+    mov esi, [sw_min_steps]
+    mov edx, [sw_min_pct]
+    xor eax, eax
+    call printf
+    mov dword [cfg_building], 0
+    xor edi, edi
+    xor esi, esi
+    call world_select
+    EPILOGUE
+
+; spawn_check -- run T's spawn choice and keep the closest it ever came
+spawn_check:
+    sub rsp, 8
+    mov edi, (START_F*MAP_H + START_Y)*MAP_W + START_X
+    call far_spawn_node
+    mov eax, [spawn_dist]
+    cmp eax, [sw_min_steps]
+    jge .s
+    mov [sw_min_steps], eax
+.s:
+    imul eax, eax, 100
+    xor edx, edx
+    mov ecx, [spawn_maxd]
+    test ecx, ecx
+    jz .done
+    div ecx
+    cmp eax, [sw_min_pct]
+    jge .done
+    mov [sw_min_pct], eax
+.done:
+    add rsp, 8
+    ret
+
+; gen_tests -- the seeded building generator: every spot reachable?
+gen_tests:
+    PROLOGUE 32
+    mov dword [cfg_building], 1
+    mov r12d, 1                         ; seed
+.seed:
+    cmp r12d, 12
+    jg .done
+    mov edi, 1
+    mov esi, r12d
+    call world_select
+    ; how many stair cells did it build?
+    xor r13d, r13d
+    xor ecx, ecx
+.st:
+    cmp ecx, NCELLS
+    jge .st_done
+    cmp byte [grid+rcx], '^'
+    jne .st_n
+    inc r13d
+.st_n:
+    inc ecx
+    jmp .st
+.st_done:
+    ; 40 random open spots: can T walk there from the start?
+    xor r14d, r14d                      ; unreachable
+    mov ebx, 40
+.p:
+    call rng_next
+    xor edx, edx
+    div dword [open_count]
+    mov esi, [open_cells+rdx*4]
+    mov edi, NODE(1,1,1)
+    call find_path
+    test eax, eax
+    jnz .p_ok
+    inc r14d
+.p_ok:
+    dec ebx
+    jnz .p
+    lea rdi, [st_gen_fmt]
+    mov esi, r12d
+    mov edx, [open_count]
+    mov ecx, r13d
+    mov r8d, r14d
+    xor eax, eax
+    call printf
+    ; BEACOM_GENDUMP=1: print seed 1's floors
+    cmp r12d, 1
+    jne .no_dump
+    lea rdi, [env_gendump]
+    call getenv
+    test rax, rax
+    jz .no_dump
+    xor ebx, ebx
+.dump_row:
+    cmp ebx, NCELLS
+    jge .no_dump
+    lea rsi, [grid+rbx]
+    lea rdi, [st_row_fmt]
+    xor eax, eax
+    call printf
+    add ebx, MAP_W
+    jmp .dump_row
+.no_dump:
+    inc r12d
+    jmp .seed
+.done:
+    mov dword [cfg_building], 0
+    xor edi, edi
+    xor esi, esi
+    call world_select
+    EPILOGUE
+
+; atrium_tests -- Phase 1: the continuous 3D building
+atrium_tests:
+    PROLOGUE 64
+    mov dword [t_stun], __float32__(10000.0)
+    ; ramp A -> the bridge -> ramp B: ground floor to 2nd floor with no stairs
+    call traverse_reset
+    mov edi, 1
+    mov esi, 33
+    mov edx, 23
+    call player_spawn
+    xor edi, edi
+    FLD xmm0, 0.0                       ; north, up ramp A
+    FLD xmm1, 2.2
+    call walk_leg
+    lea rdi, [st_n_ramp_a]
+    FLD xmm0, 0.0
+    FLD xmm1, 0.01
+    call walk_leg
+    xor edi, edi
+    FLD xmm0, -1.5708                   ; east along the bridge
+    FLD xmm1, 1.25
+    call walk_leg
+    lea rdi, [st_n_ramp_b]
+    FLD xmm0, 3.1416                    ; south, up ramp B
+    FLD xmm1, 2.6
+    call walk_leg
+    ; walking off the balcony edge drops you into the basement
+    lea rdi, [st_n_drop]
+    mov esi, 1
+    mov edx, 32
+    mov ecx, 18
+    FLD xmm0, -1.5708                   ; east, into the void
+    FLD xmm1, 1.2
+    call walk_test
+
+    ; the atrium zipline: 2nd-floor server room down to the ground balcony
+    call traverse_reset
+    mov edi, 2
+    mov esi, 42
+    mov edx, 18
+    call player_spawn
+    movss xmm0, [c_dt_shot]
+    call traverse_update
+    call traverse_try_grab
+    mov [rsp+0], eax
+    mov ebx, 60*8
+.ride:
+    movss xmm0, [c_dt_shot]
+    call traverse_update
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call player_update
+    dec ebx
+    jnz .ride
+    call player_floor
+    mov edx, eax
+    mov esi, [rsp+0]
+    lea rdi, [st_zip2_fmt]
+    cvtss2sd xmm0, [p_x]
+    cvtss2sd xmm1, [p_y]
+    mov eax, 2
+    call printf
+    call traverse_reset
+
+    ; 3D line of sight: T in the basement looks up the atrium...
+    FLD xmm0, 69.0
+    FLD xmm1, 1.75
+    FLD xmm2, 41.0
+    FLD xmm3, 73.0                      ; ...at you on the 2nd-floor balcony
+    FLD xmm4, 8.0
+    FLD xmm5, 41.0
+    call line_of_sight_3d
+    mov [rsp+0], eax
+    FLD xmm0, 69.0
+    FLD xmm1, 1.75
+    FLD xmm2, 41.0
+    FLD xmm3, 81.0                      ; ...and at a spot behind a solid floor
+    FLD xmm4, 8.0
+    FLD xmm5, 41.0
+    call line_of_sight_3d
+    mov edx, eax
+    mov esi, [rsp+0]
+    lea rdi, [st_los_fmt]
+    xor eax, eax
+    call printf
+
+    ; sound: up the open atrium vs through two solid floors
+    FLD xmm0, 69.0
+    FLD xmm1, 1.0
+    FLD xmm2, 41.0
+    FLD xmm3, 69.0
+    FLD xmm4, 7.4
+    FLD xmm5, 41.0
+    call sound_occlusion
+    movss [rsp+0], xmm0
+    FLD xmm0, 17.0
+    FLD xmm1, 1.0
+    FLD xmm2, 41.0
+    FLD xmm3, 17.0
+    FLD xmm4, 7.4
+    FLD xmm5, 41.0
+    call sound_occlusion
+    cvtss2sd xmm1, xmm0
+    cvtss2sd xmm0, [rsp+0]
+    lea rdi, [st_snd_fmt]
+    mov eax, 2
+    call printf
+
+    ; the nav graph: up the ramps, and down off a ledge
+    mov edi, NODE(1,33,23)
+    mov esi, NODE(2,35,23)
+    call find_path
+    mov esi, eax
+    mov edx, [path_len]
+    lea rdi, [st_nav_up]
+    xor eax, eax
+    call printf
+    mov edi, NODE(2,36,20)
+    mov esi, NODE(0,34,20)
+    call find_path
+    mov esi, eax
+    mov edx, [path_len]
+    lea rdi, [st_nav_drop]
+    xor eax, eax
+    call printf
+
+    ; T comes up the atrium for you while you stand on the bridge
+    mov edi, NODE(0,34,26)
+    call enemy_reset
+    mov dword [p_x], __float32__(69.0)
+    mov dword [p_y], __float32__(4.8)
+    mov dword [p_z], __float32__(39.3)
+    mov dword [p_mode], 0
+    mov dword [p_flash_on], 0
+    xor ebx, ebx
+.hunt:
+    cmp ebx, 60*120
+    jge .lost
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, 60
+    div ecx
+    test edx, edx
+    jnz .no_hear
+    movss xmm0, [p_x]
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    FLD xmm3, 1000.0
+    call enemy_hear
+.no_hear:
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    cmp dword [t_caught], 0
+    jne .caught
+    inc ebx
+    jmp .hunt
+.caught:
+    cvtsi2sd xmm0, ebx
+    mov rax, __float64__(60.0)
+    movq xmm1, rax
+    divsd xmm0, xmm1
+    cvtss2sd xmm1, [t_y]
+    lea rdi, [st_bridge_ok]
+    mov eax, 2
+    call printf
+    jmp .done
+.lost:
+    lea rdi, [st_bridge_fail]
+    xor eax, eax
+    call printf
+.done:
+    mov dword [t_stun], __float32__(10000.0)
+    call traverse_reset
+    EPILOGUE
 
 selftest:
     PROLOGUE 32
@@ -1967,6 +2925,68 @@ selftest:
     FLD xmm0, 1.5708                    ; west, straight into the wall
     FLD xmm1, 2.0
     call walk_test
+    call traverse_reset
+    lea rdi, [st_n_lad1]
+    mov esi, 1
+    mov edx, 4
+    mov ecx, 9
+    FLD xmm0, 1.5708                    ; west, into the ladder
+    FLD xmm1, 4.0
+    call walk_test
+    call traverse_reset
+    lea rdi, [st_n_lad2]
+    xor esi, esi
+    mov edx, 2
+    mov ecx, 22
+    FLD xmm0, 1.5708
+    FLD xmm1, 4.0
+    call walk_test
+    ; zipline: stand under the ground-floor cable, grab it, ride it
+    call traverse_reset
+    mov edi, 1
+    mov esi, 4
+    mov edx, 14
+    call player_spawn
+    movss xmm0, [c_dt_shot]
+    call traverse_update
+    call traverse_try_grab
+    mov r12d, eax
+    mov ebx, 60*14
+.ride:
+    movss xmm0, [c_dt_shot]
+    call traverse_update
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call player_update
+    dec ebx
+    jnz .ride
+    call player_floor
+    mov edx, eax
+    lea rdi, [st_zip_fmt]
+    mov esi, r12d
+    cvtss2sd xmm0, [p_x]
+    cvtss2sd xmm1, [p_y]
+    mov eax, 2
+    call printf
+    call traverse_reset
+
+    call atrium_tests
+    call gen_tests
+    lea rdi, [env_gensweep]
+    call getenv
+    test rax, rax
+    jz .no_sweep
+    mov rdi, rax
+    call atoi_simple
+    cmp eax, 1
+    jl .no_sweep
+    cmp eax, MAX_SWEEP
+    jle .sweep
+    mov eax, MAX_SWEEP
+.sweep:
+    mov edi, eax
+    call gen_sweep
+.no_sweep:
 
     ; path finding across three storeys
     mov edi, NODE(0,3,3)
@@ -2053,6 +3073,29 @@ selftest:
     lea rdi, [st_safe_fmt]
     mov esi, [t_caught]
     xor eax, eax
+    call printf
+
+    ; physics: T collapses in the ground-floor hall; after 2s he should be
+    ; lying on the floor (y = 3.2), and a box dropped from 1.5m should rest on it
+    call physics_reset
+    FLD xmm0, 30.0
+    FLD xmm1, 3.2
+    FLD xmm2, 31.0
+    FLD xmm3, 1.0
+    xorps xmm4, xmm4
+    xorps xmm5, xmm5
+    call physics_ragdoll
+    mov ebx, 120
+.fall:
+    movss xmm0, [c_dt_shot]
+    call physics_update
+    dec ebx
+    jnz .fall
+    extern py
+    lea rdi, [st_rag_fmt]
+    cvtss2sd xmm0, [py+0]               ; head
+    cvtss2sd xmm1, [py+8]               ; pelvis
+    mov eax, 2
     call printf
 
     ; render benchmark: 120 frames looking down the main hallway
@@ -2182,6 +3225,9 @@ main:
     mov edi, SDL_GL_DEPTH_SIZE
     mov esi, 24
     call SDL_GL_SetAttribute
+    mov edi, SDL_GL_STENCIL_SIZE        ; the portals draw through the stencil buffer
+    mov esi, 8
+    call SDL_GL_SetAttribute
     call request_msaa
     lea rdi, [title]
     mov esi, SDL_WINDOWPOS_CENTERED
@@ -2226,10 +3272,16 @@ main:
     call SDL_GetPerformanceFrequency
     mov [perf_freq], rax
 
+    ; your settings (not for the test modes: they must be reproducible)
+    cmp dword [shot_mode], 0
+    jne .no_cfg
+    call settings_load
+.no_cfg:
     call world_init
     call render_init
     call hud_init
     call audio_init
+    call prepare_world
 
     cmp dword [shot_mode], 0
     je .play

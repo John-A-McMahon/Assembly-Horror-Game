@@ -15,6 +15,8 @@
 global player_spawn, player_update, player_look, player_floor, player_in_safe
 global p_x, p_y, p_z, p_yaw, p_pitch, p_stamina, p_battery, p_flash_on, p_crouch
 global p_exhausted, p_eye_y, p_step_event, p_flash_level, keys_down, p_roll, p_sprint
+global p_vy, p_on_ground, p_bob
+extern p_mode, trav_roll, trav_shake
 
 ; keys_down[] slots, filled by main.asm from SDL_GetKeyboardState
 %define K_FWD    0
@@ -94,7 +96,7 @@ p_step_acc   resd 1
 p_moving     resd 1
 p_eye_y      resd 1           ; out: camera height (includes bob)
 p_roll       resd 1           ; out: camera roll from bob
-p_step_event resd 1           ; out: 0 none, 1 quiet step, 2 step, 3 loud step
+p_step_event resd 1           ; out: 0 none, 1 quiet step, 2 step, 3 loud step, 4 jump
 p_flash_level resd 1          ; out: 0..1 flashlight brightness
 keys_down    resb 16
 
@@ -138,11 +140,15 @@ player_spawn:
 player_look:
     cvtsi2ss xmm0, edi
     mulss xmm0, [c_sens]
+    PCT xmm2, cfg_sens
+    mulss xmm0, xmm2
     movss xmm1, [p_yaw]
     subss xmm1, xmm0
     movss [p_yaw], xmm1
     cvtsi2ss xmm0, esi
     mulss xmm0, [c_sens]
+    PCT xmm2, cfg_sens
+    mulss xmm0, xmm2
     movss xmm1, [p_pitch]
     subss xmm1, xmm0
     maxss xmm1, [c_pitch_min]
@@ -160,6 +166,9 @@ player_floor:
 
 ; player_in_safe() -> eax = 1 if standing on an S (safe room) cell
 player_in_safe:
+    xor eax, eax
+    cmp dword [cfg_safe], 0             ; custom run: no safe rooms
+    je .no_safe
     PROLOGUE 16
     call player_floor
     mov edi, eax
@@ -175,6 +184,8 @@ player_in_safe:
     sete cl
     mov eax, ecx
     EPILOGUE
+.no_safe:
+    ret
 
 ; -----------------------------------------------------------------------------
 ; body_height() -> xmm0 (crouching bodies are shorter). leaf.
@@ -346,6 +357,8 @@ player_update:
     test ecx, ecx
     jz .st2
     movss xmm1, [c_st_drain]
+    PCT xmm2, cfg_stamina
+    mulss xmm1, xmm2
 .st2:
     mulss xmm1, [rsp+0]
     addss xmm0, xmm1
@@ -362,7 +375,13 @@ player_update:
     je .spd2
     movss xmm0, [c_crouch_spd]
 .spd2:
+    PCT xmm1, cfg_walk
+    mulss xmm0, xmm1
     movss [rsp+20], xmm0
+
+    ; on a ladder or a zipline, traverse.asm moves you instead
+    cmp dword [p_mode], 0
+    jne .battery
 
     ; ---- horizontal movement
     cmp dword [p_moving], 0
@@ -441,9 +460,12 @@ player_update:
     je .no_jump
     cmp dword [p_crouch], 0
     jne .no_jump
-    mov eax, [c_jump]
-    mov [p_vy], eax
+    PCT xmm0, cfg_jump                  ; jump height scales with v^2
+    sqrtss xmm0, xmm0
+    mulss xmm0, [c_jump]
+    movss [p_vy], xmm0
     mov dword [p_on_ground], 0
+    mov dword [p_step_event], 4         ; jumping makes a little noise
 .no_jump:
 
     ; ---- gravity and ground following
@@ -515,11 +537,14 @@ player_update:
     mov [p_y], eax
 
     ; ---- flashlight battery
+.battery:
     movss xmm0, [p_battery]
     cmp dword [p_flash_on], 0
     je .charging
     movss xmm1, [rsp+0]
     divss xmm1, [c_bat_drain]
+    PCT xmm2, cfg_battery
+    mulss xmm1, xmm2
     subss xmm0, xmm1
     comiss xmm0, [c_zero]
     ja .bat_store
@@ -595,6 +620,8 @@ player_update:
     addss xmm0, [p_bob]
     movss [p_bob], xmm0
 .bob_done:
+    PCT xmm2, cfg_bob
+    mulss xmm3, xmm2
     movss [rsp+56], xmm3
     movss xmm0, [p_bob]
     addss xmm0, xmm0
@@ -602,10 +629,18 @@ player_update:
     mulss xmm0, [rsp+56]
     addss xmm0, [p_eye]
     addss xmm0, [p_y]
+    movss xmm1, [trav_shake]            ; zipline speed shake
+    PCT xmm2, cfg_shake
+    mulss xmm1, xmm2
+    addss xmm0, xmm1
     movss [p_eye_y], xmm0
     movss xmm0, [p_bob]
     call sinf
     mulss xmm0, [rsp+56]
     mulss xmm0, [c_roll_k]
+    movss xmm1, [trav_roll]             ; zipline sway
+    PCT xmm2, cfg_shake
+    mulss xmm1, xmm2
+    addss xmm0, xmm1
     movss [p_roll], xmm0
     EPILOGUE

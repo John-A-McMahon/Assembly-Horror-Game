@@ -2,17 +2,23 @@
 ; ai.asm -- T, the thing that hunts the halls.
 ;
 ; Same brain as game.asm / doom.asm (goal seeking on the grid, random
-; wandering, a "hunch" that drifts toward you when you're within CHASE_RADIUS,
+; wandering, a "hunch" that drifts toward you when you're close,
 ; safe rooms are off limits, noises draw him in, deauth packets stun him),
-; extended to three storeys:
+; living in one continuous 3D building:
 ;
-;   * Every map cell is a graph node: id = (f*MAP_H + y)*MAP_W + x.
+;   * He walks a 3D navigation graph (world.asm): every map cell is a node,
+;     id = (f*MAP_H + y)*MAP_W + x, plus free waypoints at any height (the
+;     atrium ramps and bridge), each with a world XYZ in nav_x/y/z.
 ;   * T may stand on ' ' floor and on stairs -- never S (safe rooms).
 ;   * The top cell of a stair connects to the landing on the storey above,
 ;     and a landing next to an open shaft connects back down to that stair.
+;     Links add the rest: ramps, platforms, and drops off ledges into the
+;     storey below (he will follow you down the atrium). Ladders are links
+;     too, but nav_t_mask keeps him off them for now.
+;   * He sees along real 3D rays (through the atrium, down stairwells) and
+;     hears through the building: floor slabs muffle a lot, walls some.
 ;   * Path finding is a breadth-first search (the original used a recursive
-;     DFS flood fill; BFS gives shortest paths without deep recursion over
-;     5487 nodes).
+;     DFS flood fill; BFS gives shortest paths without deep recursion).
 ;
 ; T's states:  WANDER -> (noise) INVESTIGATE -> (sees you) CHASE
 ; =============================================================================
@@ -21,11 +27,12 @@
 
 global find_path, enemy_reset, enemy_update, enemy_hear, enemy_deauth, random_node
 global t_x, t_y, t_z, t_state, t_stun, t_sees, t_speed_bonus, t_caught, t_dist, t_same_storey
-global t_anim_phase, t_moving, path_len
+global t_anim_phase, t_moving, path_len, t_hear_d, seen, stamp
+global far_spawn_node, spawn_dist, spawn_maxd
 
 extern on_t_spotted                     ; main.asm: "T HAS SEEN YOU. RUN."
 
-%define CHASE_RADIUS 20                 ; cells, same constant as doom.asm
+%define MAX_NB 16                       ; most neighbours one node can have
 
 section .data
 ; the four grid directions
@@ -50,23 +57,29 @@ c_step_wander   dd 0.75
 c_catch_r       dd 0.95
 c_catch_h       dd 1.2
 c_dist_y        dd 1.5
-c_hear_y        dd 2.5
 c_stun_time     dd 5.0
 c_anim_chase    dd 9.0
 c_anim_walk     dd 5.0
 c_away_prob     dd 0.8
+c_t_eye         dd 1.75                 ; T's eyes above his feet
+c_torso         dd 0.9                  ; he can also spot your body
+c_hunch_r       dd 40.0                 ; hunch range (world units, 3D)...
+c_hunch_y       dd 2.5                  ; ...height difference counts extra
 
 section .bss
 alignb 4
-prev        resd NCELLS                 ; BFS back-pointers
-seen        resd NCELLS                 ; BFS visit stamps (avoids clearing)
-queue       resd NCELLS
+prev        resd NNODES                 ; BFS back-pointers
+seen        resd NNODES                 ; BFS visit stamps (avoids clearing)
+queue       resd NNODES
 stamp       resd 1
-path        resd NCELLS                 ; current path: path[0] = start ... goal
+path        resd NNODES                 ; current path: path[0] = start ... goal
 path_len    resd 1
 path_pos    resd 1                      ; next index of path[] to walk to
-nb          resd 4                      ; neighbour scratch
-tmp_path    resd NCELLS
+nb          resd MAX_NB                 ; neighbour scratch
+tmp_path    resd NNODES
+bfs_dist    resd NNODES                 ; far_spawn_node: steps from the start
+spawn_dist  resd 1                      ; out: how far T's spawn is (steps)
+spawn_maxd  resd 1                      ; out: the farthest reachable spot
 
 t_x         resd 1                      ; world position (feet)
 t_y         resd 1
@@ -87,6 +100,7 @@ t_dist      resd 1                      ; out: float distance to player
 t_same_storey resd 1                    ; out
 t_anim_phase resd 1                     ; float, drives arm swing in render.asm
 t_moving    resd 1
+t_hear_d    resd 1                      ; out: how far your noise has to carry to reach T
 
 section .text
 
@@ -98,6 +112,9 @@ neighbours:
     ; [rsp+0] f [rsp+4] x [rsp+8] y [rsp+12] here-class [rsp+16] count
     ;  [rsp+20] dir [rsp+24] id
     mov [rsp+24], edi
+    mov dword [rsp+16], 0
+    cmp edi, NCELLS
+    jae .done                           ; a free waypoint: links only
     mov eax, edi
     xor edx, edx
     mov ecx, MAP_W
@@ -111,7 +128,6 @@ neighbours:
     movzx eax, byte [grid+rdi]
     movzx eax, byte [char_class+rax]
     mov [rsp+12], eax
-    mov dword [rsp+16], 0
     xor ebx, ebx                        ; direction index
 .dir_loop:
     cmp ebx, 4
@@ -193,6 +209,25 @@ neighbours:
     inc ebx
     jmp .dir_loop
 .done:
+    ; ---- links: ramps, platforms, drops off ledges (and ladders, if T may)
+    mov eax, [rsp+24]
+    mov ecx, [link_head+rax*4]
+.link:
+    test ecx, ecx
+    js .links_done
+    mov edx, [link_type+rcx*4]
+    bt dword [nav_t_mask], edx
+    jnc .link_next
+    mov eax, [rsp+16]
+    cmp eax, MAX_NB
+    jge .links_done
+    mov edx, [link_to+rcx*4]
+    mov [nb+rax*4], edx
+    inc dword [rsp+16]
+.link_next:
+    mov ecx, [link_next+rcx*4]
+    jmp .link
+.links_done:
     mov eax, [rsp+16]
     EPILOGUE
 
@@ -348,6 +383,88 @@ random_node:
     EPILOGUE
 
 ; -----------------------------------------------------------------------------
+; far_spawn_node(edi = where you start) -> eax = where T starts.
+; A breadth-first flood of T's own graph measures how many steps every
+; reachable spot is from you. T starts at a random spot at least 55% of the
+; farthest walk away -- the far side of the building, whatever the seed --
+; or, if somehow nothing qualifies, at the single farthest spot.
+; -----------------------------------------------------------------------------
+far_spawn_node:
+    PROLOGUE 32
+    mov [rsp+0], edi
+    inc dword [stamp]
+    mov r15d, [stamp]
+    mov [seen+rdi*4], r15d
+    mov dword [bfs_dist+rdi*4], 0
+    mov [queue], edi
+    xor r14d, r14d                      ; head
+    mov ebx, 1                          ; tail
+    xor r12d, r12d                      ; farthest distance
+    mov r13d, edi                       ; farthest node
+.bfs:
+    cmp r14d, ebx
+    jge .measured
+    mov eax, [queue+r14*4]
+    inc r14d
+    mov [rsp+4], eax
+    mov edi, eax
+    call neighbours
+    mov [rsp+8], eax
+    mov dword [rsp+12], 0
+.nb:
+    mov ecx, [rsp+12]
+    cmp ecx, [rsp+8]
+    jge .bfs
+    inc dword [rsp+12]
+    mov edx, [nb+rcx*4]
+    cmp [seen+rdx*4], r15d
+    je .nb
+    mov [seen+rdx*4], r15d
+    mov eax, [rsp+4]
+    mov eax, [bfs_dist+rax*4]
+    inc eax
+    mov [bfs_dist+rdx*4], eax
+    mov [queue+rbx*4], edx
+    inc ebx
+    ; the farthest plain floor cell (where T could reasonably stand)
+    cmp eax, r12d
+    jle .nb
+    cmp edx, NCELLS
+    jae .nb
+    cmp byte [grid+rdx], ' '
+    jne .nb
+    mov r12d, eax
+    mov r13d, edx
+    jmp .nb
+.measured:
+    mov [spawn_maxd], r12d
+    imul eax, r12d, 55
+    add eax, 99                         ; (rounded up)
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    mov [rsp+16], eax                   ; the minimum distance
+    mov ebx, 3000
+.pick:
+    dec ebx
+    js .farthest
+    call rng_next
+    xor edx, edx
+    div dword [open_count]
+    mov eax, [open_cells+rdx*4]
+    cmp [seen+rax*4], r15d
+    jne .pick                           ; can't walk there from you
+    mov ecx, [bfs_dist+rax*4]
+    cmp ecx, [rsp+16]
+    jl .pick
+    mov [spawn_dist], ecx
+    EPILOGUE
+.farthest:
+    mov [spawn_dist], r12d
+    mov eax, r13d
+    EPILOGUE
+
+; -----------------------------------------------------------------------------
 ; enemy_reset(edi=node) -- put T on a node, standing still, wandering.
 ; -----------------------------------------------------------------------------
 enemy_reset:
@@ -385,31 +502,26 @@ set_goal:
     ret
 
 ; -----------------------------------------------------------------------------
-; enemy_hear(xmm0=X, xmm1=Y, xmm2=Z, xmm3=radius) -- a noise at a point.
-; Vertical distance counts extra (sound through floors is muffled).
+; enemy_hear(xmm0=X, xmm1=Y, xmm2=Z, xmm3=radius) -- a noise at a point
+; (Y = the floor it happened on). T hears it if the path the sound takes --
+; the straight 3D distance plus whatever it goes through (sound_occlusion:
+; floor slabs muffle a lot, walls some, an open atrium or stairwell nothing)
+; -- is within the radius.
 ; -----------------------------------------------------------------------------
 enemy_hear:
     PROLOGUE 32
     movss [rsp+0], xmm0
     movss [rsp+4], xmm1
     movss [rsp+8], xmm2
+    PCT xmm4, cfg_t_hear                ; custom run: T's hearing
+    mulss xmm3, xmm4
     movss [rsp+12], xmm3
     cmp dword [t_state], T_CHASE
     je .ignore
     movss xmm4, [t_stun]
     comiss xmm4, [c_zero]
     ja .ignore
-    ; d = hypot(dx, dz) + |dy| * 2.5
-    subss xmm0, [t_x]
-    mulss xmm0, xmm0
-    subss xmm2, [t_z]
-    mulss xmm2, xmm2
-    addss xmm0, xmm2
-    sqrtss xmm0, xmm0
-    subss xmm1, [t_y]
-    andps xmm1, [c_abs_mask]
-    mulss xmm1, [c_hear_y]
-    addss xmm0, xmm1
+    call hear_distance
     comiss xmm0, [rsp+12]
     ja .ignore
     movss xmm0, [rsp+0]
@@ -417,13 +529,49 @@ enemy_hear:
     movss xmm2, [rsp+8]
     call node_at_pos
     mov ebx, eax
-    movzx ecx, byte [grid+rbx]
-    test byte [char_class+rcx], CF_TWALK
+    mov edi, eax
+    call node_walkable
+    test eax, eax
     jz .ignore
     mov dword [t_state], T_INVESTIGATE
     mov edi, ebx
     call set_goal
 .ignore:
+    EPILOGUE
+
+; t_eye_to_player -> xmm0..2 = T's eyes, xmm3/xmm5 = your x/z (caller sets xmm4)
+t_eye_to_player:
+    movss xmm0, [t_x]
+    movss xmm1, [t_y]
+    addss xmm1, [c_t_eye]
+    movss xmm2, [t_z]
+    movss xmm3, [p_x]
+    movss xmm5, [p_z]
+    ret
+
+; hear_distance(xmm0=X, xmm1=Y, xmm2=Z of a sound on a floor) -> xmm0 = how
+; far it effectively is from T's ears (both measured a metre above the floor)
+hear_distance:
+    PROLOGUE 32
+    addss xmm1, [c_one]
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    movss xmm3, [t_x]
+    movss xmm4, [t_y]
+    addss xmm4, [c_one]
+    movss xmm5, [t_z]
+    call dist3
+    movss [rsp+12], xmm0
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    movss xmm2, [rsp+8]
+    movss xmm3, [t_x]
+    movss xmm4, [t_y]
+    addss xmm4, [c_one]
+    movss xmm5, [t_z]
+    call sound_occlusion
+    addss xmm0, [rsp+12]
     EPILOGUE
 
 ; -----------------------------------------------------------------------------
@@ -465,20 +613,19 @@ enemy_update:
     movss xmm2, [p_z]
     call node_at_pos
     mov [rsp+4], eax
-    mov ecx, eax
-    movzx edx, byte [grid+rcx]
-    movzx edx, byte [char_class+rdx]
-    and edx, CF_TWALK
-    mov [rsp+20], edx
-    xor edx, edx
-    mov ecx, MAP_W
-    div ecx
-    mov [rsp+12], edx
-    xor edx, edx
-    mov ecx, MAP_H
-    div ecx
+    mov edi, eax
+    call node_walkable                  ; could T stand where you are?
+    mov [rsp+20], eax
+    call player_floor                   ; (floor/x/y only for "prefer this storey")
     mov [rsp+8], eax
-    mov [rsp+16], edx
+    movss xmm0, [p_x]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si eax, xmm0
+    mov [rsp+12], eax
+    movss xmm0, [p_z]
+    mulss xmm0, [c_inv_cell]
+    cvttss2si eax, xmm0
+    mov [rsp+16], eax
 
     call player_in_safe
     mov [rsp+28], eax
@@ -492,6 +639,7 @@ enemy_update:
     mov dword [t_moving], 0
     mov eax, [c_big]
     mov [t_dist], eax
+    mov [t_hear_d], eax
     EPILOGUE
 .not_stunned:
 
@@ -514,11 +662,11 @@ enemy_update:
     setb al
     mov [t_same_storey], eax
 
+    ; sight is a real 3D ray: across the atrium, down a stairwell, through a
+    ; hatch -- not just "on the same storey"
     mov dword [t_sees], 0
     cmp dword [rsp+28], 0               ; in a safe room: invisible
     jne .perceived
-    cmp dword [t_same_storey], 0
-    je .perceived
     movss xmm1, [c_sight_flash]
     cmp dword [p_flash_on], 0
     jne .have_range
@@ -527,17 +675,24 @@ enemy_update:
     je .have_range
     movss xmm1, [c_sight_crouch]
 .have_range:
-    movss xmm0, [rsp+24]
-    comiss xmm0, xmm1
+    PCT xmm2, cfg_t_vision              ; custom run: T's eyesight
+    mulss xmm1, xmm2
+    movss [rsp+52], xmm1
+    call t_eye_to_player
+    movss xmm4, [p_eye_y]
+    call dist3
+    comiss xmm0, [rsp+52]
     jae .perceived
-    movss xmm0, [t_y]
-    call floor_of_height
-    mov edi, eax
-    movss xmm0, [t_x]
-    movss xmm1, [t_z]
-    movss xmm2, [p_x]
-    movss xmm3, [p_z]
-    call line_of_sight
+    call t_eye_to_player                ; your head...
+    movss xmm4, [p_eye_y]
+    call line_of_sight_3d
+    test eax, eax
+    jnz .seen
+    call t_eye_to_player                ; ...or your body
+    movss xmm4, [p_y]
+    addss xmm4, [c_torso]
+    call line_of_sight_3d
+.seen:
     mov [t_sees], eax
 .perceived:
     cmp dword [t_sees], 0
@@ -590,38 +745,20 @@ enemy_update:
     jne .not_arrived
     cmp dword [t_state], T_CHASE
     je .arrived_chase
-    ; manhattan distance from T's node to the player (same storey only)
-    mov eax, [t_node]
-    xor edx, edx
-    mov ecx, MAP_W
-    div ecx
-    mov r12d, edx                       ; T x
-    xor edx, edx
-    mov ecx, MAP_H
-    div ecx
-    mov r13d, eax                       ; T f
-    mov r14d, edx                       ; T y
     cmp dword [t_state], T_INVESTIGATE
     jne .hunch
     mov dword [t_state], T_WANDER
 .hunch:
     cmp dword [rsp+20], 0
     je .wander_goal
-    cmp r13d, [rsp+8]
-    jne .wander_goal
-    mov eax, r12d
-    sub eax, [rsp+12]
-    mov ecx, eax
-    neg ecx
-    cmovl ecx, eax
-    mov eax, r14d
-    sub eax, [rsp+16]
-    mov edx, eax
-    neg edx
-    cmovl edx, eax
-    add ecx, edx
-    cmp ecx, CHASE_RADIUS
-    jg .wander_goal
+    ; near enough for a hunch? (3D; being a storey apart counts extra)
+    movss xmm0, [p_y]
+    subss xmm0, [t_y]
+    andps xmm0, [c_abs_mask]
+    mulss xmm0, [c_hunch_y]
+    addss xmm0, [rsp+24]
+    comiss xmm0, [c_hunch_r]
+    ja .wander_goal
     call rand01
     comiss xmm0, [c_hunch_prob]
     jae .wander_goal
@@ -685,6 +822,8 @@ enemy_update:
     mov eax, [t_state]
     movss xmm0, [t_speeds+rax*4]
     addss xmm0, [t_speed_bonus]
+    PCT xmm1, cfg_t_speed               ; custom run: T's speed
+    mulss xmm0, xmm1
     mulss xmm0, [rsp+0]
     movss [rsp+32], xmm0                ; remaining distance this frame
 .walk:
@@ -703,7 +842,11 @@ enemy_update:
     movaps xmm4, xmm2
     mulss xmm4, xmm4
     addss xmm3, xmm4
-    sqrtss xmm3, xmm3                   ; d
+    movaps xmm4, xmm1
+    subss xmm4, [t_y]
+    mulss xmm4, xmm4
+    addss xmm3, xmm4
+    sqrtss xmm3, xmm3                   ; d (3D: ramps, drops off ledges)
     comiss xmm3, [rsp+32]
     ja .partial
     ; reach the node
@@ -788,7 +931,12 @@ enemy_update:
     movss [t_anim_phase], xmm0
 .no_anim:
 
-    ; ---- outputs: distance and "caught"
+    ; ---- outputs: distance, hearing distance and "caught"
+    movss xmm0, [p_x]
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    call hear_distance
+    movss [t_hear_d], xmm0
     movss xmm1, [p_y]
     subss xmm1, [t_y]
     movaps xmm2, xmm1
