@@ -111,7 +111,7 @@ extern p_eye_y, p_roll, player_floor, t_moving
 %define NMAT      16
 %define NLIT      13          ; materials 0..12 go through the shader
 
-%define MAX_FIX   900
+%define MAX_FIX   4000
 %define NPOOL     6
 ; fixture states
 %define FX_DEAD    0
@@ -374,6 +374,7 @@ c_led_speed dd 9.0
 c_step_d    dd 1.0
 
 section .bss
+vis_hi      resd 1                      ; the highest storey drawn this pass
 alignb 8
 gl2_ptrs:
 p_glCreateShader       resq 1
@@ -1318,9 +1319,14 @@ shadow_pass:
     xor edi, edi
     call use_program
     ; the static world on the storeys around you...
-    xor r12d, r12d                      ; every storey: the atrium sees them all
+    ; the storeys within VIS_FLOORS of yours (an atrium can see that far)
+    mov r12d, [cur_floor]
+    sub r12d, VIS_FLOORS
+    mov eax, [cur_floor]
+    add eax, VIS_FLOORS
+    mov [vis_hi], eax
 .fl:
-    cmp r12d, NF-1
+    cmp r12d, [vis_hi]
     jg .world_done
     cmp r12d, 0
     jl .fl_next
@@ -3206,6 +3212,14 @@ render_init:
 ; building's own signs are picked by world_select: sign_set_cur)
 render_rebuild_world:
     PROLOGUE 16
+    ; fresh display lists: recompiling the old ones lets some drivers keep
+    ; the previous building's geometry around (a big one slows everything)
+    mov edi, [list_base]
+    mov esi, NF*NMAT
+    call glDeleteLists
+    mov edi, NF*NMAT
+    call glGenLists
+    mov [list_base], eax
     call find_media_wall
     call build_world
     EPILOGUE
@@ -4503,9 +4517,14 @@ draw_scene:
     xor edi, edi
     call use_program
     ; ---- static world: storeys within one of the player's
-    xor r12d, r12d                      ; every storey: the atrium sees them all
+    ; the storeys within VIS_FLOORS of yours (an atrium can see that far)
+    mov r12d, [cur_floor]
+    sub r12d, VIS_FLOORS
+    mov eax, [cur_floor]
+    add eax, VIS_FLOORS
+    mov [vis_hi], eax
 .fl:
-    cmp r12d, NF-1
+    cmp r12d, [vis_hi]
     jg .fl_done
     cmp r12d, 0
     jl .fl_next
@@ -4598,9 +4617,14 @@ draw_scene:
     mov edi, GL_SRC_ALPHA
     mov esi, GL_ONE_MINUS_SRC_ALPHA
     call glBlendFunc
-    xor r12d, r12d                      ; every storey: the atrium sees them all
+    ; the storeys within VIS_FLOORS of yours (an atrium can see that far)
+    mov r12d, [cur_floor]
+    sub r12d, VIS_FLOORS
+    mov eax, [cur_floor]
+    add eax, VIS_FLOORS
+    mov [vis_hi], eax
 .ul:
-    cmp r12d, NF-1
+    cmp r12d, [vis_hi]
     jg .ul_done
     cmp r12d, 0
     jl .ul_next

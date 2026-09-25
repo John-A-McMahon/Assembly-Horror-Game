@@ -146,7 +146,10 @@ ach_won:
     call ach_unlock
 .loud:
     cmp dword [cfg_building], BLD_GENERATED
+    je .generated
+    cmp dword [cfg_building], BLD_CUSTOM  ; (any size counts too)
     jne .done
+.generated:
     mov edi, ACH_ARCHITECT
     call ach_unlock
     cmp dword [cfg_layout], 0           ; the maze layout

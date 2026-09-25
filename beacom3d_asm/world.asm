@@ -27,8 +27,9 @@ global nav_x, nav_y, nav_z, nav_count, link_head, link_next, link_to, link_type,
 global node_walkable, line_of_sight_3d, sound_occlusion, dist3, link_count
 global classic_grid, compute_stairs, world_select, real_grid, cur_set
 global start_f, start_x, start_y, start_yaw
+global w_nf, w_w, w_h, w_w1, w_w2, w_w3, w_w7, w_h1, w_h2, w_h3, w_nf1, set_dims
 extern sign_set_cur
-extern worldgen_generate
+extern worldgen_generate, worldgen_custom, cfg_floors, cfg_width, cfg_depth
 global plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
 global plat_style, plat_inside, plat_height, slab_cross
 
@@ -151,17 +152,18 @@ zip_real:
 ;   original: the first room; real: inside the glass entry, facing the media wall
 set_start   dd 1, 1, 1, -2.3561945
             dd 1, 22, 15, -1.5707963
+            dd 1, 1, 1, -2.3561945          ; custom: the start room, like the original
 
 ; per building set (SET_ORIGINAL, SET_REAL)
 align 8
-set_plat    dq plat_def, plat_real
-set_xnode   dq xnode_def, xnode_real
-set_xlink   dq xlink_def, xlink_real
-set_zip     dq zip_original, zip_real
-set_plat_n  dd NPLAT_DEF, NPLAT_REAL
-set_xnode_n dd NXNODE_DEF, NXNODE_REAL
-set_xlink_n dd NXLINK_DEF, NXLINK_REAL
-set_zip_n   dd 4, 1
+set_plat    dq plat_def, plat_real, plat_def
+set_xnode   dq xnode_def, xnode_real, xnode_def
+set_xlink   dq xlink_def, xlink_real, xlink_def
+set_zip     dq zip_original, zip_real, zip_original
+set_plat_n  dd NPLAT_DEF, NPLAT_REAL, 0
+set_xnode_n dd NXNODE_DEF, NXNODE_REAL, 0
+set_xlink_n dd NXLINK_DEF, NXLINK_REAL, 0
+set_zip_n   dd 4, 1, 0
 
 c_hear_slab dd 6.0        ; a floor/ceiling slab muffles sound like 6m of air
 c_hear_wall dd 0.75       ; ...each half metre of solid wall like 0.75m
@@ -192,7 +194,18 @@ section .bss
 grid        resb NCELLS
 classic_grid resb NCELLS  ; the original game's map (maps/original/)
 real_grid   resb NCELLS   ; the real Beacom Institute of Technology (maps/beacom/)
-cur_set     resd 1        ; SET_ORIGINAL / SET_REAL: whose platforms, nav, zips...
+cur_set     resd 1        ; SET_ORIGINAL / SET_REAL / SET_CUSTOM: whose platforms, nav, zips...
+w_nf        resd 1        ; this building: storeys...
+w_w         resd 1        ; ...width and depth in cells
+w_h         resd 1
+w_w1        resd 1        ; (w_w - 1 ... handy bounds for the generators)
+w_w2        resd 1
+w_w3        resd 1
+w_w7        resd 1
+w_h1        resd 1
+w_h2        resd 1
+w_h3        resd 1
+w_nf1       resd 1
 start_f     resd 1        ; where you start in this building
 start_x     resd 1
 start_y     resd 1
@@ -375,7 +388,15 @@ world_init:
 world_select:
     PROLOGUE 16
     mov ebx, edi
+    mov r12d, esi
+    mov edi, FILE_NF                    ; the hand-made size...
+    mov esi, FILE_W
+    mov edx, FILE_H
+    call set_dims
     mov dword [cur_set], SET_ORIGINAL   ; generated buildings keep its landmarks
+    cmp ebx, BLD_CUSTOM
+    je .custom
+    mov esi, r12d
     cmp ebx, BLD_GENERATED
     je .generate
     lea rsi, [classic_grid]
@@ -391,6 +412,16 @@ world_select:
 .generate:
     mov edi, esi
     call worldgen_generate
+    jmp .analyse
+.custom:
+    ; ...or whatever size the custom run asks for
+    mov dword [cur_set], SET_CUSTOM
+    mov edi, [cfg_floors]
+    mov esi, [cfg_width]
+    mov edx, [cfg_depth]
+    call set_dims
+    mov edi, r12d
+    call worldgen_custom
 .analyse:
     call world_analyse
     ; this building's ziplines, start and signs
@@ -430,10 +461,61 @@ world_select:
     mov [start_yaw], edx
     mov [sign_set_cur], eax             ; its room signs...
     cmp ebx, BLD_GENERATED
+    je .no_signs
+    cmp ebx, BLD_CUSTOM
     jne .signs
+.no_signs:
     mov dword [sign_set_cur], -1        ; ...a generated building has none
 .signs:
     EPILOGUE
+
+; set_dims(edi = storeys, esi = width, edx = depth) -- this building's size
+; (clamped to the grid)
+set_dims:
+    cmp edi, 2
+    jge .f1
+    mov edi, 2
+.f1:
+    cmp edi, NF
+    jle .f2
+    mov edi, NF
+.f2:
+    cmp esi, 20
+    jge .w1
+    mov esi, 20
+.w1:
+    cmp esi, MAP_W
+    jle .w2
+    mov esi, MAP_W
+.w2:
+    cmp edx, 16
+    jge .h1
+    mov edx, 16
+.h1:
+    cmp edx, MAP_H
+    jle .h2
+    mov edx, MAP_H
+.h2:
+    mov [w_nf], edi
+    lea eax, [rdi-1]
+    mov [w_nf1], eax
+    mov [w_w], esi
+    lea eax, [rsi-1]
+    mov [w_w1], eax
+    lea eax, [rsi-2]
+    mov [w_w2], eax
+    lea eax, [rsi-3]
+    mov [w_w3], eax
+    lea eax, [rsi-7]
+    mov [w_w7], eax
+    mov [w_h], edx
+    lea eax, [rdx-1]
+    mov [w_h1], eax
+    lea eax, [rdx-2]
+    mov [w_h2], eax
+    lea eax, [rdx-3]
+    mov [w_h3], eax
+    ret
 
 ; world_analyse -- stairs, platforms, the nav graph and the spawn list
 world_analyse:
@@ -468,9 +550,13 @@ world_analyse:
 load_maps:
     PROLOGUE 16
     mov r15, rdi                        ; r15 = the three file names
+    lea rdi, [grid]                     ; (outside the map: solid rock)
+    mov esi, '#'
+    mov edx, NCELLS
+    call memset
     xor r12d, r12d                      ; r12 = floor
 .floor_loop:
-    cmp r12d, NF
+    cmp r12d, FILE_NF
     jge .done
     mov rdi, [r15+r12*8]
     lea rsi, [mode_r]
@@ -487,7 +573,7 @@ load_maps:
     mov r13, rax                        ; r13 = FILE*
     xor r14d, r14d                      ; r14 = row
 .row_loop:
-    cmp r14d, MAP_H
+    cmp r14d, FILE_H
     jge .close
     ; dest = grid + (f*MAP_H + row)*MAP_W
     imul eax, r12d, MAP_H
@@ -496,7 +582,7 @@ load_maps:
     lea rdi, [grid]
     add rdi, rax
     mov esi, 1
-    mov edx, MAP_W
+    mov edx, FILE_W
     mov rcx, r13
     call fread
 .eol:

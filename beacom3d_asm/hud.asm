@@ -11,6 +11,7 @@
 
 global hud_init, hud_draw, hud_message, hud_clear_messages, map_visible, explored
 global draw_text, draw_rect
+global floor_name
 global hud_prompt, hud_vignette, hud_safe_tint, hud_flash, hud_update_explored, hud_paused, hud_fps
 global map_floor
 extern have_map, have_compass, items, item_count, t_x, t_y, t_z, b_pos_x, b_pos_z, b_floor
@@ -29,6 +30,23 @@ section .data
 s_floor0    db "BASEMENT",0
 s_floor1    db "GROUND FLOOR",0
 s_floor2    db "SECOND FLOOR",0
+s_floor3    db "THIRD FLOOR",0
+s_floor4    db "4TH FLOOR",0
+s_floor5    db "5TH FLOOR",0
+s_floor6    db "6TH FLOOR",0
+s_floor7    db "7TH FLOOR",0
+s_floor8    db "8TH FLOOR",0
+s_floor9    db "9TH FLOOR (THE ROOF LEVEL)",0
+lc_floor0   db "basement",0
+lc_floor1   db "ground floor",0
+lc_floor2   db "second floor",0
+lc_floor3   db "third floor",0
+lc_floor4   db "4th floor",0
+lc_floor5   db "5th floor",0
+lc_floor6   db "6th floor",0
+lc_floor7   db "7th floor",0
+lc_floor8   db "8th floor",0
+lc_floor9   db "9th floor",0
 s_stamina   db "STAMINA",0
 s_flash     db "FLASHLIGHT",0
 s_sees      db "HE SEES YOU",0
@@ -62,7 +80,10 @@ align 8
 item_strs   dq s_item_none, 0, s_item_portal, s_item_hook
 s_fps_fmt   db "FPS %d",0
 align 8
-floor_names dq s_floor0, s_floor1, s_floor2
+floor_names dq s_floor0, s_floor1, s_floor2, s_floor3, s_floor4, s_floor5, s_floor6
+            dq s_floor7, s_floor8, s_floor9
+lc_floors   dq lc_floor0, lc_floor1, lc_floor2, lc_floor3, lc_floor4, lc_floor5
+            dq lc_floor6, lc_floor7, lc_floor8, lc_floor9
 prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8, s_pr9, s_pr10
             dq s_pr11, s_pr12, s_pr13
 %define NPROMPTS 14
@@ -131,6 +152,20 @@ mk:
     mov ecx, [tt_w]
     mov r8d, [tt_h]
     EPILOGUE
+
+; floor_name(edi = storey) -> rax = its name, lower case ("5th floor"). leaf
+floor_name:
+    cmp edi, 0
+    jge .lo
+    xor edi, edi
+.lo:
+    cmp edi, NF-1
+    jle .hi
+    mov edi, NF-1
+.hi:
+    lea rax, [lc_floors]
+    mov rax, [rax+rdi*8]
+    ret
 
 ; hud_init() -- pre-render all the fixed strings
 hud_init:
@@ -1000,13 +1035,19 @@ draw_map:
     cvtsi2ss xmm0, dword [scr_w]
     FLD xmm1, 0.5
     mulss xmm0, xmm1
-    FLD xmm1, 59.0
+    cvtsi2ss xmm1, dword [w_w]
     divss xmm0, xmm1
+    cvtsi2ss xmm1, dword [scr_h]        ; (a deep building: fit the height too)
+    FLD xmm2, 0.62
+    mulss xmm1, xmm2
+    cvtsi2ss xmm2, dword [w_h]
+    divss xmm1, xmm2
+    minss xmm0, xmm1
     FLD xmm1, 10.0
     minss xmm0, xmm1
     movss [rsp+0], xmm0                 ; s
     ; origin: top-right corner, 16px margin, 50px from the top
-    FLD xmm1, 59.0
+    cvtsi2ss xmm1, dword [w_w]
     mulss xmm1, xmm0
     cvtsi2ss xmm2, dword [scr_w]
     subss xmm2, xmm1
@@ -1025,11 +1066,11 @@ draw_map:
     subss xmm0, xmm6
     movss xmm1, [rsp+8]
     subss xmm1, xmm6
-    FLD xmm2, 59.0
+    cvtsi2ss xmm2, dword [w_w]
     mulss xmm2, [rsp+0]
     FLD xmm6, 16.0
     addss xmm2, xmm6
-    FLD xmm3, 31.0
+    cvtsi2ss xmm3, dword [w_h]
     mulss xmm3, [rsp+0]
     addss xmm3, xmm6
     xorps xmm4, xmm4
@@ -1067,11 +1108,11 @@ draw_map:
     call draw_text
     xor r14d, r14d
 .y:
-    cmp r14d, MAP_H
+    cmp r14d, [w_h]
     jge .cells_done
     xor r13d, r13d
 .x:
-    cmp r13d, MAP_W
+    cmp r13d, [w_w]
     jge .ny
     mov edi, r12d
     mov esi, r13d

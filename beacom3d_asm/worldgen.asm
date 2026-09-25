@@ -30,7 +30,7 @@
 %define MODULE_WORLDGEN
 %include "common.inc"
 
-global worldgen_generate
+global worldgen_generate, worldgen_custom, gen_stairs, gen_atriums
 extern cfg_layout
 
 extern classic_grid, compute_stairs
@@ -75,6 +75,9 @@ lay_wmin    dd 5, 5, 9
 lay_wmax    dd 10, 15, 17
 lay_hmin    dd 5, 5, 7
 lay_hmax    dd 8, 11, 11
+; custom size: corridors every CROW_STEP rows
+%define CROW_STEP 10
+%define MAX_CROWS 8
 ; flood fill directions
 fdx         dd 1, -1, 0, 0
 fdy         dd 0, 0, 1, -1
@@ -97,6 +100,12 @@ rfloor      resd 1
 rtheme      resd 1
 safe_done   resd NF
 cage_done   resd 1
+crow        resd MAX_CROWS          ; custom: the rows the corridors run along
+ncrow       resd 1
+gen_stairs  resd 1                  ; (self-tests) stairwells placed / atriums
+gen_atriums resd 1
+gen_tries   resd 1
+resv        resb NCELLS             ; custom: cells kept for a stairwell
 
 section .text
 
@@ -119,11 +128,11 @@ rand_range:
 gset:
     cmp esi, 0
     jl .no
-    cmp esi, MAP_W
+    cmp esi, [w_w]
     jge .no
     cmp edx, 0
     jl .no
-    cmp edx, MAP_H
+    cmp edx, [w_h]
     jge .no
     imul eax, edi, MAP_H
     add eax, edx
@@ -174,9 +183,9 @@ all_rock:
     jl .no
     cmp edx, 1
     jl .no
-    cmp ecx, MAP_W-2
+    cmp ecx, [w_w2]
     jg .no
-    cmp r8d, MAP_H-2
+    cmp r8d, [w_h2]
     jg .no
     mov r13d, edx
 .y:
@@ -249,11 +258,11 @@ worldgen_generate:
     xor esi, esi
     mov edx, NCELLS
     call memset
-    xor eax, eax
-    mov [safe_done], eax
-    mov [safe_done+4], eax
-    mov [safe_done+8], eax
-    mov [cage_done], eax
+    lea rdi, [safe_done]
+    xor esi, esi
+    mov edx, NF*4
+    call memset
+    mov dword [cage_done], 0
 
     ; ---- the zipline corridors
     FILL 0, 2, 2, 56, 4, ' '
@@ -264,7 +273,7 @@ worldgen_generate:
     ; north-south connectors at seeded positions
     xor r12d, r12d                      ; floor
 .zf:
-    cmp r12d, NF
+    cmp r12d, [w_nf]
     jge .zones_done
     xor r13d, r13d                      ; zone
 .zz:
@@ -322,7 +331,7 @@ worldgen_generate:
     ; ---- rooms
     xor r12d, r12d
 .rf:
-    cmp r12d, NF
+    cmp r12d, [w_nf]
     jge .rooms_done
     mov [cur_f], r12d
     mov eax, [cfg_layout]
@@ -360,6 +369,735 @@ worldgen_generate:
     call flood_from_start
     EPILOGUE
 
+; =============================================================================
+; worldgen_custom(edi = seed) -- a building of any size (w_nf storeys of
+; w_w x w_h cells, set by world_select): the same rooms, themes and layouts as
+; the generated Beacom, around a skeleton that scales:
+;   * on every storey, 2-wide corridors run east-west every 10 rows, joined by
+;     seeded north-south connectors (a different set on each storey)
+;   * stairwells between every pair of storeys (more in bigger buildings)
+;   * atriums: voids through 2-4 storeys with a balcony round the edge and
+;     now and then a bridge across
+;   * B's library on the ground floor, Y's cage in the basement, a safe room
+;     on every storey, and the start room in the ground floor's corner
+; then the flood fill from the start walls up anything you couldn't reach.
+; =============================================================================
+worldgen_custom:
+    PROLOGUE 48
+    xor edi, 0x5EED0B16                 ; its own stream of random numbers
+    call rng_seed
+    lea rdi, [grid]
+    mov esi, '#'
+    mov edx, NCELLS
+    call memset
+    lea rdi, [hall]
+    xor esi, esi
+    mov edx, NCELLS
+    call memset
+    lea rdi, [safe_done]
+    xor esi, esi
+    mov edx, NF*4
+    call memset
+    lea rdi, [resv]
+    xor esi, esi
+    mov edx, NCELLS
+    call memset
+    xor eax, eax
+    mov [cage_done], eax
+    mov [gen_stairs], eax
+    mov [gen_atriums], eax
+    ; ---- the corridor rows
+    xor ecx, ecx
+    mov eax, 2
+.cr:
+    cmp ecx, MAX_CROWS
+    jge .cr_done
+    lea edx, [rax+1]
+    cmp edx, [w_h3]
+    jg .cr_done
+    mov [crow+rcx*4], eax
+    inc ecx
+    add eax, CROW_STEP
+    jmp .cr
+.cr_done:
+    mov [ncrow], ecx
+    ; ---- corridors and connectors, storey by storey
+    xor r12d, r12d
+.cf:
+    cmp r12d, [w_nf]
+    jge .corridors_done
+    xor r13d, r13d
+.row:
+    cmp r13d, [ncrow]
+    jge .conns
+    mov edx, [crow+r13*4]
+    mov edi, r12d
+    mov esi, 2
+    mov ecx, [w_w3]
+    lea r8d, [rdx+1]
+    mov r9d, ' '
+    call fill
+    inc r13d
+    jmp .row
+.conns:
+.cfn:
+    inc r12d
+    jmp .cf
+.corridors_done:
+    ; ---- the start room (ground floor, top-left corner)
+    FILL 1, 1, 1, 6, 3, ' '
+    ; ---- B's library on the ground floor (before anything takes the room)
+    call custom_library
+    ; ---- stairwells next, while there's rock everywhere: 2 per pair of
+    ; storeys, one more per 1500 cells (their cells are kept for them)
+    xor r12d, r12d
+.sf:
+    mov eax, [w_nf]
+    dec eax
+    cmp r12d, eax
+    jge .stairs_done
+    mov eax, [w_w]
+    imul eax, [w_h]
+    xor edx, edx
+    mov ecx, 1500
+    div ecx
+    lea r13d, [rax+2]
+.sn:
+    mov edi, r12d
+    call custom_stairs
+    add [gen_stairs], eax
+    dec r13d
+    jnz .sn
+    inc r12d
+    jmp .sf
+.stairs_done:
+    ; ---- north-south connectors between the corridors (not through a
+    ; stairwell), a different set on every storey
+    xor r12d, r12d
+.ccf:
+    cmp r12d, [w_nf]
+    jge .connected
+    xor r13d, r13d
+    ; between each pair of corridors: 1..3 connectors (more when wide)
+    xor r13d, r13d
+.cgap:
+    lea eax, [r13d+1]
+    cmp eax, [ncrow]
+    jge .ccfn
+    mov edi, 1
+    mov esi, 3
+    call rand_range
+    mov r14d, eax
+    cmp dword [w_w], 60
+    jl .cconn
+    inc r14d
+.cconn:
+    mov dword [rsp+0], 20               ; tries to miss the stairwells
+.cpos:
+    mov edi, 3
+    mov esi, [w_w3]
+    sub esi, 2
+    call rand_range
+    mov r15d, eax
+    mov edi, r12d
+    mov esi, r15d
+    mov edx, [crow+r13*4]
+    add edx, 2
+    lea ecx, [r15d+1]
+    mov r8d, [crow+r13*4+4]
+    dec r8d
+    call resv_clear
+    test eax, eax
+    jnz .cfree
+    dec dword [rsp+0]
+    jnz .cpos
+    ; no luck: every column, so the corridors always get joined up
+    mov r15d, 3
+.cscan:
+    mov eax, [w_w3]
+    sub eax, 2
+    cmp r15d, eax
+    jg .cskip
+    mov edi, r12d
+    mov esi, r15d
+    mov edx, [crow+r13*4]
+    add edx, 2
+    lea ecx, [r15d+1]
+    mov r8d, [crow+r13*4+4]
+    dec r8d
+    call resv_clear
+    test eax, eax
+    jnz .cfree
+    inc r15d
+    jmp .cscan
+.cfree:
+    mov edi, r12d
+    mov esi, r15d
+    mov edx, [crow+r13*4]
+    add edx, 2
+    lea ecx, [r15d+1]
+    mov r8d, [crow+r13*4+4]
+    dec r8d
+    mov r9d, ' '
+    call fill
+.cskip:
+    dec r14d
+    jnz .cconn
+    inc r13d
+    jmp .cgap
+.ccfn:
+    inc r12d
+    jmp .ccf
+.connected:
+    ; ---- atriums, clear of the stairwells and the library
+    call custom_atriums
+    ; ---- the layout, rooms and furniture: as the generated Beacom, scaled
+    cmp dword [cfg_layout], LAYOUT_MAZE
+    jne .rooms
+    call carve_mazes
+.rooms:
+    ; room attempts scale with the floor area (the Beacom's is 59 x 31)
+    mov eax, [cfg_layout]
+    mov eax, [lay_tries+rax*4]
+    imul eax, [w_w]
+    imul eax, [w_h]
+    xor edx, edx
+    mov ecx, 59*31
+    div ecx
+    mov [gen_tries], eax
+    xor r12d, r12d
+.rf:
+    cmp r12d, [w_nf]
+    jge .rooms_done
+    mov [cur_f], r12d
+    mov r13d, [gen_tries]
+.rt:
+    call try_room
+    dec r13d
+    jnz .rt
+    inc r12d
+    jmp .rf
+.rooms_done:
+    cmp dword [cfg_layout], LAYOUT_MAZE
+    jne .not_maze
+    mov edi, 12
+    xor esi, esi
+    call punch
+    jmp .laid_out
+.not_maze:
+    cmp dword [cfg_layout], LAYOUT_OPEN
+    jne .laid_out
+    call open_halls
+    mov edi, 40
+    xor esi, esi
+    call punch
+    mov edi, 70
+    mov esi, 1
+    call punch
+    call raise_ceilings
+.laid_out:
+    ; ---- Y's cage: in a basement room if one took it, else in a corridor
+    cmp dword [cage_done], 0
+    jne .caged
+    mov dword [cage_done], 1
+    mov edx, [crow]
+    FILL 0, 4, edx, 7, edx, 'Y'
+.caged:
+    ; ---- nothing unreachable
+    call compute_stairs
+    call flood_from_start
+    EPILOGUE
+
+; resv_clear(edi=f, esi=x0, edx=y0, ecx=x1, r8d=y1) -> eax 1 if no cell in
+; the rectangle is kept for a stairwell / resv_mark: keep them all
+resv_clear:
+    xor r9d, r9d
+    jmp resv_walk
+resv_mark:
+    mov r9d, 1
+resv_walk:
+    push rbx
+    push r12
+    cmp esi, 0
+    jge .x0
+    xor esi, esi
+.x0:
+    cmp edx, 0
+    jge .y0
+    xor edx, edx
+.y0:
+    cmp ecx, MAP_W-1
+    jle .x1
+    mov ecx, MAP_W-1
+.x1:
+    cmp r8d, MAP_H-1
+    jle .y1
+    mov r8d, MAP_H-1
+.y1:
+    mov r12d, edx                       ; y
+.y:
+    cmp r12d, r8d
+    jg .clear
+    mov ebx, esi                        ; x
+.x:
+    cmp ebx, ecx
+    jg .ny
+    imul eax, edi, MAP_H
+    add eax, r12d
+    imul eax, eax, MAP_W
+    add eax, ebx
+    test r9d, r9d
+    jz .look
+    mov byte [resv+rax], 1
+    jmp .nx
+.look:
+    cmp byte [resv+rax], 0
+    jne .taken
+.nx:
+    inc ebx
+    jmp .x
+.ny:
+    inc r12d
+    jmp .y
+.clear:
+    mov eax, 1
+    pop r12
+    pop rbx
+    ret
+.taken:
+    xor eax, eax
+    pop r12
+    pop rbx
+    ret
+
+; custom_stairs(edi = lower storey) -> eax 1 if a stairwell went in: steps
+; rising north out of a corridor on this storey, the shaft above them on the
+; next, and a passage from the top step on to the corridor above. Seeded
+; tries, then every position, so it's only missing if there's no room at all.
+custom_stairs:
+    PROLOGUE 48
+    ; [rsp+0] f  [rsp+4] k  [rsp+8] x  [rsp+12] scan k  [rsp+16] scan x
+    mov [rsp+0], edi
+    xor eax, eax
+    cmp dword [ncrow], 2
+    jl .done
+    mov ebx, 80
+    mov dword [rsp+12], 1
+    mov dword [rsp+16], 3
+.try:
+    dec ebx
+    js .scan
+    mov edi, 1
+    mov esi, [ncrow]
+    dec esi
+    call rand_range
+    mov [rsp+4], eax
+    mov edi, 3
+    mov esi, [w_w7]
+    call rand_range
+    mov [rsp+8], eax
+    jmp .check
+.scan:
+    mov eax, [rsp+16]
+    cmp eax, [w_w7]
+    jle .scan_x
+    mov dword [rsp+16], 3
+    inc dword [rsp+12]
+.scan_x:
+    mov eax, [rsp+12]
+    cmp eax, [ncrow]
+    jge .none
+    mov [rsp+4], eax
+    mov eax, [rsp+16]
+    mov [rsp+8], eax
+    inc dword [rsp+16]
+.check:
+    mov eax, [rsp+4]
+    mov r14d, [crow+rax*4]              ; c: the corridor you walk up from
+    mov r15d, [crow+rax*4-4]
+    add r15d, 2                         ; p: the passage's top row, upstairs
+    mov r12d, [rsp+8]                   ; x
+    ; this storey: rock for the steps and their walls
+    mov edi, [rsp+0]
+    mov esi, r12d
+    lea edx, [r14d-7]
+    lea ecx, [r12d+3]
+    lea r8d, [r14d-1]
+    call all_rock
+    test eax, eax
+    jz .try
+    ; the storey above: rock for the shaft and the passage
+    mov edi, [rsp+0]
+    inc edi
+    mov esi, r12d
+    mov edx, r15d
+    lea ecx, [r12d+3]
+    lea r8d, [r14d-1]
+    call all_rock
+    test eax, eax
+    jz .try
+    ; clear of the library and other stairwells, on both storeys
+    mov edi, [rsp+0]
+    mov esi, r12d
+    lea edx, [r14d-7]
+    lea ecx, [r12d+3]
+    mov r8d, r14d
+    call resv_clear
+    test eax, eax
+    jz .try
+    mov edi, [rsp+0]
+    inc edi
+    mov esi, r12d
+    lea edx, [r15d-1]
+    lea ecx, [r12d+3]
+    mov r8d, r14d
+    call resv_clear
+    test eax, eax
+    jz .try
+    ; corridor at the bottom (this storey) and at the top (the one above)
+    mov edi, [rsp+0]
+    lea esi, [r12d+1]
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    jne .try
+    mov edi, [rsp+0]
+    lea esi, [r12d+2]
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    jne .try
+    mov edi, [rsp+0]
+    inc edi
+    lea esi, [r12d+1]
+    lea edx, [r15d-1]
+    call cell_at
+    cmp eax, ' '
+    jne .try
+    mov edi, [rsp+0]
+    inc edi
+    lea esi, [r12d+2]
+    lea edx, [r15d-1]
+    call cell_at
+    cmp eax, ' '
+    jne .try
+    ; carve: the steps, the shaft over them, the passage on from the top
+    mov edi, [rsp+0]
+    lea esi, [r12d+1]
+    lea edx, [r14d-6]
+    lea ecx, [r12d+2]
+    lea r8d, [r14d-1]
+    mov r9d, '^'
+    call fill
+    mov edi, [rsp+0]
+    inc edi
+    lea esi, [r12d+1]
+    lea edx, [r14d-6]
+    lea ecx, [r12d+2]
+    lea r8d, [r14d-1]
+    mov r9d, '.'
+    call fill
+    mov edi, [rsp+0]
+    inc edi
+    lea esi, [r12d+1]
+    mov edx, r15d
+    lea ecx, [r12d+2]
+    lea r8d, [r14d-7]
+    mov r9d, ' '
+    call fill
+    ; upstairs, wall the shaft off from the corridor along its south side
+    ; (the corridor is two rows deep, so it still goes past)
+    mov edi, [rsp+0]
+    inc edi
+    mov esi, r12d
+    mov edx, r14d
+    lea ecx, [r12d+3]
+    mov r8d, r14d
+    mov r9d, '#'
+    call fill
+    mov edi, [rsp+0]
+    mov esi, r12d
+    lea edx, [r14d-7]
+    lea ecx, [r12d+3]
+    lea r8d, [r14d-1]
+    call resv_mark
+    mov edi, [rsp+0]
+    inc edi
+    mov esi, r12d
+    lea edx, [r15d-1]
+    lea ecx, [r12d+3]
+    mov r8d, r14d
+    call resv_mark
+    mov eax, 1
+    EPILOGUE
+.none:
+    xor eax, eax
+.done:
+    EPILOGUE
+
+; custom_atriums -- voids through 2-4 storeys: floor at the bottom, a balcony
+; round the edge above, sometimes a bridge across the middle
+custom_atriums:
+    PROLOGUE 64
+    ; [rsp+0] f0 [rsp+4] f1 [rsp+8] x0 [rsp+12] y0 [rsp+16] x1 [rsp+20] y1
+    ; [rsp+24] f  [rsp+28] count  [rsp+32] tries
+    mov eax, [w_nf]
+    xor edx, edx
+    mov ecx, 3
+    div ecx
+    inc eax
+    mov [rsp+28], eax
+    mov dword [rsp+32], 60
+.next:
+    cmp dword [rsp+28], 0
+    jle .done
+    dec dword [rsp+32]
+    js .done
+    ; storeys
+    xor edi, edi
+    mov esi, [w_nf]
+    sub esi, 2
+    call rand_range
+    mov [rsp+0], eax
+    mov edi, 1
+    mov esi, 3
+    call rand_range
+    add eax, [rsp+0]
+    cmp eax, [w_nf1]
+    jle .f1
+    mov eax, [w_nf1]
+.f1:
+    mov [rsp+4], eax
+    ; footprint: across one of the corridors
+    mov edi, 6
+    mov esi, 10
+    call rand_range
+    mov r12d, eax                       ; width
+    mov edi, 6
+    mov esi, 8
+    call rand_range
+    mov r13d, eax                       ; depth
+    mov edi, 3
+    mov esi, [w_w]
+    sub esi, 4
+    sub esi, r12d
+    call rand_range
+    mov [rsp+8], eax
+    add eax, r12d
+    mov [rsp+16], eax
+    xor edi, edi
+    mov esi, [ncrow]
+    dec esi
+    call rand_range
+    mov r14d, [crow+rax*4]
+    mov edi, 1
+    lea esi, [r13d-3]
+    call rand_range
+    sub r14d, eax
+    mov [rsp+12], r14d
+    add r14d, r13d
+    mov [rsp+20], r14d
+    cmp dword [rsp+12], 3
+    jl .next
+    mov eax, [w_h]
+    sub eax, 4
+    cmp [rsp+20], eax
+    jg .next
+    ; keep clear of the start room
+    cmp dword [rsp+8], 9
+    jg .place
+    cmp dword [rsp+12], 6
+    jg .place
+    jmp .next
+.place:
+    mov eax, [rsp+0]
+    mov [rsp+24], eax
+.clear:
+    mov edi, [rsp+24]
+    mov esi, [rsp+8]
+    dec esi
+    mov edx, [rsp+12]
+    dec edx
+    mov ecx, [rsp+16]
+    inc ecx
+    mov r8d, [rsp+20]
+    inc r8d
+    call resv_clear
+    test eax, eax
+    jz .next
+    inc dword [rsp+24]
+    mov eax, [rsp+24]
+    cmp eax, [rsp+4]
+    jle .clear
+    dec dword [rsp+28]
+    inc dword [gen_atriums]
+    ; the bottom: open floor
+    mov edi, [rsp+0]
+    mov esi, [rsp+8]
+    mov edx, [rsp+12]
+    mov ecx, [rsp+16]
+    mov r8d, [rsp+20]
+    mov r9d, ' '
+    call fill
+    mov eax, [rsp+0]
+    mov [rsp+24], eax
+.up:
+    inc dword [rsp+24]
+    mov eax, [rsp+24]
+    cmp eax, [rsp+4]
+    jg .next
+    ; a balcony round a void
+    mov edi, eax
+    mov esi, [rsp+8]
+    mov edx, [rsp+12]
+    mov ecx, [rsp+16]
+    mov r8d, [rsp+20]
+    mov r9d, ' '
+    call fill
+    mov edi, [rsp+24]
+    mov esi, [rsp+8]
+    inc esi
+    mov edx, [rsp+12]
+    inc edx
+    mov ecx, [rsp+16]
+    dec ecx
+    mov r8d, [rsp+20]
+    dec r8d
+    mov r9d, '.'
+    call fill
+    ; now and then a bridge across the middle
+    mov edi, 45
+    call chance
+    test eax, eax
+    jz .up
+    mov edx, [rsp+12]
+    add edx, [rsp+20]
+    shr edx, 1
+    mov edi, [rsp+24]
+    mov esi, [rsp+8]
+    mov ecx, [rsp+16]
+    mov r8d, edx
+    mov r9d, ' '
+    call fill
+    jmp .up
+.done:
+    EPILOGUE
+
+; custom_library -- B's library on the ground floor, between two corridors,
+; its door onto the lower one
+custom_library:
+    PROLOGUE 32
+    mov ebx, 300
+.try:
+    dec ebx
+    js .scan
+    mov edi, 1
+    mov esi, [ncrow]
+    dec esi
+    call rand_range
+    mov r13d, eax
+    mov edi, 3
+    mov esi, [w_w]
+    sub esi, 12
+    call rand_range
+    mov r12d, eax
+    jmp .check
+.scan:
+    ; nothing seeded fitted: the first place that does
+    mov r13d, 1
+.sk:
+    cmp r13d, [ncrow]
+    jge .done
+    mov r12d, 3
+.sx:
+    mov eax, [w_w]
+    sub eax, 12
+    cmp r12d, eax
+    jg .skn
+    call .fits
+    test eax, eax
+    jnz .carve
+    inc r12d
+    jmp .sx
+.skn:
+    inc r13d
+    jmp .sk
+.check:
+    call .fits
+    test eax, eax
+    jz .try
+.carve:
+    ; walls of books, the room, B at the back, the door
+    mov r14d, [crow+r13*4-4]
+    add r14d, 2                         ; top wall row
+    mov r15d, [crow+r13*4]
+    dec r15d                            ; bottom wall row
+    mov edi, 1
+    mov esi, r12d
+    mov edx, r14d
+    lea ecx, [r12d+8]
+    mov r8d, r15d
+    mov r9d, 'L'
+    call fill
+    mov edi, 1
+    lea esi, [r12d+1]
+    lea edx, [r14d+1]
+    lea ecx, [r12d+7]
+    lea r8d, [r15d-1]
+    mov r9d, ' '
+    call fill
+    mov edi, 1
+    lea esi, [r12d+4]
+    lea edx, [r14d+1]
+    mov ecx, 'B'
+    call gset
+    mov edi, 1
+    lea esi, [r12d+4]
+    mov edx, r15d
+    mov ecx, ' '
+    call gset
+    mov edi, 1                          ; (keep it: no connector or atrium through it)
+    mov esi, r12d
+    mov edx, r14d
+    lea ecx, [r12d+8]
+    lea r8d, [r15d+1]
+    call resv_mark
+.done:
+    EPILOGUE
+.fits:
+    ; (r12d = x, r13d = k) -> eax: all rock, and corridor below the door
+    sub rsp, 8
+    mov edi, 1
+    mov esi, r12d
+    mov edx, [crow+r13*4-4]
+    add edx, 2
+    lea ecx, [r12d+8]
+    mov r8d, [crow+r13*4]
+    dec r8d
+    call all_rock
+    test eax, eax
+    jz .fits_done
+    mov edi, 1
+    mov esi, r12d
+    mov edx, [crow+r13*4-4]
+    add edx, 2
+    lea ecx, [r12d+8]
+    mov r8d, [crow+r13*4]
+    call resv_clear
+    test eax, eax
+    jz .fits_done
+    mov edi, 1
+    lea esi, [r12d+4]
+    mov edx, [crow+r13*4]
+    call cell_at
+    xor ecx, ecx
+    cmp eax, ' '
+    sete cl
+    mov eax, ecx
+.fits_done:
+    add rsp, 8
+    ret
+
 ; place_stairs(edi = lower storey 0 or 1) -- a walled stairwell rising north
 ; out of a corridor on this storey into a short passage that leads to a
 ; corridor on the storey above. 60 tries at seeded positions; if none fits,
@@ -382,12 +1120,12 @@ place_stairs:
     dec ebx
     js .scan
     mov edi, 3
-    mov esi, MAP_W-7
+    mov esi, [w_w7]
     call rand_range
     mov r12d, eax                       ; x: the stairwell is x..x+3
     jmp .check
 .scan:
-    cmp r15d, MAP_W-7
+    cmp r15d, [w_w7]
     jg .done
     mov r12d, r15d
     inc r15d
@@ -484,7 +1222,7 @@ try_room:
     call rand_range
     mov [rsp+4], eax
     mov edi, 1
-    mov esi, MAP_W-1
+    mov esi, [w_w1]
     sub esi, [rsp+0]
     call rand_range
     mov [rx0], eax
@@ -492,7 +1230,7 @@ try_room:
     dec eax
     mov [rx1], eax
     mov edi, 1
-    mov esi, MAP_H-1
+    mov esi, [w_h1]
     sub esi, [rsp+4]
     call rand_range
     mov [ry0], eax
@@ -833,11 +1571,11 @@ rock_around:
     PROLOGUE 16
     cmp esi, 2
     jl .no
-    cmp esi, MAP_W-3
+    cmp esi, [w_w3]
     jg .no
     cmp edx, 2
     jl .no
-    cmp edx, MAP_H-3
+    cmp edx, [w_h3]
     jg .no
     lea ecx, [rsi+1]
     lea r8d, [rdx+1]
@@ -856,16 +1594,16 @@ carve_mazes:
     PROLOGUE 32
     xor r12d, r12d                      ; f
 .f:
-    cmp r12d, NF
+    cmp r12d, [w_nf]
     jge .done
     mov [cur_f], r12d
     mov r14d, 3                         ; y (odd)
 .y:
-    cmp r14d, MAP_H-3
+    cmp r14d, [w_h3]
     jg .fn
     mov r13d, 3                         ; x (odd)
 .x:
-    cmp r13d, MAP_W-3
+    cmp r13d, [w_w3]
     jg .yn
     mov edi, r12d
     mov esi, r13d
@@ -967,7 +1705,7 @@ open_halls:
     PROLOGUE 32
     xor r12d, r12d
 .f:
-    cmp r12d, NF
+    cmp r12d, [w_nf]
     jge .done
     mov [cur_f], r12d
     mov r13d, 600
@@ -983,7 +1721,7 @@ open_halls:
     call rand_range
     mov [rsp+4], eax
     mov edi, 1
-    mov esi, MAP_W-1
+    mov esi, [w_w1]
     sub esi, [rsp+0]
     call rand_range
     mov [rx0], eax
@@ -991,7 +1729,7 @@ open_halls:
     dec eax
     mov [rx1], eax
     mov edi, 1
-    mov esi, MAP_H-1
+    mov esi, [w_h1]
     sub esi, [rsp+4]
     call rand_range
     mov [ry0], eax
@@ -1075,15 +1813,15 @@ punch:
     mov [rsp+4], esi
     xor r12d, r12d
 .f:
-    cmp r12d, NF
+    cmp r12d, [w_nf]
     jge .done
     mov r14d, 1
 .y:
-    cmp r14d, MAP_H-2
+    cmp r14d, [w_h2]
     jg .fn
     mov r13d, 1
 .x:
-    cmp r13d, MAP_W-2
+    cmp r13d, [w_w2]
     jg .yn
     mov edi, r12d
     mov esi, r13d
@@ -1161,15 +1899,15 @@ raise_ceilings:
     PROLOGUE 32
     xor r12d, r12d                      ; f (the floor being opened up)
 .f:
-    cmp r12d, NF-1
+    cmp r12d, [w_nf1]
     jge .crates
     mov r14d, 1
 .y:
-    cmp r14d, MAP_H-2
+    cmp r14d, [w_h2]
     jg .fn
     mov r13d, 1
 .x:
-    cmp r13d, MAP_W-2
+    cmp r13d, [w_w2]
     jg .yn
     mov edi, r12d
     mov esi, r13d
@@ -1208,16 +1946,16 @@ raise_ceilings:
     ; climbing points: floor under a void, next to a ledge on the floor above
     xor r12d, r12d
 .cf:
-    cmp r12d, NF-1
+    cmp r12d, [w_nf1]
     jge .done
     mov [cur_f], r12d
     mov r14d, 2
 .cy:
-    cmp r14d, MAP_H-3
+    cmp r14d, [w_h3]
     jg .cfn
     mov r13d, 2
 .cx:
-    cmp r13d, MAP_W-3
+    cmp r13d, [w_w3]
     jg .cyn
     mov edi, r12d
     mov esi, r13d

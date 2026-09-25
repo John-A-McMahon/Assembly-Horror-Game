@@ -26,7 +26,7 @@
 %include "common.inc"
 
 global find_path, enemy_reset, enemy_update, enemy_hear, enemy_deauth, random_node
-global t_dew, enemy_lure, find_next, t_goal
+global t_dew, enemy_lure, find_next, t_goal, nav_player
 global t_build, bld_on, bld_ax, bld_ay, bld_az, bld_bx, bld_by, bld_bz, bld_prog
 global build_break, build_deauth, build_hit_point, enemy_portal_follow, director_reset
 global dir_calm, dir_relax, t_camp, t_por_on, bld_cd, t_node
@@ -134,6 +134,7 @@ t_step      resd 1                      ; float footstep timer
 t_sees      resd 1
 t_last_known resd 1                     ; node where he last saw you (-1 none)
 t_dew       resd 1                      ; seconds of Diet Mountain Dew buzz left
+nav_player  resd 1                      ; 1: path-find as you, not T (safe rooms are fine)
 t_speed_bonus resd 1                    ; float, grows with every capture you take
 t_caught    resd 1                      ; out: 1 = you're dead
 t_dist      resd 1                      ; out: float distance to player
@@ -212,7 +213,12 @@ neighbours:
     call cell_at
     mov r14d, eax                       ; neighbour char
     test byte [char_class+rax], CF_TWALK
-    jz .not_plain
+    jnz .plain
+    cmp dword [nav_player], 0           ; (you can walk through a safe room)
+    je .not_plain
+    cmp r14d, 'S'
+    jne .not_plain
+.plain:
     mov edi, [rsp+0]
     mov esi, r12d
     mov edx, r13d

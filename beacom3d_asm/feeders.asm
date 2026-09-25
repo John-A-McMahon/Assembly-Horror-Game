@@ -526,15 +526,12 @@ move_feeder:
     mov [fd_timer+rbx*4], eax
     movss xmm0, [fd_y+rbx*4]
     call floor_of_height
-    cmp eax, 2
-    jle .fl
-    mov eax, 2
-.fl:
+    mov edi, eax
+    call floor_name
+    mov rcx, rax
     lea rdi, [msg_buf]
     mov esi, 160
     lea rdx, [m_stashed]
-    lea rcx, [fl_names]
-    mov rcx, [rcx+rax*8]
     xor eax, eax
     call snprintf
     lea rdi, [msg_buf]

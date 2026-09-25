@@ -24,6 +24,7 @@ global have_grod, tyler_armed, tyler_x, tyler_y, tyler_z, grod_beam, beam_x, bea
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
 extern p_on_ground, snd_can, snd_can_t, p_vy, feeder_put, por_on, portal_reset
+extern gen_stairs, gen_atriums, nav_player, nav_t_mask
 extern build_deauth, director_reset, t_build, bld_on, t_goal, dir_calm, dir_relax, t_camp
 extern t_por_on, build_break, enemy_portal_follow, bld_ay, bld_by, bld_ax, bld_bx, bld_az, bld_bz
 extern bld_cd, build_hit_point, t_node, p_eye
@@ -140,6 +141,17 @@ st_por_t db "[selftest] T follows you through your portal: came out of the exit=
 st_por_safe db "[selftest] portal at a safe-room wall: placed=%d (expect 0 -- no portals in safe rooms)",10,0
 st_hook_hear db "[selftest] hookshot bite heard: T investigating=%d (expect 1)",10,0
 st_nem db "[selftest] nemesis: 3 hookshot escapes -> hears it from %.0f m (expect 33); 3 perches -> builds in %.2fs (expect 1.05); next night it's forgotten: %.0f m (expect 22)",10,0
+st_cus1 db "[selftest] custom %2d storeys %2dx%2d %s: ",0
+st_cus2 db "%d/%d seeds proven completable first time (expect all), storeys reached min %d (expect %d), stairwells min %d, ",0
+st_cus3 db "atriums min %d, open cells max %d, desks+crates max %d, duplicates %d (expect 0), %.0f ms each to build",10,0
+st_cus_bench db "[selftest] render benchmark, 10 storeys of 89x47 (open layout): %.1f frames per second",10,0
+st_lay0 db "MAZE   ",0
+st_lay1 db "CLASSIC",0
+st_lay2 db "OPEN   ",0
+align 8
+st_lays dq st_lay0, st_lay1, st_lay2
+cus_sizes dd 2, 30, 20,   5, 71, 43,   10, 89, 47
+%define CUS_SEEDS 6
 st_dew_you db "[selftest] Diet Mountain Dew: %.1fs of it (expect 10.0), stamina %.2f after sprinting on empty (expect 1.00)",10,0
 st_dew_t db "[selftest] T sniffed out a can %d cells away and drank it after %.1fs (expect < 15): wired for %.1fs (expect > 0), can gone=%d (expect 1)",10,0
 st_hook_across db "[selftest] hookshot across the collaboration space: pulled to x=%.2f (the media wall is at x=70; expect > 67)",10,0
@@ -152,6 +164,7 @@ st_sweep_fmt db "[selftest] seed sweep 1..%d: seeds missing a stairwell %d, stor
 st_sweep_fmt3 db "[selftest] T's spawn, generated buildings: never closer than %d steps from you, never under %d%% of the longest walk (expect >= 55)",10,0
 st_sweep_fmt4 db "[selftest] T's spawn, the real Beacom, seeds 1..2000: never closer than %d steps, never under %d%% of the longest walk (expect >= 55)",10,0
 st_sweep_fmt2 db "[selftest] seed sweep: duplicate layouts %d, open cells per building %d..%d",10,0
+env_nocus db "BEACOM_NOCUSTOM",0
 env_gendump db "BEACOM_GENDUMP",0
 st_zip_fmt  db "[selftest] zipline: grabbed=%d, ended on floor %d at x=%.1f y=%.2f (cable ends x=111)",10,0
 st_path_fmt db "[selftest] path basement(3,3) -> 2nd floor(5,3): found=%d, %d cells",10,0
@@ -168,7 +181,10 @@ mkdir_shots db "mkdir -p shots",0
 %endif
 
 ; ---- in-game messages (strings carried over from the originals) ----
-m_seed      db "Seed %d. Find 3 wireshark packet captures -- one on every floor -- and bring them to B.",0
+m_seed      db "Seed %d. Find 3 wireshark packet captures -- bottom, middle and top of the building -- and bring them to B.",0
+m_proven    db "Seed %d: PROVEN COMPLETABLE -- every capture is reachable from where you start, and you can get from each back to B.",0
+m_reseed    db "(Seed %d couldn't be proven completable, so this is the next one that can: seed %d.)",0
+m_size      db "A custom building: %d storeys of %d x %d cells. Good luck.",0
 m_generated db "This is not the Beacom you know. Seed %d built it tonight -- the atrium, the server room and B's library are the only places that stayed put. (Esc -> Generated layout: maze / classic / open.)",0
 m_controls  db "ESC: menu + CUSTOM RUN settings - WASD move - mouse or arrow keys look - SHIFT sprint - C crouch (sprint+C slide) - SPACE jump / mantle / vault - F flashlight - E grab - LMB/Q use item (deauth, portal, hookshot) - RMB orange portal - M map - I invert mouse - F3 fps - F4 render scale - F5 shadows",0
 m_inv_on    db "Mouse look: vertical inverted.",0
@@ -209,6 +225,8 @@ c_grod_r    dd 16.0                     ; the cannon's reach
 c_grod_cd   dd 20.0                     ; ...and its recharge
 c_grod_beam dd 0.5
 c_give_d    dd 2.6                      ; close enough to hand Tyler something
+pdx         dd 1, -1, 0, 0
+pdy         dd 0, 0, 1, -1
 m_nothing   db "You're not holding a special item (deauth packet, portal gun or hookshot).",0
 sp_name1    db "deauth packets",0
 sp_name2    db "portal gun",0
@@ -268,6 +286,7 @@ sh_gen_map2 db "shots/17_generated_map_2nd.bmp",0
 sh_gen_view db "shots/18_generated_hallway.bmp",0
 sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
 sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
+sh_tower db "shots/44_ten_storey_atrium.bmp",0
 sh_learn db "shots/43_t_learns.bmp",0
 sh_build db "shots/42_t_builds_stairs.bmp",0
 sh_grod db "shots/40_packet_of_grod.bmp",0
@@ -381,6 +400,7 @@ beam_z      resd 1
 fo_x        resd 1                      ; find_open's answer
 fo_y        resd 1
 fo_f        resd 1
+cus_hash    resd 64                     ; (self-tests) grid hashes per seed
 bld_max     resd 1                      ; (self-tests) furthest T's build got
 hr_maxy     resd 1                      ; hook_run: highest / lowest feet
 hr_miny     resd 1
@@ -425,6 +445,13 @@ restart_new resd 1                  ; the menu asked for a new seed
 built_mode  resd 1                  ; which building is in grid (BLD_...), -1 none yet
 built_seed  resd 1                  ; ...and from which seed
 built_layout resd 1                 ; ...with which layout
+built_nf    resd 1                  ; ...and (custom) size
+built_w     resd 1
+built_h     resd 1
+no_gl_build resd 1                  ; 1: prepare_world skips the display lists
+proof_ok    resd 1                  ; the last run was proven completable
+proof_from  resd 1                  ; the seed that was asked for
+reseeds     resd 1
 
 section .text
 
@@ -743,6 +770,10 @@ add_item:
 
 new_game:
     PROLOGUE 16
+    mov eax, [seed_val]
+    mov [proof_from], eax
+    mov dword [reseeds], 0
+.again:
     mov edi, [seed_val]
     call rng_seed
     xor eax, eax
@@ -795,12 +826,16 @@ new_game:
     mov edx, [start_y]
     call player_spawn
 
-    ; one wireshark capture per storey, so you have to go everywhere
+    ; three wireshark captures, spread from the bottom storey to the top, so
+    ; you have to go everywhere (storeys 0, 1, 2 in a three-storey building)
     xor ebx, ebx
 .keys:
-    cmp ebx, NF
+    cmp ebx, 3
     jge .keys_done
-    mov edi, ebx
+    mov eax, [w_nf1]
+    imul eax, ebx
+    shr eax, 1
+    mov edi, eax
     xor esi, esi
     xor edx, edx
     call random_cell
@@ -926,6 +961,23 @@ new_game:
     jnz .dew
 .dew_done:
 
+    ; ---- proof: every capture reachable from the start, and B from each
+    call prove_run
+    mov [proof_ok], eax
+    test eax, eax
+    jnz .proven
+    cmp dword [cfg_building], BLD_REAL
+    je .proven                          ; (hand-made: nothing to reseed)
+    cmp dword [cfg_building], BLD_ORIGINAL
+    je .proven
+    cmp dword [reseeds], 50
+    jge .proven
+    inc dword [reseeds]
+    inc dword [seed_val]
+    call prepare_world
+    jmp .again
+.proven:
+
     ; boxes and wet-floor signs to knock over
     call physics_reset
     call physics_spawn_props
@@ -951,6 +1003,46 @@ new_game:
     lea rdi, [msg_buf]
     mov esi, COL_INFO
     call msg
+    ; the proof, and a moved-on seed
+    cmp dword [proof_ok], 0
+    je .no_proof
+    lea rdi, [msg_buf]
+    mov esi, 512
+    lea rdx, [m_proven]
+    mov ecx, [seed_val]
+    xor eax, eax
+    call snprintf
+    lea rdi, [msg_buf]
+    mov esi, COL_GOOD
+    call msg
+.no_proof:
+    cmp dword [reseeds], 0
+    je .same_seed
+    lea rdi, [msg_buf]
+    mov esi, 512
+    lea rdx, [m_reseed]
+    mov ecx, [proof_from]
+    mov r8d, [seed_val]
+    xor eax, eax
+    call snprintf
+    lea rdi, [msg_buf]
+    mov esi, COL_WARN
+    call msg
+.same_seed:
+    cmp dword [cfg_building], BLD_CUSTOM
+    jne .not_custom
+    lea rdi, [msg_buf]
+    mov esi, 512
+    lea rdx, [m_size]
+    mov ecx, [w_nf]
+    mov r8d, [w_w]
+    mov r9d, [w_h]
+    xor eax, eax
+    call snprintf
+    lea rdi, [msg_buf]
+    mov esi, COL_INFO
+    call msg
+.not_custom:
     lea rdi, [m_controls]
     mov esi, COL_INFO
     call msg
@@ -1086,12 +1178,9 @@ interact:
     call snd_fanfare
     movss xmm0, [tyler_y]
     call floor_of_height
-    cmp eax, 2
-    jle .grod_fl
-    mov eax, 2
-.grod_fl:
-    lea rcx, [grod_fls]
-    mov rcx, [rcx+rax*8]
+    mov edi, eax
+    call floor_name
+    mov rcx, rax
     lea rdi, [msg_buf]
     mov esi, 512
     lea rdx, [m_grod]
@@ -1491,18 +1580,38 @@ prepare_world:
     jne .build
     mov ecx, [cfg_layout]
     cmp ecx, [built_layout]
+    jne .build
+    cmp eax, BLD_CUSTOM
+    jne .apply
+    mov ecx, [cfg_floors]
+    cmp ecx, [built_nf]
+    jne .build
+    mov ecx, [cfg_width]
+    cmp ecx, [built_w]
+    jne .build
+    mov ecx, [cfg_depth]
+    cmp ecx, [built_h]
     je .apply
 .build:
     mov edi, [cfg_building]
     mov esi, [seed_val]
     call world_select
+    cmp dword [no_gl_build], 0          ; (self-tests that only need the grid)
+    jne .no_gl
     call render_rebuild_world
+.no_gl:
     mov eax, [cfg_building]
     mov [built_mode], eax
     mov eax, [seed_val]
     mov [built_seed], eax
     mov eax, [cfg_layout]
     mov [built_layout], eax
+    mov eax, [cfg_floors]
+    mov [built_nf], eax
+    mov eax, [cfg_width]
+    mov [built_w], eax
+    mov eax, [cfg_depth]
+    mov [built_h], eax
 .apply:
     call settings_apply                 ; (after build_nav, which resets T's links)
     EPILOGUE
@@ -1933,7 +2042,7 @@ handle_events:
 .page:
     cmp eax, 0
     jl .poll
-    cmp eax, NF
+    cmp eax, [w_nf]
     jge .poll
     mov [map_floor], eax
     jmp .poll
@@ -3254,6 +3363,78 @@ shot_mode_run:
     call shot_now
     call nemesis_forget
     call hud_clear_messages
+    ; a 10-storey custom building: stand on a balcony, look down the atrium
+    mov eax, [cfg_building]
+    mov [rsp+0], eax
+    mov dword [cfg_building], BLD_CUSTOM
+    mov dword [cfg_floors], 10
+    mov dword [cfg_width], 89
+    mov dword [cfg_depth], 47
+    mov dword [cfg_layout], 2
+    mov dword [seed_val], 7
+    call prepare_world
+    call new_game
+    call hud_clear_messages
+    mov dword [t_stun], __float32__(10000.0)
+    mov r12d, 8
+.bf:
+    cmp r12d, 2
+    jl .bdone
+    xor r14d, r14d
+.by:
+    cmp r14d, MAP_H
+    jge .bfn
+    xor r13d, r13d
+.bx:
+    cmp r13d, MAP_W-1
+    jge .byn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call cell_at
+    cmp eax, ' '
+    jne .bxn
+    mov edi, r12d
+    lea esi, [r13d+1]
+    mov edx, r14d
+    call cell_at
+    cmp eax, '.'
+    jne .bxn
+    mov edi, r12d
+    lea esi, [r13d+3]
+    mov edx, r14d
+    call cell_at
+    cmp eax, '.'
+    jne .bxn
+    mov edi, r12d
+    mov esi, r13d
+    mov edx, r14d
+    call player_spawn
+    mov dword [p_yaw], __float32__(-1.5708)
+    mov dword [p_pitch], __float32__(-0.55)
+    lea rdi, [sh_tower]
+    call shot_now
+    jmp .bdone
+.bxn:
+    inc r13d
+    jmp .bx
+.byn:
+    inc r14d
+    jmp .by
+.bfn:
+    dec r12d
+    jmp .bf
+.bdone:
+    mov eax, [rsp+0]
+    mov [cfg_building], eax
+    mov dword [cfg_floors], 5
+    mov dword [cfg_width], 71
+    mov dword [cfg_depth], 43
+    mov dword [cfg_layout], 1
+    mov dword [seed_val], 1
+    call prepare_world
+    call new_game
+    call hud_clear_messages
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -4302,12 +4483,12 @@ oob_tests:
     mov eax, 1
     call printf
     ; the top floor: fling up at the roof
-    mov edi, NF-1
+    mov edi, [w_nf1]
     xor esi, esi
     call find_open
     test eax, eax
     jz .none2
-    mov edi, NF-1
+    mov edi, [w_nf1]
     call hook_fling_up
     lea rdi, [st_oob_roof]
     movss xmm0, [hr_maxy]
@@ -4321,7 +4502,7 @@ oob_tests:
     mov esi, 1
     jmp .none
 .none2:
-    mov esi, NF-1
+    mov esi, [w_nf1]
 .none:
     lea rdi, [st_oob_none]
     xor eax, eax
@@ -5337,6 +5518,357 @@ find_near_open_at:
     call find_near_open
     EPILOGUE
 
+; b_node -> eax = a floor cell right beside B (-1: no B in this building)
+b_node:
+    PROLOGUE 16
+    xor ebx, ebx
+.c:
+    cmp ebx, NCELLS
+    jge .none
+    cmp byte [grid+rbx], 'B'
+    je .found
+    inc ebx
+    jmp .c
+.found:
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, MAP_W
+    div ecx
+    mov r13d, edx                       ; x
+    xor edx, edx
+    mov ecx, MAP_H
+    div ecx
+    mov r12d, eax                       ; f
+    mov r14d, edx                       ; y
+    xor r15d, r15d
+.d:
+    cmp r15d, 4
+    jge .none
+    mov edi, r12d
+    mov esi, r13d
+    add esi, [pdx+r15*4]
+    mov edx, r14d
+    add edx, [pdy+r15*4]
+    call cell_at
+    cmp eax, ' '
+    jne .nd
+    mov edi, r12d
+    mov esi, r13d
+    add esi, [pdx+r15*4]
+    mov edx, r14d
+    add edx, [pdy+r15*4]
+    call cell_index
+    EPILOGUE
+.nd:
+    inc r15d
+    jmp .d
+.none:
+    mov eax, -1
+    EPILOGUE
+
+; prove_run -> eax 1 if this run can be finished: from where you start, the
+; path-finding (as you move: walking, stairs, ramps, drops, ladders, safe
+; rooms -- but no parkour, portals or hookshot, so it's a conservative
+; proof) reaches every packet capture, and from each capture there is a way
+; on to B. Run before T is placed (it uses his path buffers).
+prove_run:
+    PROLOGUE 32
+    ; path-find as you: through safe rooms, up ladders
+    mov dword [nav_player], 1
+    mov eax, [nav_t_mask]
+    mov [rsp+8], eax
+    or dword [nav_t_mask], (1 << LK_LADDER)
+    call prove_legs
+    mov dword [nav_player], 0
+    mov ecx, [rsp+8]
+    mov [nav_t_mask], ecx
+    EPILOGUE
+prove_legs:
+    PROLOGUE 32
+    call b_node
+    mov [rsp+0], eax
+    cmp eax, 0
+    jl .no
+    call start_node
+    mov [rsp+4], eax
+    xor ebx, ebx
+.it:
+    cmp ebx, [item_count]
+    jge .yes
+    imul eax, ebx, ITEM_SIZE
+    lea r12, [items+rax]
+    cmp dword [r12+ITEM_ACTIVE], 0
+    je .n
+    cmp dword [r12+ITEM_KIND], IT_KEY
+    jne .n
+    movss xmm0, [r12+ITEM_X]
+    movss xmm1, [r12+ITEM_Y]
+    movss xmm2, [r12+ITEM_Z]
+    call node_at_pos
+    mov r13d, eax
+    mov edi, [rsp+4]
+    mov esi, r13d
+    call find_path
+    test eax, eax
+    jz .no
+    mov edi, r13d
+    mov esi, [rsp+0]
+    call find_path
+    test eax, eax
+    jz .no
+.n:
+    inc ebx
+    jmp .it
+.yes:
+    mov eax, 1
+    EPILOGUE
+.no:
+    xor eax, eax
+    EPILOGUE
+
+; grid_hash -> eax: a quick fingerprint of the building
+grid_hash:
+    xor eax, eax
+    xor ecx, ecx
+.h:
+    cmp ecx, NCELLS
+    jge .done
+    imul eax, eax, 31
+    movzx edx, byte [grid+rcx]
+    add eax, edx
+    inc ecx
+    jmp .h
+.done:
+    ret
+
+; floors_open -> eax = how many storeys have any floor you can stand on
+floors_open:
+    PROLOGUE 16
+    xor r12d, r12d                      ; count
+    xor ebx, ebx                        ; storey
+.f:
+    cmp ebx, NF
+    jge .done
+    imul ecx, ebx, MAP_W*MAP_H
+    xor edx, edx
+.c:
+    cmp edx, MAP_W*MAP_H
+    jge .nf
+    lea eax, [rcx+rdx]
+    cmp byte [grid+rax], ' '
+    je .yes
+    inc edx
+    jmp .c
+.yes:
+    inc r12d
+.nf:
+    inc ebx
+    jmp .f
+.done:
+    mov eax, r12d
+    EPILOGUE
+
+; custom_tests -- any-size generated buildings: every seed proven completable,
+; every storey reachable, no two seeds alike, and how long they take to build
+custom_tests:
+    PROLOGUE 96
+    ; [rsp+0] size idx [rsp+4] layout [rsp+8] seed [rsp+12] proven
+    ; [rsp+16] min floors [rsp+20] min stairs [rsp+24] min atriums
+    ; [rsp+28] max open [rsp+32] max plats [rsp+36] dups [rsp+40] ms
+    ; [rsp+44] t0  [rsp+48..60] saved cfg
+    mov eax, [cfg_building]
+    mov [rsp+48], eax
+    mov eax, [cfg_layout]
+    mov [rsp+52], eax
+    mov eax, [seed_val]
+    mov [rsp+56], eax
+    mov dword [cfg_building], BLD_CUSTOM
+    mov dword [no_gl_build], 1          ; (only the benchmark below draws)
+    mov dword [rsp+0], 0
+.size:
+    cmp dword [rsp+0], 3
+    jge .sizes_done
+    imul eax, [rsp+0], 12
+    mov ecx, [cus_sizes+rax]
+    mov [cfg_floors], ecx
+    mov ecx, [cus_sizes+rax+4]
+    mov [cfg_width], ecx
+    mov ecx, [cus_sizes+rax+8]
+    mov [cfg_depth], ecx
+    mov dword [rsp+4], 0
+.layout:
+    cmp dword [rsp+4], 3
+    jge .size_next
+    mov eax, [rsp+4]
+    mov [cfg_layout], eax
+    mov dword [rsp+12], 0
+    mov dword [rsp+16], 99
+    mov dword [rsp+20], 999
+    mov dword [rsp+24], 99
+    mov dword [rsp+28], 0
+    mov dword [rsp+32], 0
+    mov dword [rsp+36], 0
+    call SDL_GetTicks
+    mov [rsp+44], eax
+    mov dword [rsp+8], 0
+.seed:
+    cmp dword [rsp+8], CUS_SEEDS
+    jge .report
+    mov eax, [rsp+8]
+    imul eax, eax, 7919
+    add eax, 101
+    mov [seed_val], eax
+    call prepare_world
+    call new_game
+    ; proven without moving on?
+    cmp dword [proof_ok], 0
+    je .np
+    cmp dword [reseeds], 0
+    jne .np
+    inc dword [rsp+12]
+.np:
+    call floors_open
+    cmp eax, [rsp+16]
+    jge .f_ok
+    mov [rsp+16], eax
+.f_ok:
+    mov eax, [gen_stairs]
+    cmp eax, [rsp+20]
+    jge .s_ok
+    mov [rsp+20], eax
+.s_ok:
+    mov eax, [gen_atriums]
+    cmp eax, [rsp+24]
+    jge .a_ok
+    mov [rsp+24], eax
+.a_ok:
+    mov eax, [open_count]
+    cmp eax, [rsp+28]
+    jle .o_ok
+    mov [rsp+28], eax
+.o_ok:
+    mov eax, [plat_count]
+    cmp eax, [rsp+32]
+    jle .p_ok
+    mov [rsp+32], eax
+.p_ok:
+    ; no two seeds the same
+    call grid_hash
+    mov ecx, [rsp+8]
+    mov [cus_hash+rcx*4], eax
+    xor edx, edx
+.dup:
+    cmp edx, ecx
+    jge .dup_done
+    cmp [cus_hash+rdx*4], eax
+    jne .dn
+    inc dword [rsp+36]
+.dn:
+    inc edx
+    jmp .dup
+.dup_done:
+    inc dword [rsp+8]
+    jmp .seed
+.report:
+    call SDL_GetTicks
+    sub eax, [rsp+44]
+    cvtsi2sd xmm0, eax
+    mov rax, __float64__(6.0)           ; (CUS_SEEDS)
+    movq xmm1, rax
+    divsd xmm0, xmm1
+    movsd [rsp+64], xmm0                ; ms per build
+    mov eax, [rsp+0]
+    imul eax, eax, 12
+    mov r10d, eax
+    lea rdi, [st_cus1]
+    mov esi, [cus_sizes+r10]
+    mov edx, [cus_sizes+r10+4]
+    mov ecx, [cus_sizes+r10+8]
+    mov r8d, [rsp+4]
+    lea r9, [st_lays]
+    mov r8, [r9+r8*8]
+    xor eax, eax
+    call printf
+    lea rdi, [st_cus2]
+    mov esi, [rsp+12]
+    mov edx, CUS_SEEDS
+    mov ecx, [rsp+16]
+    mov r8d, [cfg_floors]
+    mov r9d, [rsp+20]
+    xor eax, eax
+    call printf
+    lea rdi, [st_cus3]
+    mov esi, [rsp+24]
+    mov edx, [rsp+28]
+    mov ecx, [rsp+32]
+    mov r8d, [rsp+36]
+    movsd xmm0, [rsp+64]
+    mov eax, 1
+    call printf
+    inc dword [rsp+4]
+    jmp .layout
+.size_next:
+    inc dword [rsp+0]
+    jmp .size
+.sizes_done:
+    mov dword [no_gl_build], 0
+    mov dword [built_mode], -1          ; (make it build the lists this time)
+    ; how fast is the biggest one to draw?
+    mov dword [cfg_floors], 10
+    mov dword [cfg_width], 89
+    mov dword [cfg_depth], 47
+    mov dword [cfg_layout], 2
+    mov dword [seed_val], 7
+    call prepare_world
+    call new_game
+    mov dword [t_stun], __float32__(10000.0)
+    mov ebx, 20
+.warm:
+    movss xmm0, [c_dt_shot]
+    call present
+    dec ebx
+    jnz .warm
+    call glFinish
+    call SDL_GetPerformanceCounter
+    mov [rsp+64], rax
+    mov ebx, 60
+.bench:
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call player_update
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call world_lights_update
+    movss xmm0, [c_dt_shot]
+    call present
+    dec ebx
+    jnz .bench
+    call glFinish
+    call SDL_GetPerformanceCounter
+    sub rax, [rsp+64]
+    cvtsi2sd xmm1, rax
+    cvtsi2sd xmm2, qword [perf_freq]
+    divsd xmm1, xmm2
+    mov rax, __float64__(60.0)
+    movq xmm0, rax
+    divsd xmm0, xmm1
+    lea rdi, [st_cus_bench]
+    mov eax, 1
+    call printf
+    ; back as it was
+    mov eax, [rsp+48]
+    mov [cfg_building], eax
+    mov eax, [rsp+52]
+    mov [cfg_layout], eax
+    mov eax, [rsp+56]
+    mov [seed_val], eax
+    mov dword [cfg_floors], 5
+    mov dword [cfg_width], 71
+    mov dword [cfg_depth], 43
+    call prepare_world                  ; (and back to the building it was)
+    call new_game
+    EPILOGUE
+
 ; start_node -> eax = the node you start on in this building
 start_node:
     sub rsp, 8
@@ -5643,6 +6175,12 @@ selftest:
     call feeder_tests
     call grod_tests
     call balance_tests
+    lea rdi, [env_nocus]
+    call getenv
+    test rax, rax
+    jnz .skip_cus
+    call custom_tests
+.skip_cus:
     mov dword [cfg_building], BLD_ORIGINAL
     call prepare_world                  ; ...then the original map's tests
     call new_game

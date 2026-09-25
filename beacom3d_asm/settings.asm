@@ -25,7 +25,7 @@ global cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_l
 global cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
 global cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 global cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
-global cfg_hookshot, cfg_dew, cfg_feeders, cfg_nemesis
+global cfg_hookshot, cfg_dew, cfg_feeders, cfg_nemesis, cfg_floors, cfg_width, cfg_depth
 
 extern invert_y, show_fps, shadows_on, shadows_ok, render_scale
 extern draw_text, draw_rect, font_hud, font_small, font_big, tt_w, tt_h, glDeleteTextures
@@ -75,6 +75,9 @@ cfg_hookshot    dd 0            ; (same)
 cfg_dew         dd 4            ; cans of Diet Mountain Dew
 cfg_feeders     dd 2            ; bottom feeders
 cfg_nemesis     dd 1            ; T learns how you escape him (per night)
+cfg_floors      dd 5            ; a custom-size building: storeys...
+cfg_width       dd 71           ; ...and cells across and deep
+cfg_depth       dd 43
 cfg_stamina     dd 100
 cfg_battery     dd 100
 cfg_walk        dd 100
@@ -94,6 +97,9 @@ cfg_grain       dd 50           ; film grain over the whole picture
 ; ---- labels -----------------------------------------------------------------
 h_run       db "CUSTOM RUN   (rows marked * apply when you pick RESTART above)",0
 l_building  db "Building *",0
+l_floors    db "Custom size: storeys *",0
+l_width     db "Custom size: width (cells) *",0
+l_depth     db "Custom size: depth (cells) *",0
 l_layout    db "Generated layout *",0
 l_t_speed   db "T speed",0
 l_t_hear    db "T hearing",0
@@ -166,6 +172,9 @@ a_quit      db "> QUIT TO THE TERMINAL",0
 
 ; ---- keys in the settings file ------------------------------------------------
 k_building  db "building",0
+k_floors    db "floors",0
+k_width     db "width",0
+k_depth     db "depth",0
 k_layout    db "layout",0
 k_t_speed   db "t_speed",0
 k_t_hear    db "t_hearing",0
@@ -207,6 +216,7 @@ s_on        db "ON",0
 s_classic   db "THE REAL BEACOM (researched)",0
 s_generated db "GENERATED FROM THE SEED",0
 s_original  db "THE ORIGINAL GAME MAP",0
+s_custom    db "GENERATED: ANY SIZE (storeys/width/depth below)",0
 s_maze      db "MAZE (tight, twisty)",0
 s_classic2  db "CLASSIC",0
 s_open      db "OPEN (sightlines, cover)",0
@@ -222,7 +232,7 @@ s_third     db "1/3 (fastest)",0
 align 8
 n_offon     dq s_off, s_on
 n_ach       dq s_locked, s_unlocked
-n_building  dq s_classic, s_generated, s_original
+n_building  dq s_classic, s_generated, s_original, s_custom
 n_layout    dq s_maze, s_classic2, s_open
 n_map       dq s_hidden, s_start_w
 n_portal    dq s_hidden, s_start_it, s_none
@@ -235,7 +245,10 @@ rows:
     ROW a_newseed,   0,           0,              T_ACTION, 2, 0, 0, 0
     ROW a_quit,      0,           0,              T_ACTION, 3, 0, 0, 0
     ROW h_run,       0,           0,              T_HEADER, 0, 0, 0, 0
-    ROW l_building,  k_building,  cfg_building,   T_CHOICE, 0, 2, 1, n_building
+    ROW l_building,  k_building,  cfg_building,   T_CHOICE, 0, 3, 1, n_building
+    ROW l_floors,    k_floors,    cfg_floors,     T_INT,    2, 10, 1, 0
+    ROW l_width,     k_width,     cfg_width,      T_INT,    20, 89, 3, 0
+    ROW l_depth,     k_depth,     cfg_depth,      T_INT,    16, 47, 3, 0
     ROW l_layout,    k_layout,    cfg_layout,     T_CHOICE, 0, 2, 1, n_layout
     ROW l_t_speed,   k_t_speed,   cfg_t_speed,    T_PCT,   40, 250, 10, 0
     ROW l_t_hear,    k_t_hear,    cfg_t_hear,     T_PCT,   25, 300, 25, 0

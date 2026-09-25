@@ -40,9 +40,16 @@ section .rodata
 %endif
 
 ; ---- map geometry -----------------------------------------------------------
-%define MAP_W       59
-%define MAP_H       31
-%define NF          3
+; the grid is the biggest building there can be (a custom generated one: up
+; to 10 storeys of 89 x 47 cells); smaller buildings use the top-left corner
+; of it and the rest is solid rock. w_nf / w_w / w_h (world.asm) say how big
+; this one is.
+%define MAP_W       89
+%define MAP_H       47
+%define NF          10
+%define FILE_W      59                        ; the hand-made maps (maps/*/*.txt)
+%define FILE_H      31
+%define FILE_NF     3
 %define FLOOR_CELLS (MAP_W*MAP_H)          ; 1829
 %define NCELLS      (NF*MAP_W*MAP_H)       ; 5487 -- the grid part of the nav graph
 
@@ -57,17 +64,19 @@ section .rodata
 %define LK_WALK     0
 %define LK_DROP     1
 %define LK_LADDER   2
-%define MAX_PLAT    1024                   ; ramps, bridges, desks, crates
+%define MAX_PLAT    2048                   ; ramps, bridges, desks, crates
 ; buildings (the Building setting) and whose data they use
 %define BLD_REAL      0                    ; the Beacom Institute of Technology
 %define BLD_GENERATED 1                    ; built from the seed
 %define BLD_ORIGINAL  2                    ; the original game's map
+%define BLD_CUSTOM    3                    ; generated from the seed, any size
 %define SET_ORIGINAL  0
 %define SET_REAL      1
+%define SET_CUSTOM    2                    ; no hand-placed platforms, ziplines or signs
 %define PS_CONCRETE 0                      ; platform styles: how it's drawn
 %define PS_CRATE    1
 %define PS_HIDDEN   2                      ; (desks: render.asm draws them itself)
-%define VIS_FLOORS  (NF-1)                 ; storeys drawn above/below yours (all of them)
+%define VIS_FLOORS  3                      ; storeys drawn above/below yours
 
 ; character classes (bit flags in char_class[], see world.asm)
 %define CF_WALL   1     ; # H C G L N          solid, full-height wall
@@ -334,6 +343,7 @@ extern nav_x, nav_y, nav_z, nav_count, link_head, link_next, link_to, link_type,
 extern node_walkable, line_of_sight_3d, sound_occlusion, dist3
 extern plat_count, plat_x0, plat_x1, plat_z0, plat_z1, plat_ya, plat_yb, plat_axis, plat_thick
 extern plat_style, real_grid, cur_set, start_f, start_x, start_y, start_yaw, slab_cross
+extern w_nf, w_w, w_h, w_w1, w_w2, w_w3, w_w7, w_h1, w_h2, w_h3, w_nf1
 %endif
 
 %ifndef MODULE_AI
@@ -363,6 +373,7 @@ extern lightning, save_screenshot
 %ifndef MODULE_HUD
 extern hud_init, hud_draw, hud_message, hud_clear_messages, map_visible, explored
 extern hud_prompt, hud_vignette, hud_safe_tint, hud_flash, hud_update_explored, hud_paused
+extern floor_name
 %endif
 
 %ifndef MODULE_AUDIO
@@ -393,7 +404,7 @@ extern cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_l
 extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
 extern cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
-extern cfg_hookshot, cfg_dew, cfg_feeders, cfg_nemesis
+extern cfg_hookshot, cfg_dew, cfg_feeders, cfg_nemesis, cfg_floors, cfg_width, cfg_depth
 %endif
 
 ; PCT xmm, cfg_var -- xmm = cfg_var / 100 (clobbers nothing else)

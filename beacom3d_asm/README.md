@@ -167,7 +167,7 @@ the smallest building; ~50 in generated ones), so no seed spawn-camps you.
 
 Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
 
-* **Custom run** — building (**the real Beacom** researched from DSU's own descriptions, **generated from the seed**, or the original game map),
+* **Custom run** — building (**the real Beacom** researched from DSU's own descriptions, **generated from the seed**, **generated at any size** -- 2 to 10 storeys, up to 89 x 47 cells each -- or the original game map),
   generated layout (**maze / classic / open**),
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
@@ -205,6 +205,42 @@ gyms, offices, a safe room per floor, Y's cage — so every seed is a new
 night. The same seed always gives the same building on every platform. The
 atrium, the 2nd-floor server room and B's library are kept as landmarks,
 and a flood fill guarantees every spot is reachable from the start.
+
+### Any size, seeded, and proven completable
+
+Set *Building* to **GENERATED: ANY SIZE** and pick *Custom size: storeys*
+(2-10), *width* (20-89 cells) and *depth* (16-47 cells). A cell is 2 m, so
+the biggest building is 178 m x 94 m and ten storeys tall. Like a Minecraft
+world, the seed decides everything, and the same seed and size always build
+the same building on every platform. It's generated around a skeleton that
+scales:
+
+* 2-wide corridors run the length of every storey every 10 cells, joined by
+  north-south connectors (a different set on each storey)
+* walled stairwells between every pair of storeys (2, plus one per 1500
+  cells of floor)
+* **atriums**: voids through 2-4 storeys with a balcony round the edge and
+  now and then a bridge across. Look down, or jump
+* classrooms, server labs, gyms, offices, a safe room on every storey, B's
+  library on the ground floor, Y's cage in the basement, in the maze,
+  classic or open layout
+
+**Every run is proven completable before it starts.** Once the building and
+the items are in place, a path-finder that moves as you do (walking, stairs,
+ramps, drops, ladders, through safe rooms; no parkour, portals or hookshot,
+so the proof never relies on a trick) checks that every packet capture can
+be reached from where you start, and that from each one there's a way on to
+B. The run opens with *"Seed N: PROVEN COMPLETABLE"*. If a generated seed
+ever failed the proof, the game would move on to the next seed that passes
+and tell you so. In testing, 360 buildings (40 seeds each of 2, 5 and 10
+storeys in all three layouts) were all proven on their first seed, with
+every storey reachable and no two alike. The three captures are spread from
+the bottom storey to the top, so a tall building is a long night.
+
+The map (M) scales to the building, [ and ] page through all its storeys,
+and only the storeys within 3 of yours are drawn. (A ten-storey 89 x 47
+building currently draws at about 48 fps on the test laptop, against 60 for
+the real Beacom.)
 
 ### The real Beacom
 
