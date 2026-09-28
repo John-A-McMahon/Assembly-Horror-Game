@@ -132,6 +132,8 @@ section .rodata
 %define DR_PARK   2          ; ...hovering there
 %define DR_BACK   3          ; ...flying home
 %define DR_DOWN   4          ; ...swatted down by T: rebooting on the floor
+%define NPROMPTS  24         ; hud.asm's interaction prompts
+%define PR_PART   14         ; ...from here: each module, firing type, frame
 %define PART_BASE 0x100      ; an IT_MODULE item whose ITEM_CHARGES has this bit
                              ; is a gadget BASE (the frame: ITEM_CHARGES & 0xFF)
 %define GM_PORTAL 0          ; bends space
@@ -484,7 +486,7 @@ extern grod_beam, beam_x, beam_y, beam_z
 %ifndef MODULE_GADGET
 extern gadget_reset, gadget_new_run, gadget_update, gadget_fire, gadget_take, gadget_key
 extern gadget_wheel, gadget_hook_attach, gadget_draw, gadget_draw_glow, gadget_hud
-extern gadget_part_tex, gadget_init, gadget_load, gadget_select, gadget_give_all
+extern gadget_part_model, gadget_init, gadget_load, gadget_select, gadget_give_all
 extern gadget_draw_smoke, smoke_blocks, gadget_line, gadget_smoke, gadget_count_known
 extern gd_have, gd_base, gd_mod, gd_fire, gd_caps, gd_bag_mod, gd_bag_fire, gd_known
 extern gd_bench, gd_fire_held, gd_roll_n, gd_roll_kind, gd_roll_id, gd_view, gd_tip_col

@@ -61,7 +61,7 @@ extern glPushMatrix, glPopMatrix, glMultMatrixf, glDeleteLists, glCopyTexSubImag
 extern glLoadMatrixf, glColorMask, glPolygonOffset, glDrawBuffer, glReadBuffer
 extern portal_views, portal_draw_rims, draw_viewmodel, media_tex
 global render_rebuild_world, set_material, set_emit, model_end, u_model, u_fpos, u_fdir, u_flash, u_son
-global cbox, emit_tube
+global cbox, emit_tube, emit_cyl
 extern phys_nb, px, py, pz, body_type, body_p0, body_active, rag_active, prop_tex
 %define GL_RENDERER 0x1F01
 %define SHADOW_SIZE 1024
@@ -3983,10 +3983,12 @@ draw_items:
     call set_emit
     cmp dword [r12+ITEM_KIND], IT_DEW
     je .dew_can
-    mov edi, [r12+ITEM_KIND]            ; (a gadget part shows which)
-    mov esi, [r12+ITEM_CHARGES]
-    call gadget_part_tex
-    mov edi, eax
+    cmp dword [r12+ITEM_KIND], IT_MODULE
+    je .part
+    cmp dword [r12+ITEM_KIND], IT_FIRING
+    je .part
+    mov eax, [r12+ITEM_KIND]
+    mov edi, [label_tex+rax*4]
     call bind
     mov edi, GL_QUADS
     call glBegin
@@ -4008,6 +4010,20 @@ draw_items:
     mov dword [v_rep], __float32__(1.0)
     mov edi, F_ALL
     call emit_box
+    call glEnd
+    call model_end
+    xorps xmm0, xmm0
+    call set_emit
+    jmp .n
+.part:
+    ; a gadget part: a little model of the thing (gadget.asm)
+    mov edi, [white_tex]
+    call bind
+    mov edi, GL_QUADS
+    call glBegin
+    mov edi, [r12+ITEM_KIND]
+    mov esi, [r12+ITEM_CHARGES]
+    call gadget_part_model
     call glEnd
     call model_end
     xorps xmm0, xmm0

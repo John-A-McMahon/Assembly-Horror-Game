@@ -356,7 +356,10 @@ too.
 modules and a few firing types in the building (the pause menu sets how
 many of each: 1-4, default 3), so one night you're a smoke-and-portals
 ghost and the next a zipline-and-grappler acrobat. Every night also hides a
-**drone frame** somewhere. **You carry one frame, one module and one firing
+**drone frame** somewhere. Parts lie around as what they are -- a portal
+ring, a brass rod, a spool of red line, a smoke canister, a laser emitter,
+an orb, a grappling hook, a claw, a gun frame, a folded drone -- and the
+prompt names them ("[E] take the SMOKE module"). **You carry one frame, one module and one firing
 type at a time.** Pick up a part and it snaps straight in;
 the one it replaces is left lying where the new one was. So every part you
 find is a choice -- keep the portal module, or trade it for smoke? the gun,

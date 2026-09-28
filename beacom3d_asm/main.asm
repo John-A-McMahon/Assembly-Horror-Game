@@ -23,7 +23,7 @@ global have_grod, tyler_armed, tyler_x, tyler_y, tyler_z, grod_beam, beam_x, bea
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
-extern p_on_ground, snd_can, snd_can_t, p_vy, feeder_put, por_on, portal_reset, por_x
+extern p_on_ground, snd_can, snd_can_t, p_vy, feeder_put, por_on, portal_reset, por_x, prompt_h
 extern gen_stairs, gen_atriums, nav_player, nav_t_mask
 extern build_deauth, director_reset, t_build, bld_on, t_goal, dir_calm, dir_relax, t_camp
 extern t_por_on, build_break, enemy_portal_follow, bld_ay, bld_by, bld_ax, bld_bx, bld_az, bld_bz
@@ -202,9 +202,18 @@ st_d_tow    db "[selftest] TOW DRONE (drone+rod+hook), looking the other way: ha
 st_d_blink  db "[selftest] BLINK BEACON (drone+portal+hook): drone upstairs, out of sight: a TOW DRONE moved you %.1f m (expect 0.0); the blink put you on storey %d (expect 2), drone docked=%d (expect 1)",10,0
 st_d_fetch  db "[selftest] FETCH DRONE (drone+rod+grabber): a can 4 m off your line of fire: the drone got it=%d, drank=%d (expect 1 1); a gun, same aim, got it=%d (expect 0)",10,0
 st_d_swat   db "[selftest] T swats a drone in his reach: down=%d (expect 1), no shots while it reboots: portal=%d (expect 0), home again after 9 s=%d (expect 1)",10,0
+st_d_prompt db "[selftest] pickup prompts: all %d the same height=%d (expect 1: none overwritten); a SMOKE module says prompt %d (expect 17), the DRONE frame %d (expect 23), a HOOK %d (expect 20)",10,0
 st_d_frame  db "[selftest] frames swap like parts: holding the DRONE=%d (expect 1), the GUN frame lies where it was=%d (expect 1), hands empty=%d (expect 1)",10,0
+align 4
+shot_parts  dd IT_MODULE, GM_PORTAL, IT_MODULE, GM_ROD, IT_MODULE, GM_LINE, IT_MODULE, GM_SMOKE
+            dd IT_FIRING, GF_LASER, IT_FIRING, GF_ORB, IT_FIRING, GF_HOOK, IT_FIRING, GF_GRAB
+            dd IT_MODULE, PART_BASE|GB_GUN, IT_MODULE, PART_BASE|GB_DRONE
+shot_part_at dd 2.0,-0.9,  2.0,-0.3,  2.0,0.3,  2.0,0.9
+            dd 2.9,-0.9,  2.9,-0.3,  2.9,0.3,  2.9,0.9
+            dd 2.9,-1.6,  2.9,1.6
 sh_g_drone  db "shots/53_drone_out.bmp",0
 sh_g_drone2 db "shots/54_drone_home.bmp",0
+sh_g_prompt db "shots/55_pickup_prompt.bmp",0
 st_g_inhand db "[selftest] gadget parts all in hand: modules %d, firing types %d (expect 15 15), holding combination %d (expect 6 = HOOKSHOT)",10,0
 st_caught   db "[selftest] T reached the player after %.1f simulated seconds -- PASS",10,0
 st_notcaught db "[selftest] T did not reach the player -- FAIL",10,0
@@ -2537,6 +2546,22 @@ update_prompt:
     jne .done
     mov ecx, [rax+ITEM_KIND]
     mov [hud_prompt], ecx               ; pickups: the prompt index is the kind
+    mov edx, [rax+ITEM_CHARGES]         ; ...but a gadget part names itself
+    cmp ecx, IT_FIRING
+    je .firing
+    cmp ecx, IT_MODULE
+    jne .done
+    test edx, PART_BASE
+    jz .module
+    and edx, PART_BASE-1
+    add edx, NMODS+NFIRES
+.module:
+    add edx, PR_PART
+    mov [hud_prompt], edx
+    EPILOGUE
+.firing:
+    add edx, PR_PART+NMODS
+    mov [hud_prompt], edx
     EPILOGUE
 .b:
     cmp dword [p_mode], 0
@@ -3547,24 +3572,28 @@ shot_mode_run:
     lea rdi, [sh_g_bench]
     call shot_now
     mov dword [gd_bench], 0
-    ; parts lying on the floor ahead
-    mov edi, IT_MODULE
-    mov esi, NODE(1,28,15)
-    call add_item
-    call gt_last_item
-    mov dword [rax+ITEM_CHARGES], GM_SMOKE
-    mov r12, rax
-    mov edi, IT_FIRING
-    mov esi, NODE(1,28,17)
-    call add_item
-    call gt_last_item
-    mov dword [rax+ITEM_CHARGES], GF_ORB
-    mov r13, rax
-    mov dword [p_pitch], __float32__(-0.35)
+    ; every part, lying on the floor ahead: modules, then firing types (and
+    ; the two frames at the ends of the back row)
+    mov r12d, [item_count]
+    xor ebx, ebx
+.shot_part:
+    mov edi, [shot_parts+rbx*8]
+    mov esi, [shot_parts+rbx*8+4]
+    movss xmm0, [shot_part_at+rbx*8]
+    movss xmm1, [shot_part_at+rbx*8+4]
+    call shot_part
+    inc ebx
+    cmp ebx, 10
+    jl .shot_part
+    mov dword [p_pitch], __float32__(-0.3)
     lea rdi, [sh_g_parts]
     call shot_now
-    mov dword [r12+ITEM_ACTIVE], 0
-    mov dword [r13+ITEM_ACTIVE], 0
+.unshot_part:
+    imul eax, r12d, ITEM_SIZE
+    mov dword [items+rax+ITEM_ACTIVE], 0
+    inc r12d
+    cmp r12d, [item_count]
+    jl .unshot_part
     ; a smoke grenade, lobbed and blooming
     call hud_clear_messages
     mov edi, 1
@@ -3699,6 +3728,18 @@ shot_mode_run:
     call hud_clear_messages
     lea rdi, [sh_g_drone2]
     call shot_now
+    ; a packet capture at your feet: its prompt, full width
+    mov edi, IT_KEY
+    FLD xmm0, 0.9
+    xorps xmm1, xmm1
+    call shot_part
+    call hud_clear_messages
+    mov dword [p_pitch], __float32__(-1.1)
+    call update_prompt
+    lea rdi, [sh_g_prompt]
+    call shot_now
+    call gt_last_item
+    mov dword [rax+ITEM_ACTIVE], 0
     mov dword [gd_base], GB_GUN
     mov dword [dr_state], DR_HOME
     mov dword [gd_view], 0
@@ -4620,6 +4661,36 @@ gt_t_sees:
     call line_of_sight_3d
     add rsp, 8
     ret
+
+; shot_part(edi = kind, esi = which, xmm0 = metres ahead (+x), xmm1 = to the
+; side) -- (screenshots) a gadget part lying there
+shot_part:
+    PROLOGUE 16
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    mov [rsp+8], esi
+    mov r13d, edi
+    movss xmm0, [p_x]
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    call node_at_pos
+    mov edi, r13d
+    mov esi, eax
+    call add_item
+    call gt_last_item
+    mov r12, rax                        ; (FLD below goes through eax)
+    mov ecx, [rsp+8]
+    mov [r12+ITEM_CHARGES], ecx
+    movss xmm0, [p_x]
+    addss xmm0, [rsp+0]
+    movss [r12+ITEM_X], xmm0
+    movss xmm0, [p_z]
+    addss xmm0, [rsp+4]
+    movss [r12+ITEM_Z], xmm0
+    FLD xmm0, -0.5
+    addss xmm0, [p_y]
+    movss [r12+ITEM_Y], xmm0            ; (lower: they bob at eye level otherwise)
+    EPILOGUE
 
 ; gt_last_item -> rax = the item add_item just made
 gt_last_item:
@@ -5711,6 +5782,47 @@ drone_tests:
     xor eax, eax
     call printf
     mov dword [r13+ITEM_ACTIVE], 0
+    ; ---- the prompt names the part (and no prompt's size was overwritten)
+    xor r12d, r12d
+    xor ebx, ebx
+.ph:
+    mov eax, [prompt_h+rbx*4]
+    cmp eax, [prompt_h]
+    jne .ph_n
+    inc r12d
+.ph_n:
+    inc ebx
+    cmp ebx, NPROMPTS
+    jl .ph
+    xor ebx, ebx
+    cmp r12d, NPROMPTS
+    sete bl
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, IT_MODULE
+    mov esi, GM_SMOKE
+    call dt_prompt
+    mov r12d, eax
+    mov edi, IT_MODULE
+    mov esi, PART_BASE|GB_DRONE
+    call dt_prompt
+    mov r13d, eax
+    mov edi, IT_FIRING
+    mov esi, GF_HOOK
+    call dt_prompt
+    mov r8d, eax
+    lea rdi, [st_d_prompt]
+    mov esi, NPROMPTS
+    mov edx, ebx
+    mov ecx, r12d
+    mov r9d, r13d
+    xchg r8d, r9d
+    xor eax, eax
+    call printf
     ; tidy up
     mov dword [gd_base], GB_GUN
     mov dword [dr_state], DR_HOME
@@ -5722,6 +5834,27 @@ drone_tests:
     call memset
     mov dword [gd_known], 0
     call hud_clear_messages
+    EPILOGUE
+
+; dt_prompt(edi = kind, esi = which) -> eax = the prompt a part at your feet
+; gets (the part is gone again afterwards)
+dt_prompt:
+    PROLOGUE 16
+    mov ebx, esi
+    mov r12d, edi
+    movss xmm0, [p_x]
+    movss xmm1, [p_y]
+    movss xmm2, [p_z]
+    call node_at_pos
+    mov esi, eax
+    mov edi, r12d
+    call add_item
+    call gt_last_item
+    mov r13, rax
+    mov [r13+ITEM_CHARGES], ebx
+    call update_prompt
+    mov dword [r13+ITEM_ACTIVE], 0
+    mov eax, [hud_prompt]
     EPILOGUE
 
 ; gt_count_keys -> eax = packet captures lying around

@@ -13,7 +13,7 @@ global hud_init, hud_draw, hud_message, hud_clear_messages, map_visible, explore
 global draw_text, draw_rect
 global floor_name
 global hud_prompt, hud_vignette, hud_safe_tint, hud_flash, hud_update_explored, hud_paused, hud_fps
-global map_floor
+global map_floor, prompt_h
 extern have_map, have_compass, items, item_count, t_x, t_y, t_z, b_pos_x, b_pos_z, b_floor
 extern floor_of_height
 
@@ -64,6 +64,16 @@ s_pr10      db "[E] grab the zipline",0
 s_pr11      db "[W] climb the ladder",0
 s_pr12      db "[E] give Tyler the packet weapon",0
 s_pr13      db "TYLER, THE DAUTH CANNON OF GROD -- guarding this hall",0
+s_pr14      db "[E] take the PORTAL module",0
+s_pr15      db "[E] take the ROD module",0
+s_pr16      db "[E] take the LINE module",0
+s_pr17      db "[E] take the SMOKE module",0
+s_pr18      db "[E] take the LASER firing type",0
+s_pr19      db "[E] take the ORB firing type",0
+s_pr20      db "[E] take the HOOK firing type",0
+s_pr21      db "[E] take the GRABBER firing type",0
+s_pr22      db "[E] take the GUN frame",0
+s_pr23      db "[E] take the DRONE frame",0
 s_grod      db "CARRYING: THE PACKET OF GROD (you are not worthy -- find Tyler)",0
 s_dew       db "DIET DEW: UNLIMITED STAMINA",0
 s_mapfull   db "MAP  --  [ ] change floor",0
@@ -83,8 +93,8 @@ floor_names dq s_floor0, s_floor1, s_floor2, s_floor3, s_floor4, s_floor5, s_flo
 lc_floors   dq lc_floor0, lc_floor1, lc_floor2, lc_floor3, lc_floor4, lc_floor5
             dq lc_floor6, lc_floor7, lc_floor8, lc_floor9
 prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8, s_pr9, s_pr10
-            dq s_pr11, s_pr12, s_pr13
-%define NPROMPTS 14
+            dq s_pr11, s_pr12, s_pr13, s_pr14, s_pr15, s_pr16, s_pr17, s_pr18
+            dq s_pr19, s_pr20, s_pr21, s_pr22, s_pr23
 
 c_msg_life   dd 7.5
 c_lore_life  dd 15.5
@@ -99,9 +109,9 @@ section .bss
 floor_tex   resd NF
 floor_w     resd NF
 floor_h     resd NF
-prompt_tex  resd 10
-prompt_w    resd 10
-prompt_h    resd 10
+prompt_tex  resd NPROMPTS
+prompt_w    resd NPROMPTS
+prompt_h    resd NPROMPTS
 map_floor   resd 1                  ; which storey the map is showing
 dir_tex     resd 4                  ; N E S W for the compass strip
 dir_w       resd 4
