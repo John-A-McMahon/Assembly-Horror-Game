@@ -110,14 +110,51 @@ section .rodata
 %define ACH_DEW 20
 %define ACH_OUTFED 21
 %define ACH_WORTHY 22
-%define NACH 23
+%define ACH_TINKER 23
+%define ACH_CONVEYOR 24
+%define NACH 25
 
 ; ---- the special item you carry (one at a time) ------------------------------
 %define SP_NONE   0
 %define SP_DEAUTH 1
-%define SP_PORTAL 2
-%define SP_HOOK   3
 %define MAX_DEAUTHS 3
+
+; ---- gadgets (gadget.asm): Base + Module + Firing Type --------------------------
+; The BASE is what carries it, the MODULE is the phenomenon it controls, the
+; FIRING TYPE is how the effect is delivered (and who it acts on). Adding a
+; module = one row of handlers in gadget.asm; it then works with every firing
+; type. Part ids: bases 0.., modules 0.., firing types 0.. (their own lists).
+%define GB_GUN    0          ; fires from your hand
+%define GB_DRONE  1          ; fires from wherever you send it
+%define NBASES    2
+%define DR_HOME   0          ; the drone: at your shoulder (it fires like a gun)
+%define DR_OUT    1          ; ...flying out to where you sent it
+%define DR_PARK   2          ; ...hovering there
+%define DR_BACK   3          ; ...flying home
+%define DR_DOWN   4          ; ...swatted down by T: rebooting on the floor
+%define PART_BASE 0x100      ; an IT_MODULE item whose ITEM_CHARGES has this bit
+                             ; is a gadget BASE (the frame: ITEM_CHARGES & 0xFF)
+%define GM_PORTAL 0          ; bends space
+%define GM_ROD    1          ; a rigid rod: rams, props, hauls
+%define GM_LINE   2          ; a line that stays where it's strung
+%define GM_SMOKE  3          ; smoke nothing sees through
+%define NMODS     4
+%define GF_LASER  0          ; straight and instant
+%define GF_ORB    1          ; lobbed, bounces, then goes off
+%define GF_HOOK   2          ; bites the world and moves YOU
+%define GF_GRAB   3          ; latches on to things and moves THEM
+%define NFIRES    4
+%define NCOMBOS   (NBASES*NMODS*NFIRES)
+; capabilities of the assembled gadget (gd_caps) -- what the rest of the
+; game asks about instead of "is it the portal gun"
+%define CAP_PORTAL   1       ; makes portals / moves you through space
+%define CAP_GRAPPLE  2       ; pulls you to geometry
+%define CAP_REMOTE   4       ; moves things at a distance
+%define CAP_LINE     8       ; strings lines you can travel along
+%define CAP_SMOKE    16      ; blinds whoever's looking
+%define CAP_WINCH    32      ; powers you along any zipline (uphill too)
+%define CAP_TELEPORT 64      ; puts you somewhere else instantly
+%define PS_GADGET 3          ; plat_style of a peg you fired (drawn by gadget.asm)
 
 ; ---- T's states --------------------------------------------------------------
 %define T_WANDER      0
@@ -140,8 +177,8 @@ section .rodata
 %define IT_WEAPON  1        ; deauth packet
 %define IT_MAP     2        ; Zelda-style dungeon map: reveals every floor
 %define IT_COMPASS 3        ; ...and compass: shows captures, B and T on the map
-%define IT_PORTAL  4        ; portal gun
-%define IT_HOOKSHOT 5       ; the hookshot
+%define IT_MODULE  4        ; a gadget module (ITEM_CHARGES = which)
+%define IT_FIRING  5        ; a gadget firing type (ITEM_CHARGES = which)
 %define IT_DEW     6        ; a can of Diet Mountain Dew (you or T can drink it)
 %define IT_GROD    7        ; the ancient packet weapon (only Tyler is worthy)
 %define IT_TYLER   8        ; "HI I AM TYLER"
@@ -395,16 +432,17 @@ extern rag_active, rag_time
 extern traverse_reset, traverse_update, traverse_try_grab, ladder_dir
 extern p_mode, trav_prompt, trav_roll, trav_shake, trav_fov, climb_phase
 extern zip_count, zip_ax, zip_ay, zip_az, zip_bx, zip_by, zip_bz, zip_active, zip_t
+extern zip_static, zip_grav, zip_speed
 %endif
 
 %ifndef MODULE_SETTINGS
 extern settings_load, settings_save, settings_apply, menu_key, menu_mouse, menu_click
 extern menu_wheel, menu_draw, menu_reset
 extern cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_ladders
-extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
+extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_stamina
 extern cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
-extern cfg_hookshot, cfg_dew, cfg_feeders, cfg_nemesis, cfg_floors, cfg_width, cfg_depth
+extern cfg_gparts, cfg_gcount, cfg_dew, cfg_feeders, cfg_nemesis, cfg_floors, cfg_width, cfg_depth
 %endif
 
 ; PCT xmm, cfg_var -- xmm = cfg_var / 100 (clobbers nothing else)
@@ -419,22 +457,38 @@ extern ach_flag, ach_persist, run_deauths, run_spotted, run_warned, run_moves
 %endif
 
 %ifndef MODULE_HOOK
-extern hookshot_fire, hookshot_update, hookshot_reset
-extern hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz
+extern hookshot_fire, hookshot_update, hookshot_reset, solid_point
+extern hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz, hk_mod
 %endif
 
 %ifndef MODULE_NEMESIS
 extern nemesis_note, nemesis_tick, nemesis_new_night, nemesis_forget, nemesis_apply
 extern nm_build_time, nm_stun, nm_portal_any, nm_camp_time, nm_hook_hear, nm_cnt
+extern nm_smoke_see
 %endif
 
 %ifndef MODULE_FEED
-extern feeders_reset, feeders_update, feeders_deauth
-extern fd_count, fd_x, fd_y, fd_z, fd_yaw, fd_anim, fd_carry, fd_state
+extern feeders_reset, feeders_update, feeders_deauth, feeder_put, feeder_stun
+extern fd_count, fd_x, fd_y, fd_z, fd_yaw, fd_anim, fd_carry, fd_state, fd_node
 %endif
 
 %ifndef MODULE_MAIN
 extern items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h
-extern special, have_hookshot, have_grod, tyler_armed, tyler_x, tyler_y, tyler_z
+extern special, have_grod, tyler_armed, tyler_x, tyler_y, tyler_z, take_item
 extern grod_beam, beam_x, beam_y, beam_z
+%endif
+
+; ---- gadget.asm ------------------------------------------------------------------
+%define NGZIP 3              ; ziplines you can string (slots after the building's)
+%define NZIP_MAX 8           ; zip_* arrays: the building's (<= 4) + yours
+%ifndef MODULE_GADGET
+extern gadget_reset, gadget_new_run, gadget_update, gadget_fire, gadget_take, gadget_key
+extern gadget_wheel, gadget_hook_attach, gadget_draw, gadget_draw_glow, gadget_hud
+extern gadget_part_tex, gadget_init, gadget_load, gadget_select, gadget_give_all
+extern gadget_draw_smoke, smoke_blocks, gadget_line, gadget_smoke, gadget_count_known
+extern gd_have, gd_base, gd_mod, gd_fire, gd_caps, gd_bag_mod, gd_bag_fire, gd_known
+extern gd_bench, gd_fire_held, gd_roll_n, gd_roll_kind, gd_roll_id, gd_view, gd_tip_col
+extern gd_cool, gd_orb_on, gd_orb_x, gd_orb_y, gd_orb_z, gd_tt_state, gd_charge
+extern sm_count, ln_type, gd_last_combo, ln_ax, ln_ay, ln_az, ln_bx, ln_by, ln_bz
+extern gadget_transmute, fd_line, peg_n, rg_hits, dr_state, dr_x, dr_y, dr_z, gd_bag_base
 %endif

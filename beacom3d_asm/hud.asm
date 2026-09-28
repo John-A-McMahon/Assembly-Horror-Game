@@ -54,8 +54,8 @@ s_pr0       db "[E] take the packet capture",0
 s_pr1       db "[E] take the deauth packet",0
 s_pr2       db "[E] take the MAP",0
 s_pr3       db "[E] take the COMPASS",0
-s_pr4       db "[E] take the PORTAL GUN",0
-s_pr5       db "[E] take the HOOKSHOT",0
+s_pr4       db "[E] take the gadget MODULE",0
+s_pr5       db "[E] take the gadget FIRING TYPE",0
 s_pr6       db "[E] drink the DIET MOUNTAIN DEW",0
 s_pr7       db "[E] take the ancient PACKET WEAPON",0
 s_pr8       db "[E] talk to B",0
@@ -73,11 +73,9 @@ s_paused2   db "T is waiting.   ESC or click to resume   (Q in the terminal quit
 s_map       db "explored map",0
 s_noise     db "NOISE  (| = T hears)",0
 s_deauth_fmt db "ITEM: DEAUTH x%d",0
-s_item_portal db "ITEM: PORTAL GUN",0
-s_item_hook db "ITEM: HOOKSHOT",0
 s_item_none db "ITEM: -",0
 align 8
-item_strs   dq s_item_none, 0, s_item_portal, s_item_hook
+item_strs   dq s_item_none, 0, s_item_none, s_item_none
 s_fps_fmt   db "FPS %d",0
 align 8
 floor_names dq s_floor0, s_floor1, s_floor2, s_floor3, s_floor4, s_floor5, s_floor6
@@ -1542,6 +1540,11 @@ hud_draw:
     movss xmm2, [c_one]
     call draw_text
 .no_prompt:
+
+    ; ---- your gadget, smoke in your eyes, the gadget bench (gadget.asm)
+    mov edi, [scr_w]
+    mov esi, [scr_h]
+    call gadget_hud
 
     ; ---- noise meter (above the rest of the bottom-left block)
     call draw_noise_meter

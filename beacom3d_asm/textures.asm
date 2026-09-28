@@ -14,6 +14,7 @@
 global textures_init, make_text_texture, tex_ids, face_tex, white_tex, sign_tex, label_tex
 extern glTexParameterf
 global grain_tex, radial_tex, led_tex, tt_w, tt_h, font_hud, font_small, font_big
+global make_plaque, font_label
 global prop_tex, skin_tex, cloth_tex, media_tex
 global sign_count, sign_f, sign_x, sign_z, sign_face, sign_exit, sign_set, sign_set_cur
 
@@ -136,8 +137,8 @@ lbl_map     db "MAP",0
 lbl_box     db "FRAGILE",0
 lbl_sign    db "CAUTION",10,10,"WET",10,"FLOOR",0
 lbl_compass db "N",0
-lbl_portal  db "PORTAL",0
-lbl_hook    db "HOOK",0
+lbl_portal  db "MODULE",0                ; (gadget parts get their own plaques)
+lbl_hook    db "FIRING",0
 lbl_grod    db "GROD",0
 
 section .data
@@ -1900,7 +1901,7 @@ textures_init:
     mov r8d, RGB(235,235,235)
     mov r9, [font_label]
     call make_plaque
-    mov [label_tex+IT_PORTAL*4], eax
+    mov [label_tex+IT_MODULE*4], eax
     lea rdi, [lbl_hook]
     mov esi, 128
     mov edx, 128
@@ -1908,7 +1909,7 @@ textures_init:
     mov r8d, RGB(120,200,90)            ; Zelda green
     mov r9, [font_label]
     call make_plaque
-    mov [label_tex+IT_HOOKSHOT*4], eax
+    mov [label_tex+IT_FIRING*4], eax
     lea rdi, [lbl_grod]
     mov esi, 128
     mov edx, 128

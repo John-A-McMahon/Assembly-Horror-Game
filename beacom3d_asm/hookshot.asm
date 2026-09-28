@@ -1,6 +1,9 @@
 ; =============================================================================
-; hookshot.asm -- a Zelda-style hookshot: fire it at almost anything solid,
-; it latches on and yanks you there.
+; hookshot.asm -- the HOOK firing type of the gadget system (gadget.asm): a
+; Zelda-style hook that bites almost anything solid. What happens when it
+; bites is up to the module riding it (hk_mod, asked via gadget_hook_attach):
+; the ROD hauls you there -- that's the HOOKSHOT, described here -- SMOKE
+; hauls you and leaves a trail, LINE strings a zipline, PORTAL blinks you.
 ;
 ;   fire     the hook flies out along your view (45 m/s, up to 20 m) and
 ;            bites into the first solid thing: a wall, a pillar, a ceiling,
@@ -17,8 +20,8 @@
 %define MODULE_HOOK
 %include "common.inc"
 
-global hookshot_fire, hookshot_update, hookshot_reset
-global hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz
+global hookshot_fire, hookshot_update, hookshot_reset, solid_point, hookshot_fire_at
+global hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz, hk_mod
 
 extern p_mode, p_vy, p_on_ground, p_mom_x, p_mom_z, parkour_try
 extern plat_inside, plat_height, t_stun, snd_hook_fire, snd_hook_hit, snd_hook_miss
@@ -73,6 +76,7 @@ hk_from_y   resd 1                      ; your height when the pull began
 hk_sx       resd 1                      ; where the throw started (your eye)
 hk_sy       resd 1
 hk_sz       resd 1
+hk_mod      resd 1                      ; the gadget module riding the hook (GM_)
 
 section .text
 
@@ -273,6 +277,58 @@ hookshot_fire:
 .done:
     EPILOGUE
 
+; hookshot_fire_at(xmm0..2 = a point) -- (the drone base) throw the hook from
+; your eye straight at that point: it bites there, nothing traced (the caller
+; has made sure you can see it). The module decides what the bite does.
+hookshot_fire_at:
+    PROLOGUE 32
+    cmp dword [hk_state], HK_IDLE
+    jne .done
+    cmp dword [p_mode], MODE_WALK
+    jne .done
+    movss [hk_px], xmm0
+    movss [hk_py], xmm1
+    movss [hk_pz], xmm2
+    mov eax, [p_x]
+    mov [hk_sx], eax
+    mov eax, [p_eye_y]
+    mov [hk_sy], eax
+    mov eax, [p_z]
+    mov [hk_sz], eax
+    subss xmm0, [hk_sx]
+    subss xmm1, [hk_sy]
+    subss xmm2, [hk_sz]
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    mulss xmm0, xmm0
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    mulss xmm2, xmm2
+    addss xmm0, xmm2
+    sqrtss xmm0, xmm0
+    FLD xmm1, 0.5
+    comiss xmm0, xmm1
+    jb .done                            ; (it's right here already)
+    movss [hk_target], xmm0
+    movss xmm1, [rsp+0]
+    divss xmm1, xmm0
+    movss [hk_dx], xmm1
+    movss xmm1, [rsp+4]
+    divss xmm1, xmm0
+    movss [hk_dy], xmm1
+    movss xmm1, [rsp+8]
+    divss xmm1, xmm0
+    movss [hk_dz], xmm1
+    mov dword [hk_hit_t], 0
+    mov dword [hk_len], 0
+    mov dword [hk_state], HK_FLYING
+    movss xmm0, [c_noise_fire]
+    call noise_add
+    call snd_hook_fire
+.done:
+    EPILOGUE
+
 ; hits_t -- is the traced point ([rsp+8..16] of hookshot_fire's frame, passed
 ; in xmm via the caller's stack) inside T? Reads hookshot_fire's locals.
 hits_t:
@@ -366,6 +422,22 @@ hookshot_update:
     call enemy_hear
     xor edi, edi
     call nemesis_note
+    ; the module decides: haul you (the rod, smoke), or something else
+    call gadget_hook_attach
+    test eax, eax
+    jnz .haul
+    movss xmm0, [c_noise_hit]
+    call noise_add
+    call snd_hook_hit
+    mov dword [hk_state], HK_RETRACT
+    mov eax, [p_x]
+    mov [hk_sx], eax
+    mov eax, [p_eye_y]
+    mov [hk_sy], eax
+    mov eax, [p_z]
+    mov [hk_sz], eax
+    EPILOGUE
+.haul:
     mov dword [hk_state], HK_PULLING
     mov dword [p_mode], MODE_HOOK
     mov dword [p_vy], 0

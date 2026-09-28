@@ -428,6 +428,7 @@ world_select:
     mov eax, [cur_set]
     mov ecx, [set_zip_n+rax*4]
     mov [zip_count], ecx
+    mov [zip_static], ecx
     mov rsi, [set_zip+rax*8]
     xor edx, edx
 .zip:
@@ -1693,9 +1694,30 @@ storey_of:
 ; The real 3D segment through the building: walls, racks and pillars block
 ; it, and it may only pass a floor/ceiling where that is open ('.' -- stair
 ; wells, hatches, the atrium). So you can look down the atrium at T.
+; Smoke (gadget.asm) blocks it too.
 line_of_sight_3d:
+    PROLOGUE 32
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    movss [rsp+12], xmm3
+    movss [rsp+16], xmm4
+    movss [rsp+20], xmm5
     xor edi, edi
-    jmp ray_march
+    call ray_march
+    test eax, eax
+    jz .done
+    ; ...and no smoke in the way (gadget.asm): nobody sees through smoke
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    movss xmm2, [rsp+8]
+    movss xmm3, [rsp+12]
+    movss xmm4, [rsp+16]
+    movss xmm5, [rsp+20]
+    call smoke_blocks
+    xor eax, 1
+.done:
+    EPILOGUE
 
 ; sound_occlusion(xmm0..2 = source, xmm3..5 = listener) -> xmm0 = extra
 ; distance the sound travels "through" the building: each solid slab adds

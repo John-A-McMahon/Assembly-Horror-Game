@@ -35,7 +35,7 @@ global draw_viewmodel
 
 extern use_program, set_material, bind, set_emit, model_end, cam_x
 extern u_model, u_fpos, u_fdir, u_flash, u_son
-extern skin_tex, cloth_tex, gun_kick, gun_colour, have_portal, p_bob
+extern skin_tex, cloth_tex, gun_kick, gun_colour, p_bob
 extern glPushMatrix, glMultMatrixf, glGenLists, glNewList, glEndList, glCallList
 
 %ifdef WIN64
@@ -1183,11 +1183,12 @@ draw_viewmodel:
     je .ladder
     cmp dword [p_mode], 3               ; mantling/vaulting: plant it on the edge
     je .ladder
-    cmp dword [have_portal], 0
-    jne .gun
-    cmp dword [have_hookshot], 0
-    jne .hook
-    jmp .done
+    ; your gadget: a hook or grabber is held like a hookshot, anything else
+    ; like the portal gun; either way it glows in its module's colour
+    cmp dword [gd_view], 1
+    je .gun
+    cmp dword [gd_view], 2
+    jne .done
 .hook:
     ; the hookshot, held like the portal gun
     lea rsi, [pos_gun]
@@ -1204,6 +1205,8 @@ draw_viewmodel:
     mov edi, L_HOOK
     call call_list
     cmp dword [hk_state], 0             ; the hook's out on its chain
+    jne .hook_out
+    cmp dword [gd_tt_state], 0          ; (or the grabber on its tether)
     jne .hook_out
     mov edi, L_HOOKTIP
     call call_list
@@ -1257,9 +1260,15 @@ draw_viewmodel:
     call mat_hard
     mov edi, L_GUN
     call call_list
-    ; the core glows in the colour of the last portal
+    ; the core glows in the module's colour (a portal module: the colour
+    ; of the last portal)
     lea rdi, [tip_part]
-    mov dword [rdi+4], 0x40A0FF
+    mov eax, [gd_tip_col]
+    mov [rdi+4], eax
+    cmp dword [gd_mod], GM_PORTAL
+    jne .blue
+    cmp dword [gd_fire], GF_LASER
+    jne .blue
     cmp dword [gun_colour], 0
     je .blue
     mov dword [rdi+4], 0xFF8C1A

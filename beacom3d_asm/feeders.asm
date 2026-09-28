@@ -19,8 +19,8 @@
 %define MODULE_FEED
 %include "common.inc"
 
-global feeders_reset, feeders_update, feeders_deauth, feeder_put
-global fd_count, fd_x, fd_y, fd_z, fd_yaw, fd_anim, fd_carry, fd_state
+global feeders_reset, feeders_update, feeders_deauth, feeder_put, feeder_stun
+global fd_count, fd_x, fd_y, fd_z, fd_yaw, fd_anim, fd_carry, fd_state, fd_node
 
 extern find_next, cfg_feeders, cfg_t_angry, add_item, snd_pickup
 extern snd_feeder_spot, snd_feeder_steal, snd_feeder_click, atan2f, sinf, cosf
@@ -624,7 +624,28 @@ move_feeder:
 .done:
     EPILOGUE
 
-; feeder_put(edi = i, esi = node) -- (self-tests) put feeder i there, wandering
+; feeder_stun(edi = i, xmm0 = seconds) -- (gadgets) knocked flat: it lets go
+; of any capture it was carrying (dropped where it is) and lies still for at
+; least that long
+feeder_stun:
+    PROLOGUE 16
+    mov ebx, edi
+    cmp dword [fd_state+rbx*4], FD_DEAD
+    je .done
+    movss [rsp+0], xmm0
+    cmp dword [fd_carry+rbx*4], 0
+    je .empty
+    call drop_capture
+.empty:
+    mov dword [fd_state+rbx*4], FD_STUN
+    movss xmm0, [rsp+0]
+    maxss xmm0, [fd_timer+rbx*4]
+    movss [fd_timer+rbx*4], xmm0
+.done:
+    EPILOGUE
+
+; feeder_put(edi = i, esi = node) -- put feeder i there, wandering (self-tests,
+; and gadgets that move one)
 feeder_put:
     PROLOGUE 16
     mov ebx, edi

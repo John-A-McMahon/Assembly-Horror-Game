@@ -23,6 +23,7 @@ global snd_set_floor, snd_mute, audio_cb, snd_fanfare, snd_clatter, snd_clank, s
 global snd_portal_open, snd_portal_fizzle, snd_portal_enter, snd_slide
 global snd_hook_fire, snd_hook_hit, snd_hook_miss, snd_can, snd_can_t
 global snd_feeder_spot, snd_feeder_steal, snd_feeder_click, snd_build
+global snd_smoke, snd_gadget, snd_laser, snd_orb
 %ifdef WIN64
 extern audio_cb_win64
 %endif
@@ -811,6 +812,35 @@ snd_hook_hit:
     TONE 2400.0, 2300.0, 0.25, 0.09, W_TRI, 0.0
     TONE 3550.0, 3500.0, 0.18, 0.05, W_TRI, 0.0
     BURST 900.0, 0.6, 0.12, 0.4, FT_BP, 0, 0.0, 0.0
+    EPILOGUE
+
+; gadgets: smoke billowing out -- a long soft hiss
+snd_smoke:
+    PROLOGUE 16
+    BURST 5200.0, 0.3, 1.1, 0.14, FT_HP, 0, 0.0, 0.25
+    BURST 900.0, 0.5, 0.5, 0.18, FT_LP, 0, 0.0, 0.02
+    EPILOGUE
+
+; ...parts snapping together: two ratchet clicks
+snd_gadget:
+    PROLOGUE 16
+    BURST 3000.0, 0.5, 0.03, 0.2, FT_BP, 0, 0.0, 0.0
+    BURST 2400.0, 0.5, 0.04, 0.22, FT_BP, 0, 0.07, 0.0
+    TONE 900.0, 1400.0, 0.08, 0.04, W_TRI, 0.07
+    EPILOGUE
+
+; ...a laser: a quick falling zap
+snd_laser:
+    PROLOGUE 16
+    TONE 2200.0, 500.0, 0.12, 0.07, W_SAW, 0.0
+    BURST 4000.0, 0.4, 0.05, 0.08, FT_HP, 0, 0.0, 0.0
+    EPILOGUE
+
+; ...an orb lobbed: a hollow thunk
+snd_orb:
+    PROLOGUE 16
+    TONE 220.0, 140.0, 0.12, 0.12, W_SINE, 0.0
+    BURST 600.0, 0.6, 0.06, 0.2, FT_LP, 0, 0.0, 0.0
     EPILOGUE
 
 ; ...nothing to bite: the chain reels back in

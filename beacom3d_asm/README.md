@@ -143,9 +143,13 @@ tools/dbuild.sh win      # Windows beacom3d.exe
 | Space | jump -- or, facing a ledge, **mantle** up (desks, crates, boxes, ledges up to ~2 m); sprinting at something waist-high, **vault** it |
 | F | flashlight (battery drains; T sees it from far away) |
 | E | pick up / talk to B / grab a zipline |
-| Left mouse / Q | use your special item: fire a deauth packet (stuns T and teleports him away), a blue portal, or the hookshot |
-| Right mouse | the item's second use: an orange portal (deauths and the hookshot fire as with the left button) |
-| Space (while the hookshot pulls you) | let go and fling yourself onwards with the momentum |
+| Left mouse | fire your **gadget** (no gadget yet: a deauth packet). Hold it on a zipline with a HOOKSHOT to winch |
+| Right mouse | the gadget's second use: the portal gun's orange portal (everything else fires as with the left button) |
+| Q | fire a deauth packet (stuns T and teleports him away) if you have any, else the gadget |
+| E on a gadget part | fit it -- the frame, module or firing type it replaces is left lying in its place |
+| V | with the DRONE frame: send the drone off along your aim / call it back |
+| G | the gadget bench: A/D pick base, module or firing type, T transmutes (in a safe room), G closes. It's also the catalog of every gadget you've made |
+| Space (while a hook pulls you) | let go and fling yourself onwards with the momentum |
 | M / Tab | explored map of the current floor |
 | Esc | pause menu: settings, custom run, restart (arrows/WASD + Enter, or the mouse) |
 | F3 / F4 / F5 | FPS counter / render resolution (1/1, 1/2, 1/3) / flashlight shadows |
@@ -171,8 +175,9 @@ Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
   generated layout (**maze / classic / open**),
   T's speed / hearing / vision, whether he speeds up with each capture,
   follows you off ledges, or **climbs ladders**, safe rooms on/off, how many
-  deauth packets, start with the map + compass, portal gun hidden / in hand / off,
-  hookshot hidden / in hand / off, how many cans of Diet Mountain Dew (0-8), how many bottom feeders (0-4), whether T learns your tricks during the night
+  deauth packets, start with the map + compass, **gadget parts** (a few hidden
+  -- the seed picks which -- / every part in hand / none) and how many of each
+  kind are hidden (1-4), how many cans of Diet Mountain Dew (0-8), how many bottom feeders (0-4), whether T learns your tricks during the night
 * **You** — sprint stamina drain, flashlight battery drain, walk speed, jump
   height, zipline speed
 * **Controls** — mouse sensitivity, invert Y, crouch hold/toggle
@@ -185,11 +190,12 @@ Rows marked * apply when you restart.
 
 ### Achievements
 
-23 of them, from **PACIFIST** (win without firing a single deauth packet) and
+25 of them, from **PACIFIST** (win without firing a single deauth packet) and
 **GHOST PROTOCOL** (win without T ever seeing you) to **STAGE FRIGHT** (stand
 on the grand staircase stage while T chases you), **KING OF THE CRATES**,
-**THINKING WITH PORTALS**, **GET OVER HERE** (hit T with the hookshot),
-**SPIDER-BEACOM** (hookshot yourself 2.5 m up), **DO THE DEW** (drink 3 Diet
+**THINKING WITH PORTALS**, **GET OVER HERE** (hook or grab T),
+**SPIDER-BEACOM** (hook yourself 2.5 m up), **TINKERER** (discover 8
+gadgets), **BOTTOM OF THE LINE** (snag a bottom feeder on a capture line), **DO THE DEW** (drink 3 Diet
 Mountain Dews in one night), **OUT-FED** (snatch a capture back from a
 bottom feeder), **WORTHY** (arm Tyler with the DAUTH CANNON OF GROD), **LOST IN THE MAZE** and a
 couple of secrets.
@@ -291,28 +297,83 @@ slide. T can't mantle, vault or climb -- a desk between you is a real
 obstacle for him, and in the pit under the atrium a crate and a tall crate
 stack let you climb up onto the ground-floor balcony where he can't follow.
 
-### The hookshot, and one special item at a time
+### Gadgets: base + module + firing type
 
-Somewhere in every building a **hookshot** is hidden (look for the green
-launcher with the brass hook and the HOOK plaque). Click (or press Q) and the
-hook flies out along your view, up to 20 m, and bites into the first solid
-thing: a wall, a pillar, a desk, a crate, a ceiling, the underside of a
-balcony. Then it hauls you there at 15 m/s. Hook the edge of the floor above
-and you're pulled up and mantle straight onto it: in the real Beacom you
-can grapple from the collaboration space straight up to
-the second floor. Press **Space** mid-pull to let go and keep flying (jump
-gaps, launch yourself across the atrium). Hook T and he staggers for a
-moment, but the clank is loud. Miss and the hook reels back in. T can't
-follow you anywhere the hookshot takes you. The hookshot can't take you
-through a floor, a ceiling or the roof: a fling stops when your head hits
-the ceiling, and hooking the floor doesn't drag you through it.
+There's no portal gun or hookshot lying around any more. You carry a
+**frame** (the *base*: a **gun**, or a **drone** if you find one) and find
+**parts**: *modules* say what the gadget
+controls, *firing types* say how it's delivered and what it acts on. Snap
+any module into any firing type and you have a gadget -- every combination
+does something, and a new part works with everything you already have.
 
-You can only hold **one special item**: the deauth stack (up to 3 packets),
-the portal gun, or the hookshot. Pick up a different one and what you were
-holding drops at your feet (a deauth stack drops as one item with all its
-packets), so you can go back and swap. The HUD shows what you're holding in
-the bottom-left. The pause menu's **Hookshot** row makes it hidden (default),
-in your hand from the start, or off.
+| Part | What it means |
+| --- | --- |
+| **GUN** frame | fires from your hand |
+| **DRONE** frame | fires from wherever the drone is -- see below |
+| **PORTAL** module | bends space: moves things (or you) through it |
+| **ROD** module | a rigid rod: rams, props things up, pins, hauls |
+| **LINE** module | a line that stays wherever you string it |
+| **SMOKE** module | smoke that nothing sees through -- not T, not the feeders, not your own aim |
+| **LASER** firing | dead straight and instant, precise |
+| **ORB** firing | lobbed in an arc; it bounces, then goes off (the landing clatters -- T hears it) |
+| **HOOK** firing | bites into the world and moves **you** |
+| **GRABBER** firing | latches on to things and moves **them** |
+
+What the gun makes (the bench keeps a catalog of the ones you've found):
+
+| | LASER | ORB | HOOK | GRABBER |
+| --- | --- | --- | --- | --- |
+| **PORTAL** | **portal gun**: blue/orange wall portals | **ender orb**: you're wherever it comes to rest | **blink hook**: straight to where it bit | **remote grabber**: a window opens on any surface in sight and a hand reaches 6 m out of it for the nearest thing |
+| **ROD** | **knocker**: staggers T, flattens feeders (a thief drops its capture); off a wall, the *clank carries from there* -- T goes to look | **peg launcher**: rods dig in -- a ledge out of a wall, a 1 m post out of a floor. You can climb them, T can't | **hookshot**: hauls you there; Space flings you; on *any* zipline hold fire to **winch**, even uphill, on stamina | **grappler**: hauls items, feeders and boxes to you. T's too heavy -- he just staggers |
+| **LINE** | **tripwire**: knee-high, wall to wall along your aim; trips whatever crosses it and tells you where | **bola**: tangles T (2.5 s) or a feeder where it lands; a miss becomes a snare on the floor | **zipline gun**: a cable from over your head to where it bites. Gravity rides it: downhill is easy, uphill you stop and slide back (winch it with a hookshot) | **capture line**: snags feeders and items it passes; they slide down it to the low end. T walks through and snaps it |
+| **SMOKE** | **smoke wall** along the beam | **smoke grenade** | **smoke trail**: hauls you out, leaving smoke where you were | **smoke hood**: smoke that follows what it grabbed -- a hooded T only has his ears |
+
+**The drone.** Every module and firing type works on the drone frame too,
+so there are 32 gadgets, not 16. At your shoulder the drone is just a gun.
+Press **V** and it flies off along your aim and hovers short of whatever it
+meets (up to 20 m); **V** again calls it home. While it's out, every shot
+leaves the *drone*, the way *you* are looking -- so you can fire round a
+corner, down the atrium or from behind T, and T hears the drone, not you.
+A hook can't bite the world from a drone, so it bites the drone; a grabber
+reels things in to the drone. T swats a drone that gets within his reach,
+and it spends 8 s rebooting on the floor.
+
+| | LASER | ORB | HOOK | GRABBER |
+| --- | --- | --- | --- | --- |
+| **PORTAL** | **portal drone**: portals from where it hovers | **ender drone**: lobbed from the drone; you land where it rests | **blink beacon**: blink straight to the drone -- even through walls, even upstairs | **window drone**: a window where the drone looks |
+| **ROD** | **knocker drone**: a clank you can place -- a lure | **peg bomber**: ledges wherever the drone can reach | **tow drone**: hauls you to the drone (you have to see it) | **fetch drone**: reels things in to itself; items it reaches are yours |
+| **LINE** | **wire drone**: a tripwire through where it hovers | **bola bomber** | **skyline**: a zipline from over your head to the drone | **trawler**: a capture line from the drone |
+| **SMOKE** | **smokescreen drone** | **crop duster**: smoke from across the building | **smoke tow**: hauled to the drone, trailing smoke | **hoodwinker**: hoods what the drone grabs |
+
+The rules hold everywhere: anything that bends space won't work in (or into)
+a safe room; smoke blocks every line of sight in the game (it's part of the
+line-of-sight test itself), so a feeder can't see you through it either;
+portals, the knocker's clank, orbs landing and the hook's bite are all
+things T hears or follows. Hooks, grabbers and lasers hit T's crate stairs
+too.
+
+**Each night is different.** You start with the frame; the seed hides a few
+modules and a few firing types in the building (the pause menu sets how
+many of each: 1-4, default 3), so one night you're a smoke-and-portals
+ghost and the next a zipline-and-grappler acrobat. Every night also hides a
+**drone frame** somewhere. **You carry one frame, one module and one firing
+type at a time.** Pick up a part and it snaps straight in;
+the one it replaces is left lying where the new one was. So every part you
+find is a choice -- keep the portal module, or trade it for smoke? the gun,
+or the drone? -- and
+changing your mind means walking back for what you left (with T between
+you and it, as likely as not). The bench (**G**) shows what you're holding
+and the catalog; your hands stay free while it's open, but T doesn't wait. A bad roll isn't the end: step into a **safe room** and
+its networking magic lets you **transmute** one part (bench, **T**) into
+one of that kind you haven't found.
+
+Making a combination for the first time names it, says what it does and
+adds it to the **catalog** (`beacom_gadgets.cfg` -- delete it to forget).
+The pause menu's *Gadget parts* row can also put every part in your hand
+from the start (you begin holding the hookshot), or take gadgets away.
+
+Deauth packets are separate: you can carry up to 3 alongside your gadget
+(Q fires them). The HUD shows your gadget next to the bars.
 
 ### Diet Mountain Dew
 
@@ -372,7 +433,7 @@ after a close call, and never a long safe lull.
 **T builds.** Up on a desk, a crate stack or anything else he can't walk to,
 while he can see you? He hammers together a staircase of crates (you'll
 hear it: about 1.5 s), climbs it and gets you. The stairs fall apart after
-20 s. Knock them down first: aim a **deauth** at them, or **hookshot** them
+20 s. Knock them down first: aim a **deauth** at them, or **hook** them
 (the hook yanks them down). If he's on them, he tumbles off and is stunned
 for a moment. Like the bottom feeders, a deauth spent on his stairs doesn't
 touch T himself.
@@ -381,25 +442,27 @@ touch T himself.
 you and he walks to it and steps out of the other side after you. And no
 more safe-room cheese: **portals can't be opened in (or into) a safe room**.
 
-**The hookshot is loud.** When the hook bites, T hears the clank (22 m) and
+**Hooks are loud.** When a hook bites, T hears the clank (22 m) and
 comes to look at where you'll land.
 
 **T learns your tricks during the night.** Every chase you escape is put
-down to the last trick you used: the hookshot, a portal, a safe room, a
-perch he had to build up to, or a deauth. Get away the same way **twice**
+down to the last trick you used: a hook, a portal trick (portals, the
+ender orb, the blink hook), a safe room, a perch he had to build up to, a
+deauth, or smoke. Get away the same way **twice**
 and he adapts; **four** times and he adapts more:
 
 | You keep escaping with... | T learns to... |
 | --- | --- |
-| the hookshot | hear the hook bite from 33 m, then 44 m |
-| portals | follow you through them even when he wasn't chasing you |
+| hooks | hear the hook bite from 33 m, then 44 m |
+| portal tricks | follow you through portals even when he wasn't chasing you |
 | safe rooms | wait outside for 10 s, then 20 s, instead of wandering off |
 | perches | build his stairs faster (1.05 s, then 0.6 s) |
 | deauths | shake them off quicker (4 s, then 3 s of stun) |
+| smoke | see through it when he's close: within 5 m, then 10 m |
 
 You're always told what's going on: the night opens with *"T learns as the
 night goes on..."*, each escape tells you *"T saw how you got away: the
-hookshot. (1 of 2 -- then he adapts)"*, and when he adapts you get a red
+hook. (1 of 2 -- then he adapts)"*, and when he adapts you get a red
 *"T HAS LEARNED your hookshot: he hears the hook bite from 33 m away now."*
 It's **per night**: every run starts with a T who knows nothing, and nothing
 is saved. Switch it off in the pause menu if you like.
@@ -449,13 +512,14 @@ follow you down into the atrium. He still can't climb ladders.
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
-| `achievements.asm` | the 23 achievements: rules, unlock banner, `beacom_achievements.cfg` |
+| `achievements.asm` | the 25 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
-| `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, portal gun, hookshot, sleeve |
-| `portal.asm` | the portal gun: wall portals, walking through, stencil-buffer views through each portal |
+| `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, your gadget (gun or hook shape, glowing in its module's colour), sleeve |
+| `gadget.asm` | the gadget grammar: parts, assembly, the bench and catalog, the two frames (gun; the drone -- flight, T's swat, shots from where it is), the four deliveries (laser, orb, hook, grabber) and each module's handlers; the lines, smoke and pegs gadgets leave in the world |
+| `portal.asm` | the portal module's laser: wall portals, walking through, stencil-buffer views through each portal |
 | `feeders.asm` | the bottom feeders: wander / chase / steal / flee / stash, on T's nav graph |
 | `nemesis.asm` | T learning how you escape him, over one night |
-| `hookshot.asm` | the hookshot: traces the throw, latches on, pulls you in, fling, auto-mantle, stuns T |
+| `hookshot.asm` | the HOOK firing type: traces the throw, latches on, asks the module (the rod pulls you in: fling, auto-mantle), stuns T |
 | `player.asm` | first-person controller: mouselook, movement, gravity, stairs, stamina, flashlight battery |
 | `ai.asm` | T: BFS over the 3D nav graph, 3D sight, occluded hearing, wander / investigate / chase |
 | `render.asm` | GLSL lighting shader, display lists built from the maps, fixtures and light pool, T, items, signs, jumpscare |

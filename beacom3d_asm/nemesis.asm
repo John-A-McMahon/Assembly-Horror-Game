@@ -2,14 +2,16 @@
 ; nemesis.asm -- T learns how you escape him, over the course of the night.
 ;
 ; Every chase you get away from is put down to the last trick you used in
-; it: the hookshot, a portal, a safe room, a perch he had to build up to, or
-; a deauth. Twice the same way and he adapts; four times and he adapts more:
+; it: a hook gadget, a portal trick, a safe room, a perch he had to build
+; up to, a deauth, or smoke. Twice the same way and he adapts; four times
+; and he adapts more:
 ;
-;   hookshot   he hears the hook bite from 50% / 100% further away
+;   hook       he hears the hook bite from 50% / 100% further away
 ;   portal     he follows you through portals even when he wasn't chasing
 ;   safe room  he waits outside for 10 / 20 s instead of wandering off
 ;   perch      he builds his stairs faster (1.5 s -> 1.05 -> 0.6)
 ;   deauth     he shakes a deauth off quicker (5 s -> 4 -> 3)
+;   smoke      it stops hiding you when he's close (within 5 / 10 m)
 ;
 ; It's per night: every run starts with a T who knows nothing. You're told
 ; each time he notices a trick and each time he learns from it. The pause
@@ -20,10 +22,11 @@
 
 global nemesis_note, nemesis_tick, nemesis_new_night, nemesis_forget, nemesis_apply
 global nm_build_time, nm_stun, nm_portal_any, nm_camp_time, nm_hook_hear, nm_cnt
+global nm_smoke_see
 
 extern cfg_nemesis
 
-%define NTOOLS 5
+%define NTOOLS 6
 %define PER_LEVEL 2                     ; escapes the same way per level
 
 section .data
@@ -33,6 +36,8 @@ nm_stun     dd 5.0
 nm_portal_any dd 0
 nm_camp_time dd 0.0
 nm_hook_hear dd 22.0
+nm_smoke_see dd 0.0                     ; smoke doesn't hide you closer than this
+c_smoke_step dd 5.0
 c_build0    dd 1.5
 c_build_step dd 0.45
 c_stun0     dd 5.0
@@ -47,15 +52,17 @@ t_learn1    db "T HAS LEARNED your portals: he'll follow you through them even w
 t_learn2    db "T HAS LEARNED your safe rooms: he'll wait outside for %d s instead of wandering off.",0
 t_learn3    db "T HAS LEARNED your perches: he builds his stairs up to you in %d.%d s now.",0
 t_learn4    db "T HAS LEARNED your deauths: they only stun him for %d s now.",0
+t_learn5    db "T HAS LEARNED your smoke: it can't hide you from him within %d m now.",0
 align 8
-t_learns    dq t_learn0, t_learn1, t_learn2, t_learn3, t_learn4
-tn0         db "the hookshot",0
-tn1         db "a portal",0
+t_learns    dq t_learn0, t_learn1, t_learn2, t_learn3, t_learn4, t_learn5
+tn0         db "a hook",0
+tn1         db "a portal trick",0
 tn2         db "a safe room",0
 tn3         db "a perch he had to build up to",0
 tn4         db "a deauth",0
+tn5         db "smoke",0
 align 8
-tnames      dq tn0, tn1, tn2, tn3, tn4
+tnames      dq tn0, tn1, tn2, tn3, tn4, tn5
 
 section .bss
 alignb 4
@@ -115,9 +122,13 @@ nemesis_apply:
     movss xmm1, [c_stun0]
     subss xmm1, xmm0
     movss [nm_stun], xmm1
+    cvtsi2ss xmm0, dword [nm_lvl+20]    ; smoke: sees you through it up close
+    mulss xmm0, [c_smoke_step]
+    movss [nm_smoke_see], xmm0
     EPILOGUE
 
-; nemesis_note(edi = trick: 0 hookshot 1 portal 2 safe room 3 perch 4 deauth)
+; nemesis_note(edi = trick: 0 hook 1 portal 2 safe room 3 perch 4 deauth
+; 5 smoke)
 ; -- you just used it; if it gets you out of this chase, he'll remember
 nemesis_note:
     cmp dword [cfg_nemesis], 0
@@ -241,8 +252,12 @@ learned_numbers:
     mov r8d, edx
 .n4:
     cmp ebx, 4
-    jne .done
+    jne .n5
     cvttss2si ecx, [nm_stun]
+.n5:
+    cmp ebx, 5
+    jne .done
+    cvttss2si ecx, [nm_smoke_see]
 .done:
     add rsp, 8
     ret

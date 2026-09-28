@@ -61,6 +61,7 @@ extern glPushMatrix, glPopMatrix, glMultMatrixf, glDeleteLists, glCopyTexSubImag
 extern glLoadMatrixf, glColorMask, glPolygonOffset, glDrawBuffer, glReadBuffer
 extern portal_views, portal_draw_rims, draw_viewmodel, media_tex
 global render_rebuild_world, set_material, set_emit, model_end, u_model, u_fpos, u_fdir, u_flash, u_son
+global cbox, emit_tube
 extern phys_nb, px, py, pz, body_type, body_p0, body_active, rag_active, prop_tex
 %define GL_RENDERER 0x1F01
 %define SHADOW_SIZE 1024
@@ -3982,8 +3983,10 @@ draw_items:
     call set_emit
     cmp dword [r12+ITEM_KIND], IT_DEW
     je .dew_can
-    mov eax, [r12+ITEM_KIND]
-    mov edi, [label_tex+rax*4]
+    mov edi, [r12+ITEM_KIND]            ; (a gadget part shows which)
+    mov esi, [r12+ITEM_CHARGES]
+    call gadget_part_tex
+    mov edi, eax
     call bind
     mov edi, GL_QUADS
     call glBegin
@@ -4591,6 +4594,7 @@ draw_scene:
     call draw_physics
     call draw_ziplines
     call draw_hook
+    call gadget_draw                    ; pegs, lines, grabbers, orbs
     call draw_grod_beam
     ; Y's plaque on the cage
     cmp dword [cur_floor], 1
@@ -4703,6 +4707,12 @@ draw_scene:
     ; portal rims glow like everything else in this pass
     movss xmm0, [rsp+8]
     call portal_draw_rims
+    call gadget_draw_glow               ; laser beams, the remote grabber's window
+    xor edi, edi                        ; smoke: soft, see-through, no depth
+    call glDepthMask
+    call gadget_draw_smoke
+    mov edi, 1
+    call glDepthMask
     ; the media wall: the screens are the light
     movss xmm0, [rsp+8]
     call draw_media_wall

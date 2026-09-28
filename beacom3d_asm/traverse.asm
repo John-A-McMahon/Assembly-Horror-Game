@@ -12,6 +12,12 @@
 ;   dropping a whole storey across the atrium, high end -> low end. Stand under it and press E to grab; you accelerate to the far
 ;   end (Space drops you early). The camera sways, shakes and the field of
 ;   view opens up with speed.
+;
+; Ziplines you string with a gadget (LINE + HOOK, gadget.asm) go in the
+;   slots after the building's own (zip_static..): gravity rides them
+;   (zip_grav), so downhill is easy and uphill you slow, stop and slide back.
+;   With a winch in hand (a HOOKSHOT: CAP_WINCH) hold fire on ANY zipline to
+;   haul yourself along it the way you're looking -- uphill too -- on stamina.
 ; =============================================================================
 %define MODULE_TRAVERSE
 %include "common.inc"
@@ -19,6 +25,7 @@
 global traverse_reset, traverse_update, traverse_try_grab, ladder_dir
 global p_mode, trav_prompt, trav_roll, trav_shake, trav_fov, climb_phase
 global zip_count, zip_ax, zip_ay, zip_az, zip_bx, zip_by, zip_bz, zip_active, zip_t
+global zip_static, zip_grav, zip_speed
 
 extern p_vy, p_on_ground, snd_clank, snd_zip, parkour_update
 
@@ -34,12 +41,24 @@ section .data
 ; floor's edge on the far side) to the ground-floor balcony.
 ;             basement   ground floor  second floor  atrium
 zip_ax      dd 111.0,    7.0,          7.0,          85.0
+            times NZIP_MAX-NZIP dd 0.0
 zip_ay      dd 2.95,     6.15,         9.35,         9.35
+            times NZIP_MAX-NZIP dd -100.0
 zip_az      dd 53.0,     29.0,         5.0,          37.0
+            times NZIP_MAX-NZIP dd 0.0
 zip_bx      dd 7.0,      111.0,        111.0,        63.0
+            times NZIP_MAX-NZIP dd 0.0
 zip_by      dd 2.55,     5.75,         8.95,         5.75
+            times NZIP_MAX-NZIP dd -100.0
 zip_bz      dd 53.0,     29.0,         5.0,          37.0
+            times NZIP_MAX-NZIP dd 0.0
 zip_count   dd NZIP
+zip_static  dd NZIP                 ; the building's own (the rest are yours)
+c_gravity_z dd 9.8
+c_zip_drag  dd 0.15                 ; a strung line's friction (per second)
+c_winch     dd 9.0                  ; winching: acceleration...
+c_winch_max dd 6.0                  ; ...top speed
+c_winch_st  dd 0.22                 ; ...and stamina per second
 
 c_climb_speed dd 2.2
 c_rung        dd 0.3                ; one clank per rung
@@ -76,6 +95,7 @@ rung_acc    resd 1
 zip_active  resd 1                  ; which cable we're on
 zip_t       resd 1                  ; 0..1 along it
 zip_speed   resd 1
+zip_grav    resd NZIP_MAX           ; 1: a line you strung (gravity rides it)
 zip_cand    resd 1                  ; cable you could grab right now (-1 none)
 whirr_t     resd 1
 sway_t      resd 1
@@ -412,6 +432,8 @@ ride:
     PROLOGUE 32
     movss [rsp+0], xmm0
     mov ebx, [zip_active]
+    cmp dword [zip_grav+rbx*4], 0
+    jne .gravity
     ; speed builds up
     PCT xmm3, cfg_zip                   ; custom: zipline speed
     movss xmm1, [c_zip_accel]
@@ -422,6 +444,67 @@ ride:
     mulss xmm2, xmm3
     minss xmm1, xmm2
     movss [zip_speed], xmm1
+    jmp .winch
+.gravity:
+    ; a line you strung: gravity along its slope, and a little friction
+    call cable_len3
+    movss xmm1, [zip_ay+rbx*4]
+    subss xmm1, [zip_by+rbx*4]
+    divss xmm1, xmm0
+    mulss xmm1, [c_gravity_z]
+    mulss xmm1, [rsp+0]
+    movss xmm0, [zip_speed]
+    movss xmm2, [c_zip_drag]
+    mulss xmm2, [rsp+0]
+    mulss xmm2, xmm0
+    subss xmm0, xmm2
+    addss xmm0, xmm1
+    movss [zip_speed], xmm0
+.winch:
+    ; a winch in hand and the trigger held: haul along it the way you look
+    test dword [gd_caps], CAP_WINCH
+    jz .speed_set
+    cmp dword [gd_fire_held], 0
+    je .speed_set
+    movss xmm0, [p_stamina]
+    FLD xmm1, 0.02
+    comiss xmm0, xmm1
+    jb .speed_set
+    movss xmm1, [c_winch_st]
+    mulss xmm1, [rsp+0]
+    movss xmm0, [p_stamina]
+    subss xmm0, xmm1
+    maxss xmm0, [c_zero]
+    movss [p_stamina], xmm0
+    ; which way: your view (flat) against the cable, A -> B
+    movss xmm0, [p_yaw]
+    call sinf
+    movss [rsp+4], xmm0
+    movss xmm0, [p_yaw]
+    call cosf
+    movss xmm1, [zip_bz+rbx*4]
+    subss xmm1, [zip_az+rbx*4]
+    mulss xmm0, xmm1                    ; cos * dz
+    movss xmm1, [zip_bx+rbx*4]
+    subss xmm1, [zip_ax+rbx*4]
+    mulss xmm1, [rsp+4]                 ; sin * dx
+    addss xmm0, xmm1                    ; -(forward . d)
+    movss xmm1, [c_winch]
+    mulss xmm1, [rsp+0]
+    comiss xmm0, [c_zero]
+    jb .toward_b
+    xorps xmm1, [c_sign_mask]
+.toward_b:
+    movss xmm0, [zip_speed]
+    addss xmm0, xmm1
+    movss xmm1, [c_winch_max]
+    minss xmm0, xmm1
+    xorps xmm1, [c_sign_mask]
+    maxss xmm0, xmm1
+    movss [zip_speed], xmm0
+.speed_set:
+    movss xmm1, [zip_speed]
+    movss xmm0, [rsp+0]
     ; cable length
     movss xmm2, [zip_bx+rbx*4]
     subss xmm2, [zip_ax+rbx*4]
@@ -431,6 +514,7 @@ ride:
     mulss xmm3, xmm3
     addss xmm2, xmm3
     sqrtss xmm2, xmm2
+    maxss xmm2, [c_one]                 ; (a steep line you strung)
     mulss xmm1, xmm0
     divss xmm1, xmm2
     addss xmm1, [zip_t]
@@ -438,6 +522,8 @@ ride:
     ; off the end, or Space: let go
     comiss xmm1, [c_one]
     jae .release
+    comiss xmm1, [c_zero]
+    jb .back_off
     cmp byte [keys_down+6], 0           ; Space
     jne .release
     ; position: hanging under the trolley
@@ -493,6 +579,9 @@ ride:
     movss xmm0, [c_noise_zip]
     call noise_add
     jmp .done
+.back_off:
+    mov dword [zip_t], 0                ; slid (or winched) back off the top
+    jmp .let_go
 .release:
     movss xmm0, [zip_t]                 ; all the way to the end?
     comiss xmm0, [c_one]
@@ -510,6 +599,23 @@ ride:
     mov dword [zip_active], -1
 .done:
     EPILOGUE
+
+; cable_len3(ebx = cable) -> xmm0 = its length in 3D. leaf
+cable_len3:
+    movss xmm0, [zip_bx+rbx*4]
+    subss xmm0, [zip_ax+rbx*4]
+    mulss xmm0, xmm0
+    movss xmm1, [zip_by+rbx*4]
+    subss xmm1, [zip_ay+rbx*4]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    movss xmm1, [zip_bz+rbx*4]
+    subss xmm1, [zip_az+rbx*4]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    maxss xmm0, [c_one]
+    ret
 
 ; climb(xmm0=dt) -- up and down the ladder
 climb:

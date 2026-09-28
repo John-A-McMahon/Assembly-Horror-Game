@@ -22,10 +22,10 @@
 global settings_load, settings_save, settings_apply, menu_key, menu_mouse, menu_click
 global menu_wheel, menu_draw, menu_reset
 global cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_ladders
-global cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_portal, cfg_stamina
+global cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_stamina
 global cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 global cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
-global cfg_hookshot, cfg_dew, cfg_feeders, cfg_nemesis, cfg_floors, cfg_width, cfg_depth
+global cfg_gparts, cfg_gcount, cfg_dew, cfg_feeders, cfg_nemesis, cfg_floors, cfg_width, cfg_depth
 
 extern invert_y, show_fps, shadows_on, shadows_ok, render_scale
 extern draw_text, draw_rect, font_hud, font_small, font_big, tt_w, tt_h, glDeleteTextures
@@ -70,8 +70,8 @@ cfg_t_ladders   dd 0            ; climbs ladders after you
 cfg_safe        dd 1            ; safe rooms work
 cfg_deauths     dd 3
 cfg_start_map   dd 0
-cfg_portal      dd 0            ; 0 somewhere in the building, 1 start with it, 2 none
-cfg_hookshot    dd 0            ; (same)
+cfg_gparts      dd 0            ; gadget parts: 0 a few hidden, 1 all in hand, 2 none
+cfg_gcount      dd 3            ; modules and firing types hidden (of each kind)
 cfg_dew         dd 4            ; cans of Diet Mountain Dew
 cfg_feeders     dd 2            ; bottom feeders
 cfg_nemesis     dd 1            ; T learns how you escape him (per night)
@@ -110,8 +110,8 @@ l_t_ladders db "T climbs ladders after you",0
 l_safe      db "Safe rooms",0
 l_deauths   db "Deauth packets in the building *",0
 l_start_map db "Map + compass *",0
-l_portal    db "Portal gun *",0
-l_hookshot  db "Hookshot *",0
+l_portal    db "Gadget parts *",0
+l_hookshot  db "Gadget parts hidden (of each kind) *",0
 l_dew       db "Diet Mountain Dew cans *",0
 l_feeders   db "Bottom feeders *",0
 l_nemesis   db "T learns your tricks during the night *",0
@@ -163,6 +163,8 @@ l_ach19     db "SPIDER-BEACOM - hookshot yourself 2.5 m up",0
 l_ach20     db "DO THE DEW - drink 3 Diet Mountain Dews in one night",0
 l_ach21     db "OUT-FED - snatch a capture back from a bottom feeder",0
 l_ach22     db "WORTHY - arm Tyler with the DAUTH CANNON OF GROD",0
+l_ach23     db "TINKERER - discover 8 different gadgets (over any nights)",0
+l_ach24     db "BOTTOM OF THE LINE - snag a bottom feeder on a capture line",0
 s_locked    db "locked",0
 s_unlocked  db "UNLOCKED",0
 fmt_info    db "%s",0
@@ -185,8 +187,8 @@ k_t_ladders db "t_ladders",0
 k_safe      db "safe_rooms",0
 k_deauths   db "deauths",0
 k_start_map db "start_with_map",0
-k_portal    db "portal_gun",0
-k_hookshot  db "hookshot",0
+k_portal    db "gadget_parts",0
+k_hookshot  db "gadget_count",0
 k_dew       db "dew",0
 k_feeders   db "feeders",0
 k_nemesis   db "nemesis",0
@@ -224,6 +226,8 @@ s_hidden    db "HIDDEN IN THE BUILDING",0
 s_start_w   db "START WITH THEM",0
 s_start_it  db "START WITH IT",0
 s_none      db "NONE",0
+s_few       db "A FEW, HIDDEN (THE SEED PICKS)",0
+s_all_hand  db "EVERY PART IN HAND",0
 s_hold      db "HOLD",0
 s_toggle    db "TOGGLE",0
 s_full      db "FULL",0
@@ -235,7 +239,7 @@ n_ach       dq s_locked, s_unlocked
 n_building  dq s_classic, s_generated, s_original, s_custom
 n_layout    dq s_maze, s_classic2, s_open
 n_map       dq s_hidden, s_start_w
-n_portal    dq s_hidden, s_start_it, s_none
+n_portal    dq s_few, s_all_hand, s_none
 n_crouch    dq s_hold, s_toggle
 n_scale     dq s_full, s_half, s_third
 
@@ -259,8 +263,8 @@ rows:
     ROW l_safe,      k_safe,      cfg_safe,       T_CHOICE, 0, 1, 1, n_offon
     ROW l_deauths,   k_deauths,   cfg_deauths,    T_INT,    0, 9, 1, 0
     ROW l_start_map, k_start_map, cfg_start_map,  T_CHOICE, 0, 1, 1, n_map
-    ROW l_portal,    k_portal,    cfg_portal,     T_CHOICE, 0, 2, 1, n_portal
-    ROW l_hookshot,  k_hookshot,  cfg_hookshot,   T_CHOICE, 0, 2, 1, n_portal
+    ROW l_portal,    k_portal,    cfg_gparts,     T_CHOICE, 0, 2, 1, n_portal
+    ROW l_hookshot,  k_hookshot,  cfg_gcount,     T_INT,    1, 4, 1, 0
     ROW l_dew,       k_dew,       cfg_dew,        T_INT,    0, 8, 1, 0
     ROW l_feeders,   k_feeders,   cfg_feeders,    T_INT,    0, 4, 1, 0
     ROW l_nemesis,   k_nemesis,   cfg_nemesis,    T_CHOICE, 0, 1, 1, n_offon
@@ -311,6 +315,8 @@ rows:
     ROW l_ach20,     0,           ach_flag+80,     T_INFO,   0, 1, 1, n_ach
     ROW l_ach21,     0,           ach_flag+84,     T_INFO,   0, 1, 1, n_ach
     ROW l_ach22,     0,           ach_flag+88,     T_INFO,   0, 1, 1, n_ach
+    ROW l_ach23,     0,           ach_flag+92,    T_INFO,   0, 1, 1, n_ach
+    ROW l_ach24,     0,           ach_flag+96,    T_INFO,   0, 1, 1, n_ach
 rows_end:
 %define NROWS ((rows_end - rows) / ROW_SIZE)
 

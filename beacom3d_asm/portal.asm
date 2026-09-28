@@ -20,6 +20,7 @@
 %include "common.inc"
 
 global portal_reset, portal_fire, portal_check_teleport, portal_views, portal_draw_rims
+global portal_fire_from
 global por_on, por_x, por_y, por_z, por_f, gun_kick, gun_colour
 
 extern draw_scene, use_program, upload_frame_uniforms, bind
@@ -114,6 +115,23 @@ portal_reset:
     ret
 
 ; portal_fire(edi=0 blue / 1 orange) -- shoot along your view
+; portal_fire_from(edi = 0 blue / 1 orange, xmm0..2 = origin, xmm3..5 = unit
+; direction) -- the same shot from somewhere else (the drone base)
+portal_fire_from:
+    PROLOGUE 64
+    mov r15d, edi
+    mov [gun_colour], edi
+    movss [ray+0], xmm0
+    movss [ray+4], xmm1
+    movss [ray+8], xmm2
+    mulss xmm3, [c_ray_step]
+    movss [ray+12], xmm3
+    mulss xmm4, [c_ray_step]
+    movss [ray+16], xmm4
+    mulss xmm5, [c_ray_step]
+    movss [ray+20], xmm5
+    jmp portal_fire.from_ray            ; (same frame)
+
 portal_fire:
     PROLOGUE 64
     mov r15d, edi
@@ -147,6 +165,7 @@ portal_fire:
     xorps xmm0, [c_sign_mask]
     mulss xmm0, [c_ray_step]
     movss [ray+20], xmm0                ; dz
+.from_ray:
     ; starting cell
     call ray_cell                       ; r12 f, r13 x, r14 y
     mov [rsp+4], r12d

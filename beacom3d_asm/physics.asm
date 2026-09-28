@@ -26,7 +26,7 @@
 
 global physics_reset, physics_spawn_props, physics_update, physics_ragdoll
 global phys_np, phys_nb, px, py, pz, body_type, body_p0, body_np, body_active
-global rag_active, rag_body, rag_time, add_box, props_top
+global rag_active, rag_body, rag_time, add_box, props_top, physics_push, physics_move
 
 extern random_node, enemy_deauth, snd_clatter
 
@@ -107,6 +107,64 @@ physics_reset:
     mov [phys_nb], eax
     mov [rag_active], eax
     mov dword [rag_body], -1
+    ret
+
+; physics_push(edi = body, xmm0..2 = velocity) -- (gadgets) set it moving:
+; every particle's last position is put where that velocity came from. leaf
+physics_push:
+    movss xmm3, [h_step]
+    FLD xmm4, 0.001
+    comiss xmm3, xmm4
+    ja .h
+    FLD xmm3, 0.008333
+.h:
+    mulss xmm0, xmm3
+    mulss xmm1, xmm3
+    mulss xmm2, xmm3
+    mov ecx, [body_p0+rdi*4]
+    mov edx, [body_np+rdi*4]
+    add edx, ecx
+.p:
+    cmp ecx, edx
+    jge .done
+    movss xmm3, [px+rcx*4]
+    subss xmm3, xmm0
+    movss [ox+rcx*4], xmm3
+    movss xmm3, [py+rcx*4]
+    subss xmm3, xmm1
+    movss [oy+rcx*4], xmm3
+    movss xmm3, [pz+rcx*4]
+    subss xmm3, xmm2
+    movss [oz+rcx*4], xmm3
+    inc ecx
+    jmp .p
+.done:
+    ret
+
+; physics_move(edi = body, xmm0..2 = offset) -- (gadgets) pick it up and put
+; it down that far away, at rest. leaf
+physics_move:
+    mov ecx, [body_p0+rdi*4]
+    mov edx, [body_np+rdi*4]
+    add edx, ecx
+.p:
+    cmp ecx, edx
+    jge .done
+    movss xmm3, [px+rcx*4]
+    addss xmm3, xmm0
+    movss [px+rcx*4], xmm3
+    movss [ox+rcx*4], xmm3
+    movss xmm3, [py+rcx*4]
+    addss xmm3, xmm1
+    movss [py+rcx*4], xmm3
+    movss [oy+rcx*4], xmm3
+    movss xmm3, [pz+rcx*4]
+    addss xmm3, xmm2
+    movss [pz+rcx*4], xmm3
+    movss [oz+rcx*4], xmm3
+    inc ecx
+    jmp .p
+.done:
     ret
 
 ; add_particle(xmm0=x, xmm1=y, xmm2=z) -> eax index (at rest). leaf

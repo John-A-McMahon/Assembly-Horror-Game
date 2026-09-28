@@ -17,13 +17,13 @@
 %include "common.inc"
 
 global main, items, item_count, inventory, deauths, game_state, elapsed_time, win_w, win_h
-global on_t_spotted, have_map, have_compass, have_portal, invert_y, show_fps
-global special, have_hookshot, add_item
+global on_t_spotted, have_map, have_compass, invert_y, show_fps
+global special, add_item, take_item
 global have_grod, tyler_armed, tyler_x, tyler_y, tyler_z, grod_beam, beam_x, beam_y, beam_z
 
 extern sign_count, glDeleteLists, t_speed_bonus, keys_down, p_crouch, p_step_event
 extern traverse_reset, traverse_update, traverse_try_grab, trav_prompt, p_mode
-extern p_on_ground, snd_can, snd_can_t, p_vy, feeder_put, por_on, portal_reset
+extern p_on_ground, snd_can, snd_can_t, p_vy, feeder_put, por_on, portal_reset, por_x
 extern gen_stairs, gen_atriums, nav_player, nav_t_mask
 extern build_deauth, director_reset, t_build, bld_on, t_goal, dir_calm, dir_relax, t_camp
 extern t_por_on, build_break, enemy_portal_follow, bld_ay, bld_by, bld_ax, bld_bx, bld_az, bld_bz
@@ -33,6 +33,8 @@ extern add_box, snd_fanfare, map_floor, dump_shadow_map, glFinish, p_eye_y, gete
 
 
 ; keys_down slots (player.asm)
+%define LN_TRIP_T 3                 ; (gadget.asm's LN_TRIP)
+%define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
 %define K_FWD    0
 %define K_BACK   1
 %define K_LEFT   2
@@ -157,18 +159,53 @@ st_dew_t db "[selftest] T sniffed out a can %d cells away and drank it after %.1
 st_hook_across db "[selftest] hookshot across the collaboration space: pulled to x=%.2f (the media wall is at x=70; expect > 67)",10,0
 st_hook_up db "[selftest] hookshot up to the balcony: ended at y=%.2f on floor %d (expect floor 2), SPIDER-BEACOM=%d (expect 1)",10,0
 st_hook_t db "[selftest] hookshot hits T: stunned for %.2fs (expect > 0), GET OVER HERE=%d (expect 1)",10,0
-st_hook_slot db "[selftest] one special item: portal gun held=%d, hookshot left at your feet=%d (expect 1 1); holding %d (3=hookshot) after dropping a stack of %d deauths (expect 3)",10,0
 st_row_fmt  db "%.59s",10,0
 env_gensweep db "BEACOM_GENSWEEP",0
 st_sweep_fmt db "[selftest] seed sweep 1..%d: seeds missing a stairwell %d, storeys without open floor %d, seeds with unreachable spots %d (%d cells)",10,0
 st_sweep_fmt3 db "[selftest] T's spawn, generated buildings: never closer than %d steps from you, never under %d%% of the longest walk (expect >= 55)",10,0
 st_sweep_fmt4 db "[selftest] T's spawn, the real Beacom, seeds 1..2000: never closer than %d steps, never under %d%% of the longest walk (expect >= 55)",10,0
 st_sweep_fmt2 db "[selftest] seed sweep: duplicate layouts %d, open cells per building %d..%d",10,0
+env_leak db "BEACOM_LEAKTEST",0
+st_leak db "[leaktest] after %d builds of the 10-storey building: the real Beacom draws at %.1f fps",10,0
 env_nocus db "BEACOM_NOCUSTOM",0
 env_gendump db "BEACOM_GENDUMP",0
 st_zip_fmt  db "[selftest] zipline: grabbed=%d, ended on floor %d at x=%.1f y=%.2f (cable ends x=111)",10,0
 st_path_fmt db "[selftest] path basement(3,3) -> 2nd floor(5,3): found=%d, %d cells",10,0
 st_t_fmt    db "[selftest] t=%5.1fs  T on floor %d at (%d,%d)  state=%d  dist=%.1f",10,0
+st_g_grammar db "[selftest] gadgets: %d of 32 base x module x firing type combinations assemble (expect 32), catalog %d (expect 32), TINKERER=%d (expect 1)",10,0
+st_g_caps   db "[selftest] gadget capabilities: portal gun portals=%d, hookshot grapples+winches=%d, remote grabber reaches=%d, zipline gun strings lines=%d (expect 1 1 1 1)",10,0
+st_g_portal db "[selftest] PORTAL GUN (gun+portal+laser): blue portal on the media wall=%d (expect 1)",10,0
+st_g_hook   db "[selftest] HOOKSHOT (gun+rod+hook): hauled %.1f m across the collaboration space (expect > 10)",10,0
+st_g_ender  db "[selftest] ENDER ORB (gun+portal+orb): you're %.1f m on, where it came to rest (expect > 4), storey %d (expect 1)",10,0
+st_g_grab   db "[selftest] GRAPPLER (gun+rod+grabber): hauled a can of Dew in from 8 m: taken=%d drank=%d (expect 1 1)",10,0
+st_g_remote db "[selftest] REMOTE GRABBER (gun+portal+grabber): a window on the floor, the hand took %d thing (expect 1), the deauth packet is yours=%d (expect 1)",10,0
+st_g_zip    db "[selftest] ZIPLINE GUN (gun+line+hook): riding your line=%d (expect 1), rode %.1f m (expect > 4)",10,0
+st_g_winch  db "[selftest] winch (a HOOKSHOT on a zipline): hauled back up to t=%.2f (expect < 0.90), stamina %.2f (expect < 1); without it gravity takes you to t=%.2f (expect > 0.50)",10,0
+st_g_capture db "[selftest] CAPTURE LINE (gun+line+grabber): snagged a bottom feeder=%d (expect 1), it slid %.1f m down the line (expect > 0.5), BOTTOM OF THE LINE=%d (expect 1)",10,0
+st_g_blink  db "[selftest] BLINK HOOK (gun+portal+hook): blinked %.1f m (expect > 8), storey %d (expect 1)",10,0
+st_g_trail  db "[selftest] SMOKE TRAIL (gun+smoke+hook): %d clouds behind you (expect 2), hauled %.1f m (expect > 8)",10,0
+st_g_peg    db "[selftest] PEG LAUNCHER (gun+rod+orb): +%d platform (expect 1) of style %d (expect 3); stand on it at %.2f, its top %.2f (expect equal)",10,0
+st_g_smoke  db "[selftest] SMOKE GRENADE (gun+smoke+orb): T could see you=%d, then with the cloud between you=%d (expect 1 0)",10,0
+st_g_hood   db "[selftest] SMOKE HOOD (gun+smoke+grabber): %d cloud on T (expect 1); he walks 3 m and sees you=%d (expect 0)",10,0
+st_g_knock  db "[selftest] KNOCKER (gun+rod+laser): the clank off the far wall sent T to look=%d (expect 1)",10,0
+st_g_bola   db "[selftest] BOLA (gun+line+orb): T tangled for %.1f s (expect 2.5)",10,0
+st_g_trip   db "[selftest] TRIPWIRE (gun+line+laser): strung=%d (expect 1); T walks into it: sprung=%d (expect 1), tangled %.1f s (expect 1.6)",10,0
+st_g_knockfd db "[selftest] KNOCKER on a thieving bottom feeder: still carrying=%d (expect 0), captures dropped=%d (expect 1)",10,0
+st_g_parts  db "[selftest] gadget parts: every night hides 2 modules + 2 firing types + the drone frame=%d (expect 1), %d different module pairs over 10 seeds (expect > 2), picking them up assembles a gadget=%d (expect 1)",10,0
+st_g_trans  db "[selftest] transmute: a safe room offers it=%d (expect 1), your only module became another=%d (expect 1), used up (charges left)=%d (expect 0)",10,0
+st_g_one    db "[selftest] one part of each kind: carrying %d (expect 3: frame, module, firing type), left lying in the building %d parts + %d frame (expect 2 + 1), R swapped nothing=%d (expect 1)",10,0
+st_g_back   db "[selftest] swap back: holding the module you left=%d (expect 1), your old one lies where it was=%d (expect 1)",10,0
+st_d_send   db "[selftest] DRONE: at your shoulder=%d (expect 1); V sent it %.1f m down the collaboration space (expect > 10), hovering=%d (expect 1)",10,0
+st_d_portal db "[selftest] PORTAL DRONE (drone+portal+laser), turned to the side: portal opened=%d (expect 1), %.1f m along from the drone (expect < 2), %.1f m along from you (expect > 8)",10,0
+st_d_noise  db "[selftest] KNOCKER DRONE (drone+rod+laser): your noise firing from the drone %.2f (expect 0.00), the same shot from a gun %.2f (expect > 0)",10,0
+st_d_tow    db "[selftest] TOW DRONE (drone+rod+hook), looking the other way: hauled %.1f m (expect > 10), ending %.1f m from the drone (expect < 2)",10,0
+st_d_blink  db "[selftest] BLINK BEACON (drone+portal+hook): drone upstairs, out of sight: a TOW DRONE moved you %.1f m (expect 0.0); the blink put you on storey %d (expect 2), drone docked=%d (expect 1)",10,0
+st_d_fetch  db "[selftest] FETCH DRONE (drone+rod+grabber): a can 4 m off your line of fire: the drone got it=%d, drank=%d (expect 1 1); a gun, same aim, got it=%d (expect 0)",10,0
+st_d_swat   db "[selftest] T swats a drone in his reach: down=%d (expect 1), no shots while it reboots: portal=%d (expect 0), home again after 9 s=%d (expect 1)",10,0
+st_d_frame  db "[selftest] frames swap like parts: holding the DRONE=%d (expect 1), the GUN frame lies where it was=%d (expect 1), hands empty=%d (expect 1)",10,0
+sh_g_drone  db "shots/53_drone_out.bmp",0
+sh_g_drone2 db "shots/54_drone_home.bmp",0
+st_g_inhand db "[selftest] gadget parts all in hand: modules %d, firing types %d (expect 15 15), holding combination %d (expect 6 = HOOKSHOT)",10,0
 st_caught   db "[selftest] T reached the player after %.1f simulated seconds -- PASS",10,0
 st_notcaught db "[selftest] T did not reach the player -- FAIL",10,0
 st_fps_fmt  db "[selftest] render benchmark: %.1f frames per second at %dx%d",10,0
@@ -200,8 +237,6 @@ hint_one    db "1",0
 m_see_key   db "You see a wireshark packet capture flicker in the dark...",0
 m_got_map   db "You got the MAP! Press M to see every floor -- [ and ] page through them.",0
 m_got_compass db "You got the COMPASS! The map now shows the captures, B... and where T is.",0
-m_got_portal db "You got the PORTAL GUN! Left click (or Q): blue portal, right click: orange portal.",0
-m_got_hook  db "You got the HOOKSHOT! Left click (or Q) at a wall, a ceiling, a ledge: it bites and yanks you there. SPACE mid-pull flings you.",0
 m_dropped   db "You can only carry one special item -- you leave the %s where you stand.",0
 m_full      db "You can't carry more than 3 deauth packets.",0
 m_dew_you   db "*kssht* DIET MOUNTAIN DEW. Unlimited stamina for 10 seconds -- run.",0
@@ -227,13 +262,11 @@ c_grod_beam dd 0.5
 c_give_d    dd 2.6                      ; close enough to hand Tyler something
 pdx         dd 1, -1, 0, 0
 pdy         dd 0, 0, 1, -1
-m_nothing   db "You're not holding a special item (deauth packet, portal gun or hookshot).",0
+m_nothing   db "Nothing to fire: find gadget parts or deauth packets.",0
 sp_name1    db "deauth packets",0
-sp_name2    db "portal gun",0
-sp_name3    db "hookshot",0
 align 8
-sp_names    dq 0, sp_name1, sp_name2, sp_name3
-sp_items    dd -1, IT_WEAPON, IT_PORTAL, IT_HOOKSHOT
+sp_names    dq 0, sp_name1
+sp_items    dd -1, IT_WEAPON
 m_got_key   db "Packet capture acquired (%d/3). Bring them to B.",0
 m_all_keys  db "That's all three. Get back to B in the library -- ground floor.",0
 m_see_b     db "Lord of networking: 'Pull up wireshark and get a capture going! This Beacom building is very dangerous! Mr. T lurks the halls. Mr. Y has gone missing -- you must find 3 wireshark packet captures before it is too late. If you are ever scared, I have used my networking magic to secure some rooms. T cannot enter them! Good luck on your quest!'",0
@@ -287,6 +320,14 @@ sh_gen_view db "shots/18_generated_hallway.bmp",0
 sh_menu_ach db "shots/14b_pause_menu_achievements.bmp",0
 sh_ach_toast db "shots/35_achievement_unlocked.bmp",0
 sh_tower db "shots/44_ten_storey_atrium.bmp",0
+sh_g_bench db "shots/45_gadget_bench.bmp",0
+sh_g_parts db "shots/46_gadget_parts.bmp",0
+sh_g_smoke db "shots/47_smoke_grenade.bmp",0
+sh_g_zip db "shots/48_zipline_gun.bmp",0
+sh_g_capture db "shots/49_capture_line.bmp",0
+sh_g_remote db "shots/50_remote_grabber.bmp",0
+sh_g_peg db "shots/51_peg_launcher.bmp",0
+sh_g_grab db "shots/52_grappler_in_hand.bmp",0
 sh_learn db "shots/43_t_learns.bmp",0
 sh_build db "shots/42_t_builds_stairs.bmp",0
 sh_grod db "shots/40_packet_of_grod.bmp",0
@@ -433,9 +474,8 @@ warp_pending resd 1
 invert_y    resd 1
 have_map    resd 1
 have_compass resd 1
-have_portal resd 1
-have_hookshot resd 1
-special     resd 1                  ; SP_: the one special item you carry
+special     resd 1                  ; SP_: the special item you carry (deauths)
+mouse_l_held resd 1                 ; left button down (winching)
 mouse_edge_mode resd 1
 show_fps    resd 1
 fps_frames  resd 1
@@ -811,6 +851,7 @@ new_game:
     call traverse_reset
     call portal_reset
     call hookshot_reset
+    call gadget_reset
     call ach_new_run
     mov dword [crouch_latch], 0
     xor edi, edi
@@ -818,9 +859,8 @@ new_game:
     xor eax, eax
     mov [have_map], eax
     mov [have_compass], eax
-    mov [have_portal], eax
-    mov [have_hookshot], eax
     mov [special], eax
+    mov [mouse_l_held], eax
     mov edi, [start_f]                  ; (each building has its own start)
     mov esi, [start_x]
     mov edx, [start_y]
@@ -860,38 +900,29 @@ new_game:
     mov esi, eax
     mov edi, IT_COMPASS
     call add_item
-    ; ...and the portal gun (custom run: hidden / in your hands / none)
-    cmp dword [cfg_portal], 1
-    jne .portal_hidden
-    mov edi, SP_PORTAL
-    call give_special
-.portal_hidden:
-    cmp dword [cfg_portal], 0
-    jne .portal_done
+    ; gadget parts: you have the gun frame; the seed hides a few modules and
+    ; firing types around the building (custom run: every part in hand, or
+    ; none at all) -- gadget.asm picks them, they're placed here
+    call gadget_new_run
+    xor ebx, ebx
+.parts:
+    cmp ebx, [gd_roll_n]
+    jge .parts_done
     mov edi, -1
     xor esi, esi
     xor edx, edx
     call random_cell
     mov esi, eax
-    mov edi, IT_PORTAL
+    mov edi, [gd_roll_kind+rbx*4]
     call add_item
-.portal_done:
-    ; ...and the hookshot (hidden / in your hands / none)
-    cmp dword [cfg_hookshot], 1
-    jne .hook_hidden
-    mov edi, SP_HOOK
-    call give_special                   ; (both in hand? the portal gun lands at your feet)
-.hook_hidden:
-    cmp dword [cfg_hookshot], 0
-    jne .hook_done
-    mov edi, -1
-    xor esi, esi
-    xor edx, edx
-    call random_cell
-    mov esi, eax
-    mov edi, IT_HOOKSHOT
-    call add_item
-.hook_done:
+    mov eax, [item_count]
+    dec eax
+    imul eax, eax, ITEM_SIZE
+    mov ecx, [gd_roll_id+rbx*4]
+    mov [items+rax+ITEM_CHARGES], ecx   ; (which part it is)
+    inc ebx
+    jmp .parts
+.parts_done:
     cmp dword [cfg_start_map], 0
     je .map_hidden
     mov dword [have_map], 1
@@ -1137,7 +1168,47 @@ interact:
     call nearest_item
     test rax, rax
     jz .try_b
-    mov rbx, rax
+    mov rdi, rax
+    call take_item
+    EPILOGUE
+.try_b:
+    call traverse_try_grab              ; a zipline overhead?
+    test eax, eax
+    jnz .done
+    call near_b
+    test eax, eax
+    jz .done
+    cmp dword [inventory], 3
+    jl .talk
+    mov dword [game_state], GS_WON
+    call ach_won
+    jmp .done
+.talk:
+    mov edi, ACH_NETWORKING
+    call ach_unlock
+    movss xmm0, [b_cooldown]
+    comiss xmm0, [c_zero]
+    ja .done
+    lea rdi, [m_see_b]
+    call lore
+    lea rdi, [msg_buf]
+    mov esi, 512
+    lea rdx, [m_have]
+    mov ecx, [inventory]
+    xor eax, eax
+    call snprintf
+    lea rdi, [msg_buf]
+    mov esi, COL_INFO
+    call msg
+    mov eax, [c_b_talk_cd]
+    mov [b_cooldown], eax
+.done:
+    EPILOGUE
+
+; take_item(rdi = item) -- pick it up (E, or a gadget that fetched it for you)
+take_item:
+    PROLOGUE 16
+    mov rbx, rdi
     mov dword [rbx+ITEM_ACTIVE], 0
     call snd_pickup
     cmp dword [rbx+ITEM_KIND], IT_KEY
@@ -1257,54 +1328,21 @@ interact:
     call msg
     jmp .done
 .not_compass:
-    cmp eax, IT_PORTAL
-    jne .not_portal
-    mov edi, SP_PORTAL
-    call give_special
-    lea rdi, [m_got_portal]
-    mov esi, COL_GOOD
-    call msg
-    jmp .done
-.not_portal:
-    cmp eax, IT_HOOKSHOT
+    ; a gadget part: into your bag (gadget.asm)
+    cmp eax, IT_MODULE
+    je .part
+    cmp eax, IT_FIRING
     jne .done
-    mov edi, SP_HOOK
-    call give_special
-    lea rdi, [m_got_hook]
-    mov esi, COL_GOOD
-    call msg
-    jmp .done
-.try_b:
-    call traverse_try_grab              ; a zipline overhead?
+.part:
+    mov edi, eax
+    mov esi, [rbx+ITEM_CHARGES]
+    call gadget_take
     test eax, eax
-    jnz .done
-    call near_b
-    test eax, eax
-    jz .done
-    cmp dword [inventory], 3
-    jl .talk
-    mov dword [game_state], GS_WON
-    call ach_won
+    js .done
+    ; one of each kind at a time: the part you held lies where this one was
+    mov [rbx+ITEM_CHARGES], eax
+    mov dword [rbx+ITEM_ACTIVE], 1
     jmp .done
-.talk:
-    mov edi, ACH_NETWORKING
-    call ach_unlock
-    movss xmm0, [b_cooldown]
-    comiss xmm0, [c_zero]
-    ja .done
-    lea rdi, [m_see_b]
-    call lore
-    lea rdi, [msg_buf]
-    mov esi, 512
-    lea rdx, [m_have]
-    mov ecx, [inventory]
-    xor eax, eax
-    call snprintf
-    lea rdi, [msg_buf]
-    mov esi, COL_INFO
-    call msg
-    mov eax, [c_b_talk_cd]
-    mov [b_cooldown], eax
 .done:
     EPILOGUE
 
@@ -1315,10 +1353,6 @@ use_special:
     mov eax, [special]
     cmp eax, SP_DEAUTH
     je .deauth
-    cmp eax, SP_PORTAL
-    je .portal
-    cmp eax, SP_HOOK
-    je .hook
     lea rdi, [m_nothing]
     cmp dword [have_grod], 0
     je .say
@@ -1329,13 +1363,6 @@ use_special:
     EPILOGUE
 .deauth:
     call fire_deauth
-    EPILOGUE
-.portal:
-    mov edi, ebx                        ; blue / orange
-    call portal_fire
-    EPILOGUE
-.hook:
-    call hookshot_fire
     EPILOGUE
 
 ; give_special(edi = SP_) -- hold this one; whatever you held (if it was a
@@ -1370,14 +1397,6 @@ give_special:
     call msg
 .take:
     mov [special], ebx
-    xor eax, eax
-    cmp ebx, SP_PORTAL
-    sete al
-    mov [have_portal], eax
-    xor eax, eax
-    cmp ebx, SP_HOOK
-    sete al
-    mov [have_hookshot], eax
     EPILOGUE
 
 ; drop_item(edi = item kind) -> rax = the new item, lying where you stand
@@ -1897,8 +1916,8 @@ handle_events:
 .btn_play:
     cmp dword [game_state], GS_PLAYING
     jne .poll
-    ; your special item: left click uses it, right click is its other use
-    ; (the orange portal; the same as left for everything else)
+    ; left click fires your gadget (no gadget: your deauth packets), right
+    ; click is its other use (the orange portal)
     xor edi, edi
     cmp ecx, 1
     je .use
@@ -1906,14 +1925,37 @@ handle_events:
     jne .poll
     mov edi, 1
 .use:
+    cmp ecx, 1
+    jne .fire
+    mov dword [mouse_l_held], 1         ; (held: winching along a zipline)
+.fire:
+    push rdi
+    push rdi
+    call gadget_fire
+    pop rdi
+    pop rdi
+    test eax, eax
+    jnz .poll
     call use_special
     jmp .poll
 .not_button:
+    cmp eax, 0x402                      ; SDL_MOUSEBUTTONUP
+    jne .not_up
+    cmp byte [event+16], 1
+    jne .poll
+    mov dword [mouse_l_held], 0
+    jmp .poll
+.not_up:
     cmp eax, SDL_MOUSEWHEEL
     jne .not_wheel
-    cmp dword [game_state], GS_PAUSED
-    jne .poll
     mov edi, [event+20]
+    cmp dword [game_state], GS_PAUSED
+    je .menu_wheel
+    cmp dword [game_state], GS_PLAYING
+    jne .poll
+    call gadget_wheel                   ; in play: swap the firing type
+    jmp .poll
+.menu_wheel:
     call menu_wheel
     jmp .poll
 .not_wheel:
@@ -1922,6 +1964,17 @@ handle_events:
     cmp byte [event+13], 0              ; ignore key repeat
     jne .poll
     mov ecx, [event+16]                 ; scancode
+    ; Esc with the gadget bench open just closes the bench
+    cmp ecx, SC_ESC
+    jne .esc_normal
+    cmp dword [gd_bench], 0
+    je .esc_normal
+    cmp dword [game_state], GS_PLAYING
+    jne .esc_normal
+    mov edi, ecx
+    call gadget_key
+    jmp .poll
+.esc_normal:
     cmp ecx, SC_ESC
     jne .not_esc
     xor edi, edi
@@ -1942,6 +1995,15 @@ handle_events:
 .key_play:
     cmp dword [game_state], GS_PLAYING
     jne .poll
+    ; the gadget's keys first: R, G, and the bench's while it's open
+    push rcx
+    push rcx
+    mov edi, ecx
+    call gadget_key
+    pop rcx
+    pop rcx
+    test eax, eax
+    jnz .poll
     ; crouch in toggle mode: each press flips it
     cmp ecx, SC_C
     je .crouch_key
@@ -1981,6 +2043,14 @@ handle_events:
 .k2:
     cmp ecx, SC_Q
     jne .k3
+    ; Q: your deauth packets if you have them, else the gadget
+    cmp dword [special], SP_DEAUTH
+    je .q_deauth
+    xor edi, edi
+    call gadget_fire
+    test eax, eax
+    jnz .poll
+.q_deauth:
     xor edi, edi
     call use_special
     jmp .poll
@@ -2082,6 +2152,22 @@ handle_events:
     mov [keys_down+K_CROUCH], al
     mov al, [rbx+SC_SPACE]
     mov [keys_down+K_JUMP], al
+    ; the fire button held (winching along a zipline): left mouse or Q
+    movzx eax, byte [rbx+SC_Q]
+    or eax, [mouse_l_held]
+    mov [gd_fire_held], eax
+    ; the gadget bench open: your hands are busy, you stand still
+    cmp dword [gd_bench], 0
+    je .bench_shut
+    xor eax, eax
+    mov [keys_down+K_FWD], al
+    mov [keys_down+K_BACK], al
+    mov [keys_down+K_LEFT], al
+    mov [keys_down+K_RIGHT], al
+    mov [keys_down+K_SPRINT], al
+    mov [keys_down+K_JUMP], al
+    mov dword [gd_fire_held], 0
+.bench_shut:
     EPILOGUE
 
 ; =============================================================================
@@ -2645,6 +2731,8 @@ game_tick:
     movss xmm0, [rsp+0]
     call hookshot_update
     movss xmm0, [rsp+0]
+    call gadget_update
+    movss xmm0, [rsp+0]
     call traverse_update
     movss xmm0, [rsp+0]
     movss xmm1, [elapsed_time]
@@ -3125,12 +3213,13 @@ shot_mode_run:
     call player_spawn
     mov dword [p_yaw], __float32__(-1.5708)
     mov dword [p_pitch], __float32__(-0.12)
-    mov edi, SP_PORTAL
-    call give_special
+    call gadget_give_all
+    mov edi, GM_PORTAL
+    mov esi, GF_LASER
+    call gadget_select
     lea rdi, [sh_hands_gun]
     call shot_now
-    mov dword [special], SP_NONE
-    mov dword [have_portal], 0
+    mov dword [gd_view], 0
     mov dword [p_mode], 2
     mov dword [p_pitch], __float32__(0.25)
     lea rdi, [sh_hands_zip]
@@ -3175,8 +3264,10 @@ shot_mode_run:
     call player_spawn
     mov dword [p_yaw], __float32__(-1.5708)
     mov dword [p_pitch], __float32__(0.05)
-    mov edi, SP_HOOK
-    call give_special
+    call gadget_give_all
+    mov edi, GM_ROD
+    mov esi, GF_HOOK
+    call gadget_select
     lea rdi, [sh_hook_hand]
     call shot_now
     call hookshot_fire
@@ -3190,8 +3281,7 @@ shot_mode_run:
     call shot_now
     call hookshot_reset
     mov dword [p_mode], 0
-    mov dword [special], SP_NONE
-    mov dword [have_hookshot], 0
+    mov dword [gd_view], 0
     ; a can of Diet Mountain Dew on the floor ahead
     mov edi, 1
     mov esi, 28
@@ -3435,6 +3525,183 @@ shot_mode_run:
     call prepare_world
     call new_game
     call hud_clear_messages
+    ; ---- gadgets, in the real Beacom's collaboration space
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    call hud_clear_messages
+    call gt_t_away
+    call gadget_give_all
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov dword [gd_known], 0x1A65        ; (a few in the catalog already)
+    mov edi, GM_SMOKE
+    mov esi, GF_ORB
+    call gadget_select
+    call hud_clear_messages
+    mov dword [gd_bench], 1
+    lea rdi, [sh_g_bench]
+    call shot_now
+    mov dword [gd_bench], 0
+    ; parts lying on the floor ahead
+    mov edi, IT_MODULE
+    mov esi, NODE(1,28,15)
+    call add_item
+    call gt_last_item
+    mov dword [rax+ITEM_CHARGES], GM_SMOKE
+    mov r12, rax
+    mov edi, IT_FIRING
+    mov esi, NODE(1,28,17)
+    call add_item
+    call gt_last_item
+    mov dword [rax+ITEM_CHARGES], GF_ORB
+    mov r13, rax
+    mov dword [p_pitch], __float32__(-0.35)
+    lea rdi, [sh_g_parts]
+    call shot_now
+    mov dword [r12+ITEM_ACTIVE], 0
+    mov dword [r13+ITEM_ACTIVE], 0
+    ; a smoke grenade, lobbed and blooming
+    call hud_clear_messages
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.1
+    call gt_spawn
+    mov edi, GM_SMOKE
+    mov esi, GF_ORB
+    call gt_fire
+    FLD xmm0, 2.0
+    call hook_run
+    call hud_clear_messages
+    lea rdi, [sh_g_smoke]
+    call shot_now
+    mov dword [sm_count], 0
+    ; the zipline gun: strung to the media wall, and riding it
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, GM_LINE
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 1.0
+    call hook_run
+    call hud_clear_messages
+    mov dword [p_pitch], __float32__(0.12)
+    lea rdi, [sh_g_zip]
+    call shot_now
+    mov dword [p_mode], 0
+    mov dword [zip_active], -1
+    ; a capture line down to the floor, a bottom feeder snagged on it
+    mov edi, 1
+    mov esi, 26
+    mov edx, 17
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.25
+    call gt_spawn
+    xor edi, edi
+    mov esi, NODE(1,28,17)
+    call feeder_put
+    mov edi, GM_LINE
+    mov esi, GF_GRAB
+    call gt_fire
+    FLD xmm0, 0.6
+    call hook_run
+    call hud_clear_messages
+    mov dword [p_yaw], __float32__(-1.2)
+    lea rdi, [sh_g_capture]
+    call shot_now
+    ; the remote grabber's window, reaching for a deauth packet
+    mov edi, IT_WEAPON
+    mov esi, NODE(1,29,13)
+    call add_item
+    mov edi, 1
+    mov esi, 26
+    mov edx, 13
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.5
+    call gt_spawn
+    mov edi, GM_PORTAL
+    mov esi, GF_GRAB
+    call gt_fire
+    FLD xmm0, 0.1
+    call hook_run
+    lea rdi, [sh_g_remote]
+    call shot_now
+    ; pegs: rods dug into the floor ahead
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.2
+    call gt_spawn
+    mov edi, GM_ROD
+    mov esi, GF_ORB
+    call gt_fire
+    FLD xmm0, 2.0
+    call hook_run
+    call hud_clear_messages
+    mov dword [p_pitch], __float32__(-0.3)
+    lea rdi, [sh_g_peg]
+    call shot_now
+    ; the grappler in hand
+    mov edi, GM_ROD
+    mov esi, GF_GRAB
+    call gadget_select
+    call hud_clear_messages
+    mov dword [p_pitch], __float32__(-0.12)
+    lea rdi, [sh_g_grab]
+    call shot_now
+    ; the drone: sent off down the collaboration space, then at your shoulder
+    mov dword [gd_base], GB_DRONE
+    mov edi, GM_SMOKE
+    mov esi, GF_ORB
+    call gadget_select
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, 25
+    call gadget_key
+    FLD xmm0, 0.1
+    call hook_run
+    mov dword [dr_state], DR_PARK       ; (hovering a few metres off, to see it)
+    movss xmm0, [p_x]
+    FLD xmm1, 3.2
+    addss xmm0, xmm1
+    movss [dr_x], xmm0
+    movss xmm0, [p_eye_y]
+    FLD xmm1, 0.3
+    addss xmm0, xmm1
+    movss [dr_y], xmm0
+    movss xmm0, [p_z]
+    FLD xmm1, 0.8
+    addss xmm0, xmm1
+    movss [dr_z], xmm0
+    FLD xmm0, 0.05
+    call hook_run
+    call hud_clear_messages
+    lea rdi, [sh_g_drone]
+    call shot_now
+    mov dword [dr_state], DR_HOME
+    FLD xmm0, 0.05
+    call hook_run
+    call hud_clear_messages
+    lea rdi, [sh_g_drone2]
+    call shot_now
+    mov dword [gd_base], GB_GUN
+    mov dword [dr_state], DR_HOME
+    mov dword [gd_view], 0
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -3593,7 +3860,6 @@ walk_leg:
 .quiet:
     EPILOGUE
 
-%define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
 %define XN(i) (NCELLS + (i))
 extern path_len, path
 
@@ -4207,6 +4473,8 @@ hook_run:
     movss xmm0, [c_dt_shot]
     call hookshot_update
     movss xmm0, [c_dt_shot]
+    call gadget_update
+    movss xmm0, [c_dt_shot]
     call traverse_update
     movss xmm0, [c_dt_shot]
     movss xmm1, [elapsed_time]
@@ -4281,60 +4549,1199 @@ hook_tests:
     mov esi, [ach_flag+ACH_HOOK_T*4]
     mov eax, 1
     call printf
-    ; one special item: picking up the portal gun leaves the hookshot behind
-    mov dword [t_stun], __float32__(10000.0)
-    mov dword [special], SP_NONE
-    mov edi, SP_HOOK
-    call give_special
-    mov edi, SP_PORTAL
-    call give_special
-    mov r14d, [have_portal]
-    xor r12d, r12d                      ; hookshots lying where you stand
-    xor ebx, ebx
-.it:
-    cmp ebx, [item_count]
-    jge .counted
-    imul eax, ebx, ITEM_SIZE
-    lea r13, [items+rax]
-    cmp dword [r13+ITEM_ACTIVE], 0
-    je .n
-    cmp dword [r13+ITEM_KIND], IT_HOOKSHOT
-    jne .n
-    movss xmm0, [r13+ITEM_X]
-    subss xmm0, [p_x]
-    andps xmm0, [c_abs_mask]
-    FLD xmm1, 0.1
-    comiss xmm0, xmm1
-    jae .n
-    inc r12d
-.n:
-    inc ebx
-    jmp .it
-.counted:
-    ; ...and a stack of 3 deauths is dropped as one item of 3
-    mov edi, SP_DEAUTH
-    call give_special
-    mov dword [deauths], MAX_DEAUTHS
-    mov edi, SP_HOOK
-    call give_special
-    mov eax, [item_count]
-    dec eax
-    imul eax, eax, ITEM_SIZE
-    mov r8d, [items+rax+ITEM_CHARGES]
-    lea rdi, [st_hook_slot]
-    mov esi, r14d
-    mov edx, r12d
-    mov ecx, [special]
-    xor eax, eax
-    call printf
     lea rdi, [ach_flag]
     xor esi, esi
     mov edx, NACH*4
     call memset
     mov dword [special], SP_NONE
-    mov dword [have_hookshot], 0
-    mov dword [have_portal], 0
     EPILOGUE
+
+; ---- gadget self-tests (real Beacom: the collaboration space, facing the
+; media wall from cell 26,15 on the ground floor) ------------------------------
+%define NODE(f,x,y) (((f)*MAP_H + (y))*MAP_W + (x))
+
+; gt_spawn(edi = floor, esi = x, edx = y, xmm0 = yaw, xmm1 = pitch) -- stand
+; there looking that way (eyes refreshed), nothing out, nothing cooling down
+gt_spawn:
+    PROLOGUE 16
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    call player_spawn
+    mov eax, [rsp+0]
+    mov [p_yaw], eax
+    mov eax, [rsp+4]
+    mov [p_pitch], eax
+    mov dword [p_mode], 0
+    call hookshot_reset
+    FLD xmm0, 0.05
+    call hook_run
+    mov dword [gd_cool], 0
+    EPILOGUE
+
+; gt_fire(edi = module, esi = firing type) -- assemble it, pull the trigger
+gt_fire:
+    PROLOGUE 16
+    call gadget_select
+    mov dword [gd_cool], 0
+    xor edi, edi
+    call gadget_fire
+    EPILOGUE
+
+; gt_t_away -- T to the far end of the basement, frozen
+gt_t_away:
+    PROLOGUE 16
+    xor edi, edi
+    mov esi, 6
+    mov edx, 6
+    call find_near_open_at
+    mov edi, eax
+    call enemy_reset
+    mov dword [t_stun], __float32__(10000.0)
+    EPILOGUE
+
+; gt_t_at(edi = node) -- T there, wide awake
+gt_t_at:
+    PROLOGUE 16
+    call enemy_reset
+    mov dword [t_stun], 0
+    EPILOGUE
+
+; gt_t_sees -> eax 1 if there's a clear line from T's eyes to yours
+gt_t_sees:
+    sub rsp, 8
+    movss xmm0, [t_x]
+    movss xmm1, [t_y]
+    FLD xmm3, 1.8
+    addss xmm1, xmm3
+    movss xmm2, [t_z]
+    movss xmm3, [p_x]
+    movss xmm4, [p_eye_y]
+    movss xmm5, [p_z]
+    call line_of_sight_3d
+    add rsp, 8
+    ret
+
+; gt_last_item -> rax = the item add_item just made
+gt_last_item:
+    mov eax, [item_count]
+    dec eax
+    imul eax, eax, ITEM_SIZE
+    lea rax, [items+rax]
+    ret
+
+; gadget_tests -- every reference gadget does its thing; the grammar holds
+gadget_tests:
+    PROLOGUE 64
+    mov eax, [seed_val]
+    mov [rsp+56], eax
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    call gt_t_away
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    call gadget_give_all
+    ; ---- the grammar: every module with every firing type
+    mov dword [gd_known], 0
+    xor r12d, r12d
+    xor ebx, ebx
+.g:
+    cmp ebx, NCOMBOS
+    jge .g_done
+    mov eax, ebx
+    shr eax, 4                          ; (NMODS*NFIRES = 16 per base)
+    mov [gd_base], eax
+    mov eax, ebx
+    and eax, NMODS*NFIRES-1
+    xor edx, edx
+    mov ecx, NFIRES
+    div ecx
+    mov edi, eax
+    mov esi, edx
+    call gadget_select
+    cmp [gd_last_combo], ebx
+    jne .g_n
+    inc r12d
+.g_n:
+    inc ebx
+    jmp .g
+.g_done:
+    mov dword [gd_base], GB_GUN
+    call gadget_count_known
+    lea rdi, [st_g_grammar]
+    mov esi, r12d
+    mov edx, eax
+    mov ecx, [ach_flag+ACH_TINKER*4]
+    xor eax, eax
+    call printf
+    ; ---- capabilities, not weapon checks
+    mov edi, GM_PORTAL
+    mov esi, GF_LASER
+    call gadget_select
+    xor r12d, r12d
+    test dword [gd_caps], CAP_PORTAL
+    setnz r12b
+    mov edi, GM_ROD
+    mov esi, GF_HOOK
+    call gadget_select
+    mov eax, [gd_caps]
+    and eax, CAP_GRAPPLE|CAP_WINCH
+    xor r13d, r13d
+    cmp eax, CAP_GRAPPLE|CAP_WINCH
+    sete r13b
+    mov edi, GM_PORTAL
+    mov esi, GF_GRAB
+    call gadget_select
+    xor r14d, r14d
+    test dword [gd_caps], CAP_REMOTE
+    setnz r14b
+    mov edi, GM_LINE
+    mov esi, GF_HOOK
+    call gadget_select
+    xor r15d, r15d
+    test dword [gd_caps], CAP_LINE
+    setnz r15b
+    lea rdi, [st_g_caps]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, r14d
+    mov r8d, r15d
+    xor eax, eax
+    call printf
+    ; ---- PORTAL GUN
+    call portal_reset
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, GM_PORTAL
+    mov esi, GF_LASER
+    call gt_fire
+    lea rdi, [st_g_portal]
+    mov esi, [por_on]
+    xor eax, eax
+    call printf
+    call portal_reset
+    ; ---- HOOKSHOT
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov edi, GM_ROD
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 2.0
+    call hook_run
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_g_hook]
+    mov eax, 1
+    call printf
+    ; ---- ENDER ORB
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, 0.25
+    call gt_spawn
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov edi, GM_PORTAL
+    mov esi, GF_ORB
+    call gt_fire
+    FLD xmm0, 3.0
+    call hook_run
+    call player_floor
+    mov esi, eax
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+0]
+    andps xmm0, [c_abs_mask]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_g_ender]
+    mov eax, 1
+    call printf
+    ; ---- GRAPPLER: a can of Dew 8 m off
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.081
+    call gt_spawn
+    mov edi, IT_DEW
+    mov esi, NODE(1,30,15)
+    call add_item
+    call gt_last_item
+    mov r13, rax
+    mov dword [p_dew], 0
+    mov edi, GM_ROD
+    mov esi, GF_GRAB
+    call gt_fire
+    FLD xmm0, 2.0
+    call hook_run
+    xor esi, esi
+    cmp dword [r13+ITEM_ACTIVE], 0
+    sete sil
+    xor edx, edx
+    movss xmm0, [p_dew]
+    comiss xmm0, [c_zero]
+    seta dl
+    lea rdi, [st_g_grab]
+    xor eax, eax
+    call printf
+    ; ---- REMOTE GRABBER: a deauth packet by the spot on the floor
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.5
+    call gt_spawn
+    mov edi, IT_WEAPON
+    mov esi, NODE(1,28,15)
+    call add_item
+    mov dword [special], SP_NONE
+    mov dword [deauths], 0
+    mov dword [rg_hits], 0
+    mov edi, GM_PORTAL
+    mov esi, GF_GRAB
+    call gt_fire
+    xor edx, edx
+    cmp dword [special], SP_DEAUTH
+    sete dl
+    lea rdi, [st_g_remote]
+    mov esi, [rg_hits]
+    xor eax, eax
+    call printf
+    mov dword [special], SP_NONE
+    mov dword [deauths], 0
+    ; ---- ZIPLINE GUN: strung to the media wall, and you're on it
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov edi, GM_LINE
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 0.6
+    call hook_run
+    xor r12d, r12d
+    cmp dword [p_mode], 2
+    sete r12b
+    FLD xmm0, 3.0
+    call hook_run
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_g_zip]
+    mov esi, r12d
+    mov eax, 1
+    call printf
+    ; ---- winching back up it with a HOOKSHOT (the way you look: its top)
+    mov edi, GM_ROD
+    mov esi, GF_HOOK
+    call gadget_select
+    mov dword [p_yaw], __float32__(1.5708)
+    mov eax, [zip_static]
+    mov [zip_active], eax
+    mov dword [p_mode], 2
+    mov dword [zip_t], __float32__(0.9)
+    mov dword [zip_speed], 0
+    mov dword [p_stamina], __float32__(1.0)
+    mov dword [gd_fire_held], 1
+    FLD xmm0, 1.0
+    call hook_run
+    movss xmm0, [zip_t]
+    cvtss2sd xmm0, xmm0
+    movsd [rsp+8], xmm0
+    movss xmm0, [p_stamina]
+    cvtss2sd xmm0, xmm0
+    movsd [rsp+16], xmm0
+    mov dword [gd_fire_held], 0
+    ; ...and without it: gravity takes you down
+    mov eax, [zip_static]
+    mov [zip_active], eax
+    mov dword [p_mode], 2
+    mov dword [zip_t], __float32__(0.5)
+    mov dword [zip_speed], 0
+    FLD xmm0, 1.0
+    call hook_run
+    movss xmm2, [zip_t]
+    cvtss2sd xmm2, xmm2
+    movsd xmm0, [rsp+8]
+    movsd xmm1, [rsp+16]
+    lea rdi, [st_g_winch]
+    mov eax, 3
+    call printf
+    mov dword [p_mode], 0
+    mov dword [zip_active], -1
+    ; ---- CAPTURE LINE: strung down to the floor over a bottom feeder
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.25
+    call gt_spawn
+    xor edi, edi
+    mov esi, NODE(1,28,15)
+    call feeder_put
+    mov eax, [fd_x]
+    mov [rsp+0], eax
+    mov edi, GM_LINE
+    mov esi, GF_GRAB
+    call gt_fire
+    FLD xmm0, 0.05
+    call hook_run
+    xor r12d, r12d
+    cmp dword [fd_line], 0
+    setge r12b
+    FLD xmm0, 2.0
+    call hook_run
+    movss xmm0, [fd_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_g_capture]
+    mov esi, r12d
+    mov edx, [ach_flag+ACH_CONVEYOR*4]
+    mov eax, 1
+    call printf
+    ; ---- BLINK HOOK
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov edi, GM_PORTAL
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 1.0
+    call hook_run
+    call player_floor
+    mov esi, eax
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_g_blink]
+    mov eax, 1
+    call printf
+    ; ---- SMOKE TRAIL
+    mov dword [sm_count], 0
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov edi, GM_SMOKE
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 2.0
+    call hook_run
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_g_trail]
+    mov esi, [sm_count]
+    mov eax, 1
+    call printf
+    ; ---- PEG LAUNCHER
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, 0.15
+    call gt_spawn
+    mov eax, [plat_count]
+    mov [rsp+0], eax
+    mov edi, GM_ROD
+    mov esi, GF_ORB
+    call gt_fire
+    FLD xmm0, 3.0
+    call hook_run
+    mov r12d, [plat_count]
+    sub r12d, [rsp+0]
+    mov ebx, [plat_count]
+    dec ebx
+    mov r13d, [plat_style+rbx*4]
+    ; stand on it: the surface there, from just above
+    movss xmm0, [plat_x0+rbx*4]
+    addss xmm0, [plat_x1+rbx*4]
+    mulss xmm0, [c_half]
+    movss xmm1, [plat_z0+rbx*4]
+    addss xmm1, [plat_z1+rbx*4]
+    mulss xmm1, [c_half]
+    movss xmm2, [plat_ya+rbx*4]
+    FLD xmm3, 0.2
+    addss xmm2, xmm3
+    FLD xmm3, 0.5
+    call ground_height
+    cvtss2sd xmm0, xmm0
+    movss xmm1, [plat_ya+rbx*4]
+    cvtss2sd xmm1, xmm1
+    lea rdi, [st_g_peg]
+    mov esi, r12d
+    mov edx, r13d
+    mov eax, 2
+    call printf
+    ; ---- SMOKE GRENADE between you and T
+    mov dword [sm_count], 0
+    mov edi, NODE(1,33,15)
+    call gt_t_at
+    mov dword [t_stun], __float32__(10000.0)
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.1
+    call gt_spawn
+    call gt_t_sees
+    mov r12d, eax
+    mov edi, GM_SMOKE
+    mov esi, GF_ORB
+    call gt_fire
+    FLD xmm0, 3.0
+    call hook_run
+    call gt_t_sees
+    lea rdi, [st_g_smoke]
+    mov esi, r12d
+    mov edx, eax
+    xor eax, eax
+    call printf
+    ; ---- SMOKE HOOD on T: it goes where he goes
+    mov dword [sm_count], 0
+    mov edi, NODE(1,31,15)
+    call gt_t_at
+    mov dword [t_stun], __float32__(10000.0)
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.055
+    call gt_spawn
+    mov edi, GM_SMOKE
+    mov esi, GF_GRAB
+    call gt_fire
+    FLD xmm0, 0.5
+    call hook_run
+    movss xmm0, [t_x]
+    FLD xmm1, 3.0
+    subss xmm0, xmm1
+    movss [t_x], xmm0
+    FLD xmm0, 0.05
+    call hook_run
+    call gt_t_sees
+    lea rdi, [st_g_hood]
+    mov esi, [sm_count]
+    mov edx, eax
+    xor eax, eax
+    call printf
+    mov dword [sm_count], 0
+    ; ---- KNOCKER: the clank off the far wall draws T there
+    mov eax, [cfg_t_vision]
+    mov [rsp+4], eax
+    mov dword [cfg_t_vision], 0
+    mov edi, 1
+    mov esi, 31
+    mov edx, 13
+    call find_near_open_at
+    mov edi, eax
+    call gt_t_at
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, GM_ROD
+    mov esi, GF_LASER
+    call gt_fire
+    xor esi, esi
+    cmp dword [t_state], T_INVESTIGATE
+    sete sil
+    lea rdi, [st_g_knock]
+    xor eax, eax
+    call printf
+    ; ---- BOLA at T
+    mov edi, NODE(1,31,15)
+    call gt_t_at
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, 0.1
+    call gt_spawn
+    mov edi, GM_LINE
+    mov esi, GF_ORB
+    call gt_fire
+    FLD xmm0, 3.0
+    call hook_run
+    movss xmm0, [t_stun]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_g_bola]
+    mov eax, 1
+    call printf
+    mov eax, [rsp+4]
+    mov [cfg_t_vision], eax
+    ; ---- TRIPWIRE: find a spot with walls both ways, then walk T into it
+    call gt_t_away
+    xor r12d, r12d                      ; strung?
+    mov r13d, 3                         ; y
+.ty:
+    cmp r13d, 28
+    jg .trip_tried
+    mov r14d, 3                         ; x
+.tx:
+    cmp r14d, 56
+    jg .ty_n
+    mov edi, 1
+    mov esi, r14d
+    mov edx, r13d
+    call cell_at
+    cmp eax, ' '
+    jne .tx_n
+    mov edi, 1
+    mov esi, r14d
+    mov edx, r13d
+    xorps xmm0, xmm0
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, LN_TRIP_T
+    call gadget_line
+    mov r15d, eax
+    mov edi, GM_LINE
+    mov esi, GF_LASER
+    call gt_fire
+    mov edi, LN_TRIP_T
+    call gadget_line
+    cmp eax, r15d
+    jle .tx_n
+    mov r12d, 1
+    jmp .trip_tried
+.tx_n:
+    add r14d, 3
+    jmp .tx
+.ty_n:
+    add r13d, 3
+    jmp .ty
+.trip_tried:
+    xor r13d, r13d                      ; sprung?
+    test r12d, r12d
+    jz .trip_report
+    ; the wire's middle: T walks through it
+    xor ebx, ebx
+.find_wire:
+    cmp dword [ln_type+rbx*4], LN_TRIP_T
+    je .wire
+    inc ebx
+    jmp .find_wire
+.wire:
+    movss xmm0, [ln_ax+rbx*4]
+    addss xmm0, [ln_bx+rbx*4]
+    mulss xmm0, [c_half]
+    movss [t_x], xmm0
+    movss xmm0, [ln_az+rbx*4]
+    addss xmm0, [ln_bz+rbx*4]
+    mulss xmm0, [c_half]
+    movss [t_z], xmm0
+    movss xmm0, [ln_ay+rbx*4]
+    FLD xmm1, 0.35
+    subss xmm0, xmm1
+    movss [t_y], xmm0
+    mov dword [t_stun], 0
+    movss xmm0, [c_dt_shot]
+    call gadget_update
+    mov edi, LN_TRIP_T
+    call gadget_line
+    xor r13d, r13d
+    test eax, eax
+    sete r13b
+.trip_report:
+    movss xmm0, [t_stun]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_g_trip]
+    mov esi, r12d
+    mov edx, r13d
+    mov eax, 1
+    call printf
+    ; ---- KNOCKER on a thieving feeder: it drops the capture
+    call gt_t_away
+    xor edi, edi
+    mov esi, NODE(1,32,15)
+    call feeder_put
+    mov dword [fd_carry], 1
+    call gt_count_keys
+    mov r12d, eax
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.104
+    call gt_spawn
+    mov edi, GM_ROD
+    mov esi, GF_LASER
+    call gt_fire
+    call gt_count_keys
+    sub eax, r12d
+    mov edx, eax
+    lea rdi, [st_g_knockfd]
+    mov esi, [fd_carry]
+    xor eax, eax
+    call printf
+    ; ---- runs: a few parts hidden, chosen by the seed
+    mov eax, [cfg_gparts]
+    mov [rsp+8], eax
+    mov eax, [cfg_gcount]
+    mov [rsp+12], eax
+    mov dword [cfg_gparts], 0
+    mov dword [cfg_gcount], 2
+    mov r13d, 1                         ; every night right
+    xor r15d, r15d                      ; module pairs seen (bit per mask)
+    mov r14d, 1
+.seed:
+    cmp r14d, 10
+    jg .seeds_done
+    mov [seed_val], r14d
+    call new_game
+    xor ebx, ebx
+    xor r12d, r12d                      ; parts found
+    xor ecx, ecx                        ; modules mask
+    xor r8d, r8d                        ; drone frames
+.pi:
+    cmp ebx, [item_count]
+    jge .pi_done
+    imul eax, ebx, ITEM_SIZE
+    cmp dword [items+rax+ITEM_ACTIVE], 0
+    je .pi_n
+    mov edx, [items+rax+ITEM_KIND]
+    cmp edx, IT_FIRING
+    je .pi_part
+    cmp edx, IT_MODULE
+    jne .pi_n
+    mov edx, [items+rax+ITEM_CHARGES]
+    test edx, PART_BASE
+    jz .pi_mod
+    inc r8d
+    jmp .pi_n
+.pi_mod:
+    bts ecx, edx
+.pi_part:
+    inc r12d
+.pi_n:
+    inc ebx
+    jmp .pi
+.pi_done:
+    cmp r8d, 1
+    jne .count_bad
+    cmp r12d, 4
+    je .count_ok
+.count_bad:
+    xor r13d, r13d
+.count_ok:
+    bts r15d, ecx
+    inc r14d
+    jmp .seed
+.seeds_done:
+    ; pick up the last night's parts: they assemble a gadget
+    xor ebx, ebx
+.take:
+    cmp ebx, [item_count]
+    jge .taken
+    imul eax, ebx, ITEM_SIZE
+    lea rdi, [items+rax]
+    cmp dword [rdi+ITEM_ACTIVE], 0
+    je .take_n
+    cmp dword [rdi+ITEM_KIND], IT_MODULE
+    je .take_it
+    cmp dword [rdi+ITEM_KIND], IT_FIRING
+    jne .take_n
+.take_it:
+    call take_item
+.take_n:
+    inc ebx
+    jmp .take
+.taken:
+    xor ecx, ecx
+    cmp dword [gd_last_combo], 0
+    setge cl
+    popcnt edx, r15d
+    lea rdi, [st_g_parts]
+    mov esi, r13d
+    xor eax, eax
+    call printf
+    ; ---- one module and one firing type at a time: the rest stay behind
+    popcnt r12d, [gd_bag_mod]
+    popcnt eax, [gd_bag_fire]
+    add r12d, eax
+    popcnt eax, [gd_bag_base]
+    add r12d, eax                       ; parts carried
+    xor r13d, r13d                      ; parts lying in the building
+    xor r14d, r14d                      ; (a module lying there)
+    mov dword [rsp+16], 0               ; frames lying there
+    xor ebx, ebx
+.lie:
+    cmp ebx, [item_count]
+    jge .lie_done
+    imul eax, ebx, ITEM_SIZE
+    cmp dword [items+rax+ITEM_ACTIVE], 0
+    je .lie_n
+    cmp dword [items+rax+ITEM_KIND], IT_FIRING
+    je .lie_part
+    cmp dword [items+rax+ITEM_KIND], IT_MODULE
+    jne .lie_n
+    test dword [items+rax+ITEM_CHARGES], PART_BASE
+    jz .lie_mod
+    inc dword [rsp+16]
+    jmp .lie_n
+.lie_mod:
+    lea r14, [items+rax]
+.lie_part:
+    inc r13d
+.lie_n:
+    inc ebx
+    jmp .lie
+.lie_done:
+    mov ebx, [gd_mod]
+    mov edi, 21                         ; R: no second module to swap in
+    call gadget_key
+    xor r15d, r15d
+    cmp ebx, [gd_mod]
+    sete r15b
+    lea rdi, [st_g_one]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, [rsp+16]
+    mov r8d, r15d
+    xor eax, eax
+    call printf
+    ; swap back: take the module you left
+    xor r13d, r13d
+    xor r15d, r15d
+    test r14, r14
+    jz .back_done
+    mov ebx, [gd_mod]
+    mov r12d, [r14+ITEM_CHARGES]
+    mov rdi, r14
+    call take_item
+    cmp r12d, [gd_mod]
+    sete r13b
+    cmp dword [r14+ITEM_ACTIVE], 1
+    jne .back_done
+    cmp ebx, [r14+ITEM_CHARGES]
+    sete r15b
+.back_done:
+    lea rdi, [st_g_back]
+    mov esi, r13d
+    mov edx, r15d
+    xor eax, eax
+    call printf
+    ; ---- transmuting in a safe room
+    mov dword [gd_bag_mod], 1           ; just the portal module
+    mov dword [gd_mod], GM_PORTAL
+    mov edi, 'S'
+    mov esi, 'N'
+    call find_cell
+    mov edi, [fo_f]
+    mov esi, [fo_x]
+    mov edx, [fo_y]
+    xorps xmm0, xmm0
+    xorps xmm1, xmm1
+    call gt_spawn                       ; (runs a few frames: you're in a safe room)
+    mov r12d, [gd_charge]
+    mov edi, 10                         ; G: the bench (module column)
+    call gadget_key
+    mov edi, 23                         ; T: transmute
+    call gadget_key
+    mov edi, 10
+    call gadget_key
+    mov eax, [gd_bag_mod]
+    xor r13d, r13d
+    popcnt ecx, eax
+    cmp ecx, 1
+    jne .tr
+    cmp eax, 1
+    je .tr
+    mov r13d, 1
+.tr:
+    lea rdi, [st_g_trans]
+    mov esi, r12d
+    mov edx, r13d
+    mov ecx, [gd_charge]
+    xor eax, eax
+    call printf
+    ; ---- every part in hand
+    mov dword [cfg_gparts], 1
+    call new_game
+    lea rdi, [st_g_inhand]
+    mov esi, [gd_bag_mod]
+    mov edx, [gd_bag_fire]
+    mov ecx, [gd_last_combo]
+    xor eax, eax
+    call printf
+    mov eax, [rsp+8]
+    mov [cfg_gparts], eax
+    mov eax, [rsp+12]
+    mov [cfg_gcount], eax
+    mov eax, [rsp+56]
+    mov [seed_val], eax
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    mov dword [gd_known], 0
+    EPILOGUE
+
+; drone_tests -- the DRONE base (real Beacom, the collaboration space): it
+; flies, its shots leave it (and T hears it, not you), hooks bite it,
+; grabbers reel to it, T swats it, and frames swap like parts
+drone_tests:
+    PROLOGUE 64
+    mov eax, [seed_val]
+    mov [rsp+56], eax
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    call hud_clear_messages
+    call gt_t_away
+    call gadget_give_all
+    mov dword [gd_base], GB_DRONE
+    ; ---- send it down the collaboration space
+    call portal_reset
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, GM_PORTAL
+    mov esi, GF_LASER
+    call gadget_select
+    xor r12d, r12d
+    cmp dword [dr_state], DR_HOME
+    sete r12b
+    mov edi, 25                         ; V
+    call gadget_key
+    FLD xmm0, 2.0
+    call hook_run
+    xor edx, edx
+    cmp dword [dr_state], DR_PARK
+    sete dl
+    movss xmm0, [dr_x]
+    subss xmm0, [p_x]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_d_send]
+    mov esi, r12d
+    mov eax, 1
+    call printf
+    ; ---- PORTAL DRONE: turn to the side -- the portal opens by the drone
+    mov dword [p_yaw], 0
+    mov dword [gd_cool], 0
+    xor edi, edi
+    call gadget_fire
+    movss xmm0, [por_x]
+    subss xmm0, [dr_x]
+    andps xmm0, [c_abs_mask]
+    cvtss2sd xmm0, xmm0
+    movss xmm1, [por_x]
+    subss xmm1, [p_x]
+    andps xmm1, [c_abs_mask]
+    cvtss2sd xmm1, xmm1
+    lea rdi, [st_d_portal]
+    mov esi, [por_on]
+    mov eax, 2
+    call printf
+    call portal_reset
+    ; ---- the knocker from the drone: T hears the drone, not you
+    mov dword [noise_level], 0
+    mov edi, GM_ROD
+    mov esi, GF_LASER
+    call gt_fire
+    mov eax, [noise_level]
+    mov [rsp+0], eax
+    mov dword [noise_level], 0
+    mov dword [gd_base], GB_GUN         ; (the drone stays where it is)
+    mov edi, GM_ROD
+    mov esi, GF_LASER
+    call gt_fire
+    mov dword [gd_base], GB_DRONE
+    movss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    movss xmm1, [noise_level]
+    cvtss2sd xmm1, xmm1
+    lea rdi, [st_d_noise]
+    mov eax, 2
+    call printf
+    mov dword [noise_level], 0
+    ; ---- TOW DRONE: haul yourself to it, looking the other way
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov dword [p_yaw], __float32__(1.5708)
+    mov edi, GM_ROD
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 2.5
+    call hook_run
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    movss xmm1, [dr_x]
+    subss xmm1, [p_x]
+    mulss xmm1, xmm1
+    movss xmm2, [dr_z]
+    subss xmm2, [p_z]
+    mulss xmm2, xmm2
+    addss xmm1, xmm2
+    sqrtss xmm1, xmm1
+    cvtss2sd xmm1, xmm1
+    lea rdi, [st_d_tow]
+    mov eax, 2
+    call printf
+    ; ---- BLINK BEACON: the drone upstairs, where you can't see it
+    mov edi, 2
+    mov esi, 26
+    mov edx, 15
+    xorps xmm0, xmm0
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov eax, [p_x]
+    mov [rsp+16], eax
+    mov eax, [p_eye_y]
+    mov [rsp+20], eax
+    mov eax, [p_z]
+    mov [rsp+24], eax
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov dword [dr_state], DR_PARK
+    mov eax, [rsp+16]
+    mov [dr_x], eax
+    mov eax, [rsp+20]
+    mov [dr_y], eax
+    mov eax, [rsp+24]
+    mov [dr_z], eax
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov eax, [p_z]
+    mov [rsp+4], eax
+    mov edi, GM_ROD
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 1.0
+    call hook_run
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+0]
+    mulss xmm0, xmm0
+    movss xmm1, [p_z]
+    subss xmm1, [rsp+4]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    movss [rsp+8], xmm0
+    mov edi, GM_PORTAL
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 0.1
+    call hook_run
+    call player_floor
+    mov esi, eax
+    xor edx, edx
+    cmp dword [dr_state], DR_HOME
+    sete dl
+    movss xmm0, [rsp+8]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_d_blink]
+    mov eax, 1
+    call printf
+    ; ---- FETCH DRONE: a can 4 m to the side of your line of fire
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.081
+    call gt_spawn
+    mov edi, IT_DEW
+    mov esi, NODE(1,30,17)
+    call add_item
+    call gt_last_item
+    mov r13, rax
+    mov dword [dr_state], DR_PARK
+    movss xmm0, [p_x]
+    FLD xmm1, 2.0
+    addss xmm0, xmm1
+    movss [dr_x], xmm0
+    mov eax, [p_eye_y]
+    mov [dr_y], eax
+    movss xmm0, [p_z]
+    FLD xmm1, 4.0
+    addss xmm0, xmm1
+    movss [dr_z], xmm0
+    mov dword [p_dew], 0
+    mov edi, GM_ROD
+    mov esi, GF_GRAB
+    call gt_fire
+    FLD xmm0, 2.0
+    call hook_run
+    xor r12d, r12d
+    cmp dword [r13+ITEM_ACTIVE], 0
+    sete r12b
+    xor r14d, r14d
+    movss xmm0, [p_dew]
+    comiss xmm0, [c_zero]
+    seta r14b
+    ; the same shot from a gun
+    mov dword [p_dew], 0
+    mov edi, IT_DEW
+    mov esi, NODE(1,30,17)
+    call add_item
+    call gt_last_item
+    mov r13, rax
+    mov dword [gd_base], GB_GUN
+    mov dword [dr_state], DR_HOME
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    FLD xmm1, -0.081
+    call gt_spawn
+    mov edi, GM_ROD
+    mov esi, GF_GRAB
+    call gt_fire
+    FLD xmm0, 2.0
+    call hook_run
+    xor ecx, ecx
+    cmp dword [r13+ITEM_ACTIVE], 0
+    sete cl
+    mov dword [r13+ITEM_ACTIVE], 0
+    mov dword [gd_base], GB_DRONE
+    lea rdi, [st_d_fetch]
+    mov esi, r12d
+    mov edx, r14d
+    xor eax, eax
+    call printf
+    mov dword [p_dew], 0
+    ; ---- T swats a drone within his reach
+    call portal_reset
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, 1
+    mov esi, 30
+    mov edx, 15
+    call find_near_open_at
+    mov edi, eax
+    call gt_t_at
+    mov dword [t_stun], 0
+    mov dword [dr_state], DR_PARK
+    movss xmm0, [t_x]
+    FLD xmm1, -0.6
+    addss xmm0, xmm1
+    movss [dr_x], xmm0
+    movss xmm0, [t_y]
+    FLD xmm1, 1.6
+    addss xmm0, xmm1
+    movss [dr_y], xmm0
+    mov eax, [t_z]
+    mov [dr_z], eax
+    FLD xmm0, 0.1
+    call hook_run
+    xor r12d, r12d
+    cmp dword [dr_state], DR_DOWN
+    sete r12b
+    call gt_t_away
+    mov edi, GM_PORTAL
+    mov esi, GF_LASER
+    call gt_fire
+    mov r13d, [por_on]
+    FLD xmm0, 9.0
+    call hook_run
+    xor ecx, ecx
+    cmp dword [dr_state], DR_HOME
+    sete cl
+    lea rdi, [st_d_swat]
+    mov esi, r12d
+    mov edx, r13d
+    xor eax, eax
+    call printf
+    call portal_reset
+    ; ---- frames swap like parts
+    mov dword [gd_base], GB_GUN
+    mov dword [gd_bag_base], 1
+    mov edi, IT_MODULE
+    mov esi, NODE(1,28,15)
+    call add_item
+    call gt_last_item
+    mov r13, rax
+    mov dword [r13+ITEM_CHARGES], PART_BASE|GB_DRONE
+    mov rdi, r13
+    call take_item
+    xor esi, esi
+    cmp dword [gd_base], GB_DRONE
+    sete sil
+    xor edx, edx
+    cmp dword [r13+ITEM_ACTIVE], 1
+    jne .fr
+    cmp dword [r13+ITEM_CHARGES], PART_BASE|GB_GUN
+    sete dl
+.fr:
+    xor ecx, ecx
+    cmp dword [gd_view], 0
+    sete cl
+    lea rdi, [st_d_frame]
+    xor eax, eax
+    call printf
+    mov dword [r13+ITEM_ACTIVE], 0
+    ; tidy up
+    mov dword [gd_base], GB_GUN
+    mov dword [dr_state], DR_HOME
+    mov eax, [rsp+56]
+    mov [seed_val], eax
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    mov dword [gd_known], 0
+    call hud_clear_messages
+    EPILOGUE
+
+; gt_count_keys -> eax = packet captures lying around
+gt_count_keys:
+    xor eax, eax
+    xor ecx, ecx
+.i:
+    cmp ecx, [item_count]
+    jge .done
+    imul edx, ecx, ITEM_SIZE
+    cmp dword [items+rdx+ITEM_ACTIVE], 0
+    je .n
+    cmp dword [items+rdx+ITEM_KIND], IT_KEY
+    jne .n
+    inc eax
+.n:
+    inc ecx
+    jmp .i
+.done:
+    ret
 
 ; find_open(edi = floor, esi = 1: open floor under it too) -> eax 1 and
 ; fo_x/fo_y: a cell in the middle of a bit of open floor (3x3) with a slab
@@ -5869,6 +7276,87 @@ custom_tests:
     call new_game
     EPILOGUE
 
+; bench_frames(edi = frames) -> xmm0 = frames per second (double)
+bench_frames:
+    PROLOGUE 16
+    mov r12d, edi
+    mov ebx, 20
+.warm:
+    movss xmm0, [c_dt_shot]
+    call present
+    dec ebx
+    jnz .warm
+    call glFinish
+    call SDL_GetPerformanceCounter
+    mov [rsp+0], rax
+    mov ebx, r12d
+.f:
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call player_update
+    movss xmm0, [c_dt_shot]
+    movss xmm1, [elapsed_time]
+    call world_lights_update
+    movss xmm0, [c_dt_shot]
+    call present
+    dec ebx
+    jnz .f
+    call glFinish
+    call SDL_GetPerformanceCounter
+    sub rax, [rsp+0]
+    cvtsi2sd xmm1, rax
+    cvtsi2sd xmm2, qword [perf_freq]
+    divsd xmm1, xmm2
+    cvtsi2sd xmm0, r12d
+    divsd xmm0, xmm1
+    EPILOGUE
+
+; leak_test(rdi = "K") -- see selftest
+leak_test:
+    PROLOGUE 32
+    xor r12d, r12d                      ; K
+.digit:
+    movzx eax, byte [rdi]
+    sub eax, 0x30
+    cmp eax, 9
+    ja .have_k
+    imul r12d, r12d, 10
+    add r12d, eax
+    inc rdi
+    jmp .digit
+.have_k:
+    xor r13d, r13d
+.big:
+    cmp r13d, r12d
+    jge .real
+    mov dword [cfg_building], BLD_CUSTOM
+    mov dword [cfg_floors], 10
+    mov dword [cfg_width], 89
+    mov dword [cfg_depth], 47
+    mov dword [cfg_layout], 2
+    lea eax, [r13d+1]
+    mov [seed_val], eax
+    mov dword [built_mode], -1
+    call prepare_world
+    inc r13d
+    jmp .big
+.real:
+    mov dword [cfg_building], BLD_REAL
+    mov dword [cfg_layout], 1
+    mov dword [seed_val], 1
+    mov dword [built_mode], -1
+    call prepare_world
+    call new_game
+    mov dword [t_stun], __float32__(10000.0)
+    call SDL_SetWindowSize_default
+    mov edi, 180
+    call bench_frames
+    lea rdi, [st_leak]
+    mov esi, r12d
+    mov eax, 1
+    call printf
+    EPILOGUE
+
 ; start_node -> eax = the node you start on in this building
 start_node:
     sub rsp, 8
@@ -6166,10 +7654,23 @@ atrium_tests:
     EPILOGUE
 
 selftest:
+    ; BEACOM_LEAKTEST=K: build the biggest building K times, then time the
+    ; real Beacom (does building big worlds leave the renderer slower?)
+    sub rsp, 8
+    lea rdi, [env_leak]
+    call getenv
+    add rsp, 8
+    test rax, rax
+    jz selftest_all
+    mov rdi, rax
+    jmp leak_test
+selftest_all:
     PROLOGUE 32
     mov dword [seed_val], 42
     call real_tests                     ; the real Beacom first...
     call hook_tests
+    call gadget_tests
+    call drone_tests
     call oob_tests
     call dew_tests
     call feeder_tests
@@ -6596,10 +8097,12 @@ main:
     jne .no_cfg
     call settings_load
     call ach_load                       ; (and save them from now on)
+    call gadget_load                    ; (the gadget catalog, too)
 .no_cfg:
     call world_init
     call render_init
     call hud_init
+    call gadget_init
     call audio_init
     mov dword [built_mode], -1
     call prepare_world
