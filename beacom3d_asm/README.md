@@ -517,7 +517,8 @@ follow you down into the atrium. He still can't climb ladders.
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
 | `achievements.asm` | the 25 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
-| `hands.asm` | your hands and arms: anatomical gripping hands, flashlight, your gadget (gun or hook shape, glowing in its module's colour), sleeve |
+| `hands.asm` | your hands and arms: the sculpted hands, hoodie sleeves, flashlight and gadget from `assets/` (or the built-in primitive ones if those files are missing), the gadget's glow in its module's colour, the view-model lighting |
+| `assets.asm` | loads the baked art in `assets/`: meshes (`.bmsh`) into display lists, albedo and normal/gloss maps into mipmapped textures; the building's surfaces replace the painted ones |
 | `gadget.asm` | the gadget grammar: parts, assembly, the bench and catalog, the two frames (gun; the drone -- flight, T's swat, shots from where it is), the four deliveries (laser, orb, hook, grabber) and each module's handlers; the lines, smoke and pegs gadgets leave in the world |
 | `portal.asm` | the portal module's laser: wall portals, walking through, stencil-buffer views through each portal |
 | `feeders.asm` | the bottom feeders: wander / chase / steal / flee / stash, on T's nav graph |
@@ -525,10 +526,67 @@ follow you down into the atrium. He still can't climb ladders.
 | `hookshot.asm` | the HOOK firing type: traces the throw, latches on, asks the module (the rod pulls you in: fling, auto-mantle), stuns T |
 | `player.asm` | first-person controller: mouselook, movement, gravity, stairs, stamina, flashlight battery |
 | `ai.asm` | T: BFS over the 3D nav graph, 3D sight, occluded hearing, wander / investigate / chase |
-| `render.asm` | GLSL lighting shader, display lists built from the maps, fixtures and light pool, T, items, signs, jumpscare |
-| `textures.asm` | every texture painted procedurally in assembly; T's face from `../T_Sprite.jpeg`; SDL_ttf text |
+| `render.asm` | GLSL lighting shader (normal maps, skin and cloth lighting), display lists built from the maps, fixtures and light pool, T, items, signs, jumpscare |
+| `textures.asm` | the textures painted procedurally in assembly (the fallbacks for `assets/`, and everything else); T's face from `../T_Sprite.jpeg`; SDL_ttf text |
 | `hud.asm` | HUD, message log, vignettes, film grain, pause screen, explored map |
 | `audio.asm` | software synthesizer in the SDL audio callback: ambience, T's panned hum, footsteps, heartbeat, stingers |
+
+### The art: sculpted in Blender, baked, loaded from `assets/`
+
+Your hands, sleeves, flashlight and gadgets, and the building's walls, floors
+and ceilings are real art assets. Scripts in `tools/blender/` drive
+Blender 5 headless:
+
+- **Hands and sleeves** are sculpted as signed distance fields: every finger
+  is an elliptical cross-section swept along straight phalanges curled round
+  the grip, with knuckles, fingertip pads that flatten where they press on
+  the grip, nail plates in their folds, a thumb laid along the top, and a
+  knit sleeve with a ribbed cuff and bunched folds. OpenVDB turns the field
+  into a dense mesh (~1.7 million faces for the hand), fine detail (knuckle
+  wrinkles, nail grooves, flexion creases) is displaced on that, and a light
+  game mesh is decimated from it.
+- **Flashlight and gadgets** are hard-surface: a lathed tactical light
+  (knurled grip, finned head, steel bezel, clicky, pocket clip); the gadget
+  frame (white polymer shell, panel seams, vents, a core seen through side
+  windows, steel prongs); the hookshot (machined green barrel, brass spool
+  with its chain, winch, three-claw hook).
+- Cycles **bakes** colour (with ambient occlusion -- the fingers darken
+  where they touch the flashlight), a tangent-space normal map (pores, skin
+  lines, knit, knurling, brushed metal) and gloss from the dense model onto
+  the game mesh.
+- **The building's surfaces** (`make_world.py`) are height fields at real
+  scale -- 400 x 200 mm painted cinderblock with tooled joints, chips and a
+  red accent course; quarter-turned VCT floor tiles with heel marks and dirt
+  in the seams (and blue and bare-concrete variants); tegular ceiling tiles
+  with a water stain -- turned into normal maps and tiling seamlessly.
+
+The shader reads the normal maps (the tangent frame comes from screen-space
+derivatives, so the meshes need no tangents), lets red light wrap further
+into the shadows on skin than green and blue (cheap subsurface scattering),
+gives cloth an even wrap and a sheen, and takes each pixel's gloss from the
+map. Your view model also gets a soft fill from the flashlight's light
+bouncing round the room.
+
+`.bmsh` is a tiny format: `"BMSH"`, a vertex count, then per vertex
+position, normal and texture coordinate (8 floats), plain triangles. Every
+asset is optional: if `assets/` is missing the game uses its procedural
+stand-ins (the self-test checks both what loaded and that the loader turns
+away a missing or bogus file).
+
+To rebuild the art (Blender 5 on Windows; minutes each, the hand longest):
+
+```sh
+B="/c/Program Files/Blender Foundation/Blender 5.0/blender.exe"
+"$B" -b --factory-startup --python tools/blender/make_hand.py      # hand.bmsh + textures
+"$B" -b --factory-startup --python tools/blender/make_sleeve.py
+"$B" -b --factory-startup --python tools/blender/make_torch.py
+"$B" -b --factory-startup --python tools/blender/make_gadgets.py   # gun, hook, tip
+"/c/Program Files/Blender Foundation/Blender 5.0/5.0/python/bin/python.exe" tools/blender/make_world.py
+"$B" -b --factory-startup --python tools/blender/preview_asset.py -- out.png hand sleeve torch
+```
+
+(`preview_hand.py` renders the raw sculpt from several angles while you
+shape it; `preview_asset.py` renders the exported game meshes.)
 
 ### Maps
 

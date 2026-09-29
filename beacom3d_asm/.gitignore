@@ -9,3 +9,4 @@ beacom3d_dev.exe
 beacom_settings.cfg
 beacom_achievements.cfg
 beacom_gadgets.cfg
+__pycache__/

@@ -398,6 +398,11 @@ extern p_x, p_y, p_z, p_yaw, p_pitch, p_stamina, p_battery, p_flash_on, p_crouch
 extern p_exhausted, p_eye_y, p_step_event, p_flash_level, keys_down, p_dew
 %endif
 
+%ifndef MODULE_ASSETS
+extern assets_init, assets_tests, hand_mesh, hand_alb, hand_nrm, torch_mesh, torch_alb, torch_nrm
+extern sleeve_mesh, sleeve_alb, sleeve_nrm, mat_nrm, gun_mesh, hook_mesh, tip_mesh
+%endif
+
 %ifndef MODULE_TEX
 extern textures_init, make_text_texture, tex_ids, face_tex, white_tex, sign_tex, label_tex
 extern grain_tex, radial_tex, led_tex

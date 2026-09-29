@@ -7800,6 +7800,7 @@ selftest:
 selftest_all:
     PROLOGUE 32
     mov dword [seed_val], 42
+    call assets_tests                   ; the baked art (assets/)
     call real_tests                     ; the real Beacom first...
     call hook_tests
     call gadget_tests

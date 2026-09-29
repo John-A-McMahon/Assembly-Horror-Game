@@ -33,7 +33,8 @@
 
 global draw_viewmodel
 
-extern use_program, set_material, bind, set_emit, model_end, cam_x
+extern use_program, set_material, bind, set_emit, model_end, cam_x, set_normal_map, set_skin
+extern amb_col, u_amb
 extern u_model, u_fpos, u_fdir, u_flash, u_son
 extern skin_tex, cloth_tex, gun_kick, gun_colour, p_bob
 extern glPushMatrix, glMultMatrixf, glGenLists, glNewList, glEndList, glCallList
@@ -198,6 +199,7 @@ bounce_from dd 0.0, 0.45, -2.4
 bounce_to   dd 0.0, -0.04, -0.32
 c_bounce0   dd 0.022                ; with the torch off: a little ambient bounce
 c_bounce1   dd 0.17                 ; per unit of flashlight
+c_fill      dd 0.085, 0.078, 0.070  ; the bounce's diffuse fill, per unit of flashlight
 c_emit0     dd 0.018
 c_emit1     dd 0.045
 c_lens      dd 3.2
@@ -895,6 +897,69 @@ mat_skin:
     call set_material
     add rsp, 8
     ret
+; the baked hand: albedo + normal/gloss map, skin lighting, white tint
+mat_baked_skin:
+    sub rsp, 8
+    mov edi, [hand_alb]
+    call bind
+    mov edi, [hand_nrm]
+    FLD xmm0, 1.0
+    call set_normal_map
+    xorps xmm0, xmm0
+    FLD xmm1, 0.30
+    call set_material
+    FLD xmm0, 1.0
+    call set_skin
+    FLD xmm0, 1.0
+    FLD xmm1, 1.0
+    FLD xmm2, 1.0
+    call glColor3f
+    add rsp, 8
+    ret
+; draw_part(rsi = asset record: display list, albedo, normal map (dwords),
+;           edi = the primitive stand-in's list, xmm1 = shine)
+; -- a prop in the current placement: the baked one from assets/ when it
+; loaded, else the primitive one
+draw_part:
+    PROLOGUE 16
+    mov r12, rsi
+    mov r13d, edi
+    movss [rsp+0], xmm1
+    cmp dword [r12], 0
+    je .primitive
+    mov edi, [r12+4]
+    call bind
+    mov edi, [r12+8]
+    FLD xmm0, 1.0
+    call set_normal_map
+    xorps xmm0, xmm0
+    movss xmm1, [rsp+0]
+    call set_material
+    FLD xmm0, 1.0
+    FLD xmm1, 1.0
+    FLD xmm2, 1.0
+    call glColor3f
+    mov edi, [r12]
+    call glCallList
+    call mat_unbaked
+    EPILOGUE
+.primitive:
+    movss xmm1, [rsp+0]
+    call mat_hard
+    mov edi, r13d
+    call call_list
+    EPILOGUE
+
+; back to plain materials: no normal map, no skin lighting
+mat_unbaked:
+    sub rsp, 8
+    xor edi, edi
+    xorps xmm0, xmm0
+    call set_normal_map
+    xorps xmm0, xmm0
+    call set_skin
+    add rsp, 8
+    ret
 mat_cloth:
     sub rsp, 8
     mov edi, [cloth_tex]
@@ -1045,12 +1110,40 @@ place:
     GL2CALL glUniformMatrix4fv
     EPILOGUE
 
-; hand_lists -- the hand and its sleeve, in the current placement
+; hand_lists -- the hand and its sleeve, in the current placement. The
+; sculpted hand from assets/ when it loaded, else the primitive one.
 hand_lists:
     sub rsp, 8
+    cmp dword [hand_mesh], 0
+    je .primitive
+    call mat_baked_skin
+    mov edi, [hand_mesh]
+    call glCallList
+    call mat_unbaked
+    jmp .sleeve
+.primitive:
     call mat_skin
     mov edi, L_SKIN
     call call_list
+.sleeve:
+    cmp dword [sleeve_mesh], 0
+    je .old_sleeve
+    mov edi, [sleeve_alb]
+    call bind
+    mov edi, [sleeve_nrm]
+    FLD xmm0, 1.0
+    call set_normal_map
+    xorps xmm0, xmm0
+    FLD xmm1, 0.10
+    call set_material
+    FLD xmm0, -1.0                      ; cloth: soft, even wrap
+    call set_skin
+    mov edi, [sleeve_mesh]
+    call glCallList
+    call mat_unbaked
+    add rsp, 8
+    ret
+.old_sleeve:
     call mat_cloth
     mov edi, L_CLOTH
     call call_list
@@ -1127,6 +1220,19 @@ draw_viewmodel:
     mulss xmm0, [c_bounce1]
     addss xmm0, [c_bounce0]
     GL2CALL glUniform1f
+    ; ...and the rest of that light, scattered round the room, fills in
+    ; whatever faces away from it (a sleeve's folds, the back of a finger)
+    movss xmm0, [p_flash_level]
+    movss xmm1, xmm0
+    movss xmm2, xmm0
+    mulss xmm0, [c_fill+0]
+    mulss xmm1, [c_fill+4]
+    mulss xmm2, [c_fill+8]
+    addss xmm0, [amb_col+0]
+    addss xmm1, [amb_col+4]
+    addss xmm2, [amb_col+8]
+    mov edi, [u_amb]
+    GL2CALL glUniform3f
     call base_emit
 
     ; ---- sway with the head bob; hand over hand on a ladder
@@ -1164,10 +1270,10 @@ draw_viewmodel:
     xor edx, edx
     call place
     call hand_lists
-    FLD xmm1, 0.9
-    call mat_hard
+    lea rsi, [torch_mesh]
     mov edi, L_TORCH
-    call call_list
+    FLD xmm1, 0.6
+    call draw_part
     movss xmm0, [p_flash_level]
     mulss xmm0, [c_lens]
     addss xmm0, [c_emit0]
@@ -1200,16 +1306,18 @@ draw_viewmodel:
     mov edx, 1
     call place
     call hand_lists
-    FLD xmm1, 0.6
-    call mat_hard
+    lea rsi, [hook_mesh]
     mov edi, L_HOOK
-    call call_list
+    FLD xmm1, 0.6
+    call draw_part
     cmp dword [hk_state], 0             ; the hook's out on its chain
     jne .hook_out
     cmp dword [gd_tt_state], 0          ; (or the grabber on its tether)
     jne .hook_out
+    lea rsi, [tip_mesh]
     mov edi, L_HOOKTIP
-    call call_list
+    FLD xmm1, 0.6
+    call draw_part
 .hook_out:
     call model_end
     jmp .done
@@ -1256,10 +1364,10 @@ draw_viewmodel:
     mov edx, 1
     call place
     call hand_lists
-    FLD xmm1, 0.45
-    call mat_hard
+    lea rsi, [gun_mesh]
     mov edi, L_GUN
-    call call_list
+    FLD xmm1, 0.45
+    call draw_part
     ; the core glows in the module's colour (a portal module: the colour
     ; of the last portal)
     lea rdi, [tip_part]
@@ -1284,6 +1392,11 @@ draw_viewmodel:
     FLD xmm2, 1.0
     FLD xmm3, 1.0
     call glColor4f
+    mov edi, [u_amb]                    ; the world's ambient back for next time
+    movss xmm0, [amb_col+0]
+    movss xmm1, [amb_col+4]
+    movss xmm2, [amb_col+8]
+    GL2CALL glUniform3f
 .fixed:
     xor edi, edi
     GL2CALL glUseProgram                ; back to the fixed pipeline for the HUD

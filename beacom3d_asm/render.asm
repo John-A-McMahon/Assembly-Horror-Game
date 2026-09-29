@@ -60,6 +60,7 @@ global lightning, save_screenshot, choose_render_scale, render_cycle_scale, rend
 extern glPushMatrix, glPopMatrix, glMultMatrixf, glDeleteLists, glCopyTexSubImage2D, glGetString, getenv, strstr
 extern glLoadMatrixf, glColorMask, glPolygonOffset, glDrawBuffer, glReadBuffer
 extern portal_views, portal_draw_rims, draw_viewmodel, media_tex
+global set_normal_map, set_skin, amb_col, u_amb
 global render_rebuild_world, set_material, set_emit, model_end, u_model, u_fpos, u_fdir, u_flash, u_son
 global cbox, emit_tube, emit_cyl
 extern phys_nb, px, py, pz, body_type, body_p0, body_active, rag_active, prop_tex
@@ -74,6 +75,7 @@ extern phys_nb, px, py, pz, body_type, body_p0, body_active, rag_active, prop_te
 %define GL_POLYGON_OFFSET_FILL 0x8037
 %define GL_TEXTURE0 0x84C0
 %define GL_TEXTURE1 0x84C1
+%define GL_TEXTURE2 0x84C2
 extern sign_count, sign_f, sign_x, sign_z, sign_face, sign_exit, sign_set, sign_set_cur
 extern p_eye_y, p_roll, player_floor, t_moving
 
@@ -183,6 +185,7 @@ fs_src:
     db "uniform vec3 uCam; uniform vec3 uFlashPos; uniform vec3 uFlashDir; uniform vec3 uAmb;",10
     db "uniform float uFlash; uniform float uEmit; uniform float uFog;",10
     db "uniform float uBump; uniform float uSpec; uniform float uShadowOn;",10
+    db "uniform sampler2D uNrm; uniform float uNM; uniform float uSkin;",10     ; baked assets
     db "uniform vec3 uLP[6]; uniform vec3 uLC[6];",10
     db "varying vec3 vW; varying vec3 vN; varying vec2 vUV; varying vec4 vC;",10
     db "float lum(vec2 uv) { return dot(texture2D(uTex, uv).rgb, vec3(0.299, 0.587, 0.114)); }",10
@@ -195,6 +198,23 @@ fs_src:
     db "  float det = dot(dpx, r1);",10
     db "  vec3 g = sign(det) * (dbx * r1 + dby * r2);",10
     db "  return normalize(abs(det) * N - s * g);",10
+    db "}",10
+    ; a baked tangent-space normal map, with the tangent frame taken from the
+    ; screen-space derivatives of position and UV (no tangents in the mesh)
+    db "vec3 nmap(vec3 N, vec3 tn) {",10
+    db "  vec3 dp1 = dFdx(vW); vec3 dp2 = dFdy(vW); vec2 d1 = dFdx(vUV); vec2 d2 = dFdy(vUV);",10
+    db "  vec3 a = cross(dp2, N); vec3 b = cross(N, dp1);",10
+    db "  float sg = sign(dot(dp1, a));",10      ; (the frame flips where N turns from the eye)
+    db "  vec3 T = sg * (a * d1.x + b * d2.x); vec3 B = sg * (a * d1.y + b * d2.y);",10
+    db "  float im = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-24));",10
+    db "  return normalize(T * (im * tn.x) + B * (im * tn.y) + N * tn.z);",10
+    db "}",10
+    ; diffuse; skin (uSkin > 0) lets red light wrap further round into the
+    ; shadow than green and blue (a cheap subsurface scattering); cloth
+    ; (uSkin < 0) wraps evenly, light scattering through the fuzz
+    db "vec3 dif(float d) {",10
+    db "  vec3 w = uSkin > 0.0 ? uSkin * vec3(0.40, 0.17, 0.11) : vec3(-0.5 * uSkin);",10
+    db "  return clamp((vec3(d) + w) / (1.0 + w), 0.0, 1.0);",10
     db "}",10
     db "float shadow() {",10
     db "  vec4 sc = uShadowMat * vec4(vW, 1.0);",10
@@ -214,9 +234,20 @@ fs_src:
     db "#endif",10
     db "  vec3 N = normalize(vN);",10
     db "  vec3 toCam = uCam - vW; float dc = length(toCam); vec3 V = toCam / max(dc, 0.001);",10
-    db "  if (dot(N, V) < 0.0) N = -N;",10
+    ; a normal facing away from the eye on a surface we can see: the world's
+    ; one-sided walls just flip it; a baked mesh's smoothed normal has only
+    ; tipped past the horizon (across a fold, say), so pull it back to it
+    db "  float nv = dot(N, V);",10
+    db "  if (nv < 0.0) N = uNM > 0.0 ? normalize(N - V * (nv * 1.1)) : -N;",10
     db "  if (uBump > 0.0) N = bump(N, uBump);",10
-    db "  float shin = 12.0 + 60.0 * uSpec;",10
+    db "  float gl = 0.5;",10
+    db "  if (uNM > 0.0) {",10
+    db "    vec4 nm = texture2D(uNrm, vUV);",10
+    db "    vec3 tn = nm.xyz * 2.0 - 1.0; tn.xy *= uNM;",10
+    db "    N = nmap(N, tn); gl = nm.a;",10
+    db "  }",10
+    ; baked maps carry gloss: dull cloth ~4 .. polished metal ~120
+    db "  float shin = uNM > 0.0 ? 4.0 + 120.0 * gl * gl : 12.0 + 60.0 * uSpec;",10
     db "  vec3 light = uAmb;",10
     db "  vec3 spec = vec3(0.0);",10
     db "  vec3 Lf = uFlashPos - vW; float df = length(Lf); Lf /= max(df, 0.001);",10
@@ -225,16 +256,18 @@ fs_src:
     db "  if (spot > 0.0 && uFlash > 0.0) {",10
     db "    float sh = uShadowOn > 0.5 ? shadow() : 1.0;",10
     db "    vec3 fc = vec3(1.0, 0.94, 0.84) * uFlash * spot * sh * 7.0 / (1.0 + 0.22 * df * df);",10
-    db "    light += fc * max(dot(N, Lf), 0.0);",10
-    db "    spec += fc * uSpec * pow(max(dot(N, normalize(Lf + V)), 0.0), shin);",10
+    db "    light += fc * dif(dot(N, Lf));",10
+    db "    spec += fc * uSpec * 2.0 * gl * pow(max(dot(N, normalize(Lf + V)), 0.0), shin);",10
     db "  }",10
     db "  for (int i = 0; i < 6; i++) {",10
     db "    vec3 L = uLP[i] - vW; float d = length(L); L /= max(d, 0.001);",10
     db "    float att = clamp(1.0 - d / 14.0, 0.0, 1.0) / (1.0 + 0.35 * d * d);",10
-    db "    light += uLC[i] * att * (0.3 + 0.7 * max(dot(N, L), 0.0));",10
-    db "    spec += uLC[i] * att * uSpec * pow(max(dot(N, normalize(L + V)), 0.0), shin);",10
+    db "    light += uLC[i] * att * (0.3 + 0.7 * dif(dot(N, L)));",10
+    db "    spec += uLC[i] * att * uSpec * 2.0 * gl * pow(max(dot(N, normalize(L + V)), 0.0), shin);",10
     db "  }",10
     db "  vec3 c = t.rgb * (light + uEmit) + spec;",10
+    ; skin and cloth: a soft sheen at grazing angles (fine hairs, oil, fuzz)
+    db "  c += abs(uSkin) * 0.35 * pow(1.0 - abs(dot(N, V)), 4.0) * light * t.rgb;",10
     db "  c = vec3(1.0) - exp(-c * 1.4);",10
     db "  float fog = exp(-pow(uFog * dc, 2.0));",10
     db "  gl_FragColor = vec4(mix(vec3(0.008, 0.008, 0.012), c, fog), t.a);",10
@@ -286,10 +319,14 @@ un_spec   db "uSpec",0
 un_smat   db "uShadowMat",0
 un_stex   db "uShadow",0
 un_son    db "uShadowOn",0
+un_nrm    db "uNrm",0
+un_nm     db "uNM",0
+un_skin   db "uSkin",0
 align 8
 u_name_ptrs dq un_model, un_tex, un_cam, un_fdir, un_amb, un_flash, un_emit, un_fog, un_lp, un_lc
             dq un_fpos, un_bump, un_spec, un_smat, un_stex, un_son
-%define NUNI 16
+            dq un_nrm, un_nm, un_skin
+%define NUNI 19
 
 ; face table for emit_box: normal, then 4 corner codes (bit0 = x1, bit1 = y1,
 ; bit2 = z1). Corners run top-left, top-right, bottom-right, bottom-left as
@@ -411,6 +448,9 @@ u_spec  resd 1
 u_smat  resd 1
 u_stex  resd 1
 u_son   resd 1
+u_nrm   resd 1
+u_nm    resd 1
+u_skin  resd 1
 program resd 1
 list_base resd 1
 info_log  resb 1024
@@ -1718,6 +1758,32 @@ bind:
     mov edi, GL_TEXTURE_2D
     jmp glBindTexture
 
+; set_normal_map(edi = texture or 0 for none, xmm0 = strength) -- a baked
+; normal map on texture unit 2 for what's drawn next (0: back to plain)
+set_normal_map:
+    PROLOGUE 16
+    movss [rsp+0], xmm0
+    mov ebx, edi
+    mov edi, GL_TEXTURE2
+    GL2CALL glActiveTexture
+    mov edi, ebx
+    call bind
+    mov edi, GL_TEXTURE0
+    GL2CALL glActiveTexture
+    movss xmm0, [rsp+0]
+    test ebx, ebx
+    jnz .on
+    xorps xmm0, xmm0
+.on:
+    mov edi, [u_nm]
+    GL2CALL glUniform1f
+    EPILOGUE
+
+; set_skin(xmm0 = 0 plain .. 1 skin, or -1 .. 0 cloth) -- wrap lighting
+set_skin:
+    mov edi, [u_skin]
+    GL2JMP glUniform1f
+
 ; set_emit(xmm0=emission)
 set_emit:
     mov edi, [u_emit]
@@ -1840,6 +1906,9 @@ init_shaders:
     GL2CALL glUniform1f
     mov edi, [u_stex]
     mov esi, 1                          ; shadow map on texture unit 1
+    GL2CALL glUniform1i
+    mov edi, [u_nrm]
+    mov esi, 2                          ; baked normal maps on texture unit 2
     GL2CALL glUniform1i
     inc r14d
     jmp .prog
@@ -3181,6 +3250,7 @@ render_init:
     PROLOGUE 32
     call init_shaders
     call textures_init
+    call assets_init
 
     mov edi, GL_DEPTH_TEST
     call glEnable
@@ -4561,6 +4631,15 @@ draw_scene:
     mov edi, [tex_ids+rax*4]
 .tx:
     call bind
+    ; a baked normal map (assets/) replaces the brightness-as-height bump
+    ; (not on the software renderer, where it costs too much)
+    mov edi, [mat_nrm+r13*4]
+    cmp dword [render_scale], 1
+    je .nm
+    xor edi, edi
+.nm:
+    FLD xmm0, 1.0
+    call set_normal_map
     ; emission: safe-room walls pulse, racks glow a little
     xorps xmm0, xmm0
     cmp r13d, M_N
@@ -4578,6 +4657,10 @@ draw_scene:
 .e2:
     call set_emit
     movss xmm0, [mat_bump+r13*4]
+    cmp dword [mat_nrm+r13*4], 0
+    je .bump
+    xorps xmm0, xmm0
+.bump:
     movss xmm1, [mat_spec+r13*4]
     call set_material
     imul edi, r12d, NMAT
@@ -4590,6 +4673,9 @@ draw_scene:
     inc r12d
     jmp .fl
 .fl_done:
+    xor edi, edi
+    xorps xmm0, xmm0
+    call set_normal_map
     xorps xmm0, xmm0
     call set_emit
     xorps xmm0, xmm0                    ; moving things: smooth, nearly matte
