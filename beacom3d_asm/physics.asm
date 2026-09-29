@@ -14,7 +14,11 @@
 ;   SIGN  "caution wet floor" signs -- a tall thin box that tips over easily
 ;   RAG   T's ragdoll: head, neck, pelvis, hands, feet. A deauth packet makes
 ;         him collapse and twitch here for a few seconds before his
-;         connection finally drops and he reappears somewhere far away.
+;         connection finally drops and he reappears somewhere far away
+;         (rag_mode 0). The gadgets KNOCK him down instead (physics_knock,
+;         rag_mode 1): thrown with a real velocity, into walls, off
+;         balconies and down stairwells -- and he gets up where he lands
+;         (enemy_land). Hit him again while he's down and he's thrown again.
 ;
 ; You shove props just by walking into them; when one hits the floor or a
 ; wall hard it clatters, and that goes on the noise meter. Boxes are also
@@ -26,9 +30,10 @@
 
 global physics_reset, physics_spawn_props, physics_update, physics_ragdoll
 global phys_np, phys_nb, px, py, pz, body_type, body_p0, body_np, body_active
+global physics_knock, rag_mode, kn_tx, kn_ty, kn_tz
 global rag_active, rag_body, rag_time, add_box, props_top, physics_push, physics_move
 
-extern random_node, enemy_deauth, snd_clatter
+extern random_node, enemy_deauth, snd_clatter, enemy_land
 
 %define MAX_P    256
 %define MAX_C    640
@@ -69,6 +74,15 @@ rag_rz      dd 0.0,  0.0,  0.0,   0.05, 0.05,  0.0,  0.0
 ; bones (pairs of particle indices within the ragdoll)
 rag_bones   dd 0,1, 1,2, 1,3, 1,4, 2,5, 2,6, 0,2, 5,6, 3,2, 4,2
 %define NBONES 10
+%define BONE_FEET  7                    ; (feet together, hands to pelvis: a bola ties them)
+%define BONE_LHAND 8
+%define BONE_RHAND 9
+; a knockdown: how much of the "top" velocity each part gets (the rest of
+; the body gets the base velocity) -- head, neck, pelvis, hands, feet
+kn_topw     dd 1.0, 0.85, 0.35, 0.6, 0.6, 0.0, 0.0
+c_tied_feet dd 0.06
+c_tied_hand dd 0.22
+c_getup     dd 0.6                      ; knocked down: back up this long after
 
 section .bss
 bb          resd 5                  ; body_bounds output
@@ -95,6 +109,18 @@ body_cool   resd MAX_B              ; seconds until it may clatter again
 rag_active  resd 1
 rag_body    resd 1
 rag_time    resd 1
+rag_mode    resd 1                  ; 0 a deauth (he vanishes after), 1 a knockdown
+kn_pend     resd 1                  ; 1: velocities to give the ragdoll on the next step
+kn_bx       resd 1                  ; ...the whole body's
+kn_by       resd 1
+kn_bz       resd 1
+kn_tx       resd 1                  ; ...and extra for the top of it (kn_topw)
+kn_ty       resd 1
+kn_tz       resd 1
+pin_p       resd 1                  ; a particle held in place (-1 none): a pinned foot
+pin_x       resd 1
+pin_y       resd 1
+pin_z       resd 1
 twitch_t    resd 1
 h_step      resd 1                  ; substep length (seconds)
 
@@ -346,6 +372,9 @@ physics_ragdoll:
     PROLOGUE 64
     cmp dword [rag_active], 0
     jne .done
+    mov dword [rag_mode], 0
+    mov dword [kn_pend], 0
+    mov dword [pin_p], -1
     movss [rsp+0], xmm0
     movss [rsp+4], xmm1
     movss [rsp+8], xmm2
@@ -431,6 +460,142 @@ physics_ragdoll:
 .done:
     EPILOGUE
 
+; physics_knock(xmm0..2 = T's feet, xmm3..5 = the whole body's velocity,
+; xmm6 = the way he faces, xmm7 = seconds down, edi = KN_TIE (legs and arms
+; bound) | KN_PIN (his left foot stays where it is); kn_tx/ty/tz = extra
+; velocity for the top of him (topples him: kn_topw)) -> eax 1 if he's
+; down (0: a deauth ragdoll is playing -- that wins). Already down from a
+; knock: thrown again from wherever he is, and down a little longer.
+physics_knock:
+    PROLOGUE 64
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    movss [rsp+12], xmm3
+    movss [rsp+16], xmm4
+    movss [rsp+20], xmm5
+    movss [rsp+24], xmm6
+    movss [rsp+28], xmm7
+    mov [rsp+32], edi
+    cmp dword [rag_active], 0
+    je .fresh
+    xor eax, eax
+    cmp dword [rag_mode], 1
+    jne .out
+    ; kicked while down
+    movss xmm0, [rag_time]
+    maxss xmm0, [rsp+28]
+    movss [rag_time], xmm0
+    mov dword [pin_p], -1               ; (a new hit tears the peg out)
+    jmp .velocity
+.fresh:
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    movss xmm2, [rsp+8]
+    xorps xmm3, xmm3
+    xorps xmm4, xmm4
+    movss xmm5, [rsp+24]
+    call physics_ragdoll
+    xor eax, eax
+    cmp dword [rag_active], 0
+    je .out                             ; (no room for the particles)
+    mov dword [rag_mode], 1
+    mov eax, [rsp+28]
+    mov [rag_time], eax
+    mov ebx, [rag_body]
+    mov r12d, [body_p0+rbx*4]           ; first particle
+    mov r13d, [body_c0+rbx*4]           ; first bone
+    test dword [rsp+32], KN_TIE
+    jz .no_tie
+    mov eax, [c_tied_feet]
+    mov [con_len+r13*4+BONE_FEET*4], eax
+    mov eax, [c_tied_hand]
+    mov [con_len+r13*4+BONE_LHAND*4], eax
+    mov [con_len+r13*4+BONE_RHAND*4], eax
+.no_tie:
+    test dword [rsp+32], KN_PIN
+    jz .velocity
+    lea eax, [r12d+5]                   ; left foot
+    mov [pin_p], eax
+    mov ecx, [px+rax*4]
+    mov [pin_x], ecx
+    mov ecx, [py+rax*4]
+    mov [pin_y], ecx
+    mov ecx, [pz+rax*4]
+    mov [pin_z], ecx
+.velocity:
+    ; given on the next step, when its length is known (physics_update)
+    mov eax, [rsp+12]
+    mov [kn_bx], eax
+    mov eax, [rsp+16]
+    mov [kn_by], eax
+    mov eax, [rsp+20]
+    mov [kn_bz], eax
+    mov dword [kn_pend], 1
+    mov eax, 1
+.out:
+    EPILOGUE
+
+; kn_apply -- the knock's velocities, now that h_step is known: v * h taken
+; off each particle's previous position (Verlet: that's a velocity)
+kn_apply:
+    PROLOGUE 16
+    mov dword [kn_pend], 0
+    cmp dword [rag_active], 0
+    je .done
+    mov ebx, [rag_body]
+    mov r12d, [body_p0+rbx*4]
+    xor ecx, ecx
+.p:
+    cmp ecx, 7
+    jge .done
+    lea eax, [r12d+ecx]
+    movss xmm3, [kn_topw+rcx*4]
+    movss xmm0, [kn_tx]
+    mulss xmm0, xmm3
+    addss xmm0, [kn_bx]
+    mulss xmm0, [h_step]
+    movss xmm1, [ox+rax*4]
+    subss xmm1, xmm0
+    movss [ox+rax*4], xmm1
+    movss xmm0, [kn_ty]
+    mulss xmm0, xmm3
+    addss xmm0, [kn_by]
+    mulss xmm0, [h_step]
+    movss xmm1, [oy+rax*4]
+    subss xmm1, xmm0
+    movss [oy+rax*4], xmm1
+    movss xmm0, [kn_tz]
+    mulss xmm0, xmm3
+    addss xmm0, [kn_bz]
+    mulss xmm0, [h_step]
+    movss xmm1, [oz+rax*4]
+    subss xmm1, xmm0
+    movss [oz+rax*4], xmm1
+    inc ecx
+    jmp .p
+.done:
+    EPILOGUE
+
+; hold_pin -- a pinned particle stays put. leaf
+hold_pin:
+    mov eax, [pin_p]
+    test eax, eax
+    js .done
+    cmp dword [rag_active], 0
+    je .done
+    mov ecx, [pin_x]
+    mov [px+rax*4], ecx
+    mov [ox+rax*4], ecx
+    mov ecx, [pin_y]
+    mov [py+rax*4], ecx
+    mov [oy+rax*4], ecx
+    mov ecx, [pin_z]
+    mov [pz+rax*4], ecx
+    mov [oz+rax*4], ecx
+.done:
+    ret
+
 ; end_ragdoll -- the connection finally drops: T vanishes and reappears far
 ; away (enemy_deauth), and the ragdoll's particles are released
 end_ragdoll:
@@ -449,6 +614,20 @@ end_ragdoll:
     mov [phys_nc], eax
 .keep:
     mov dword [rag_body], -1
+    mov dword [pin_p], -1
+    cmp dword [rag_mode], 1
+    jne .vanish
+    ; a knockdown: up he gets, where his pelvis came to rest
+    mov dword [rag_mode], 0
+    mov eax, [body_p0+rbx*4]
+    movss xmm0, [px+rax*4+8]
+    movss xmm1, [py+rax*4+8]
+    movss xmm2, [pz+rax*4+8]
+    call enemy_land
+    mov eax, [c_getup]
+    mov [t_stun], eax
+    EPILOGUE
+.vanish:
     call player_floor
     mov edi, eax
     movss xmm0, [p_x]
@@ -921,6 +1100,10 @@ physics_update:
     cvtsi2ss xmm1, eax
     divss xmm0, xmm1
     movss [h_step], xmm0
+    cmp dword [kn_pend], 0
+    je .no_knock
+    call kn_apply
+.no_knock:
     mov r14d, SUBSTEPS
 .sub:
     movss xmm0, [h_step]
@@ -928,11 +1111,28 @@ physics_update:
     mov r15d, ITERS
 .iter:
     call relax
+    call hold_pin
     dec r15d
     jnz .iter
     call collide
+    call hold_pin
     dec r14d
     jnz .sub
+    ; knocked down: T is where his body is (so a shot at the body hits him)
+    cmp dword [rag_active], 0
+    je .followed
+    cmp dword [rag_mode], 1
+    jne .followed
+    mov ebx, [rag_body]
+    mov eax, [body_p0+rbx*4]
+    mov ecx, [px+rax*4+8]               ; pelvis x, z
+    mov [t_x], ecx
+    mov ecx, [pz+rax*4+8]
+    mov [t_z], ecx
+    movss xmm0, [py+rax*4+20]           ; the lower foot's y
+    minss xmm0, [py+rax*4+24]
+    movss [t_y], xmm0
+.followed:
     movss xmm0, [rsp+0]
     call clatter_check
     ; T's ragdoll: twitch, then vanish

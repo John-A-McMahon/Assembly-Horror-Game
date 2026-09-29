@@ -26,6 +26,7 @@
 %include "common.inc"
 
 global find_path, enemy_reset, enemy_update, enemy_hear, enemy_deauth, random_node
+global t_next
 global t_dew, enemy_lure, find_next, t_goal, nav_player
 global t_build, bld_on, bld_ax, bld_ay, bld_az, bld_bx, bld_by, bld_bz, bld_prog
 global build_break, build_deauth, build_hit_point, enemy_portal_follow, director_reset
@@ -33,7 +34,7 @@ global dir_calm, dir_relax, t_camp, t_por_on, bld_cd, t_node
 extern snd_build, snd_portal_enter, sinf, cosf
 global t_x, t_y, t_z, t_state, t_stun, t_sees, t_speed_bonus, t_caught, t_dist, t_same_storey
 global t_anim_phase, t_moving, path_len, t_hear_d, seen, stamp
-global far_spawn_node, spawn_dist, spawn_maxd
+global far_spawn_node, spawn_dist, spawn_maxd, enemy_land, t_can_stand_g
 
 extern hd_on
 extern on_t_spotted                     ; main.asm: "T HAS SEEN YOU. RUN."
@@ -617,6 +618,108 @@ enemy_reset:
     mov dword [t_last_known], -1
     mov dword [t_caught], 0
     EPILOGUE
+
+; enemy_land(xmm0..2 = where his body came to rest) -- knocked down
+; (physics.asm): he gets up there, on whatever floor is under him (off a
+; balcony: the storey below). Somewhere he can't stand -- a desk top, the
+; edge of a wall, a safe room -- he gets up in the next cell he can, or
+; failing that where he was.
+enemy_land:
+    PROLOGUE 32
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+8]
+    movss xmm2, [rsp+4]
+    FLD xmm3, 0.5
+    call ground_height
+    comiss xmm0, [c_neg_big]
+    jbe .where_he_was
+    movss [rsp+12], xmm0                ; the floor
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+12]
+    movss xmm2, [rsp+8]
+    call node_at_pos
+    mov ebx, eax
+    mov edi, ebx
+    call t_can_stand
+    test eax, eax
+    jz .next_door
+    ; right there
+    mov eax, [rsp+0]
+    mov [t_x], eax
+    mov eax, [rsp+12]
+    mov [t_y], eax
+    mov eax, [rsp+8]
+    mov [t_z], eax
+    jmp .placed
+.next_door:
+    cmp ebx, NCELLS
+    jae .where_he_was
+    ; the four cells around it, on the same storey
+    xor r12d, r12d
+.n:
+    cmp r12d, 4
+    jge .where_he_was
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, MAP_W
+    div ecx                             ; edx = x, eax = f*MAP_H + y
+    add edx, [dir_dx+r12*4]
+    mov r13d, edx
+    xor edx, edx
+    mov ecx, MAP_H
+    div ecx                             ; eax = f, edx = y
+    add edx, [dir_dy+r12*4]
+    mov edi, eax
+    mov esi, r13d
+    call cell_index
+    mov r14d, eax
+    mov edi, eax
+    call t_can_stand
+    test eax, eax
+    jnz .centre
+    inc r12d
+    jmp .n
+.where_he_was:
+    mov r14d, [t_node]
+.centre:
+    mov ebx, r14d
+    mov edi, ebx
+    call node_center
+    movss [t_x], xmm0
+    movss [t_y], xmm1
+    movss [t_z], xmm2
+.placed:
+    mov [t_node], ebx
+    mov [t_next], ebx
+    mov dword [path_len], 0
+    mov dword [path_pos], 0
+    mov dword [t_repath], 0
+    EPILOGUE
+
+; t_can_stand_g -- (self-tests) the same, callable from outside
+t_can_stand_g:
+    jmp t_can_stand
+
+; t_can_stand(edi = node) -> eax 1 if T may stand there (a free waypoint, or
+; a cell he walks that isn't a safe room)
+t_can_stand:
+    mov eax, 1
+    cmp edi, NCELLS
+    jae .out
+    xor eax, eax
+    test edi, edi
+    js .out
+    movzx ecx, byte [grid+rdi]
+    cmp ecx, 'S'
+    je .out
+    test byte [char_class+rcx], CF_TWALK
+    jz .out
+    mov eax, 1
+.out:
+    ret
 
 ; director_reset -- a new night: nobody's comfortable yet
 director_reset:

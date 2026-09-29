@@ -19,6 +19,7 @@
 ; =============================================================================
 %define MODULE_HOOK
 %include "common.inc"
+extern gadget_hook_t
 
 global hookshot_fire, hookshot_update, hookshot_reset, solid_point, hookshot_fire_at
 global hk_state, hk_hx, hk_hy, hk_hz, hk_px, hk_py, hk_pz, hk_mod
@@ -451,16 +452,26 @@ hookshot_update:
     call head_at
     EPILOGUE
 .hit_t:
-    ; stagger T, reel the hook back in
+    ; the module decides what a hook does to T (gadget_hook_t: a hookshot
+    ; yanks him to you, a zipline gun lassoes him, a blink hook swaps you);
+    ; otherwise stagger him. Then reel the hook back in.
+    call gadget_hook_t
+    mov ebx, eax
+    test eax, eax
+    jnz .dealt
     mov eax, [c_stun]
     mov [t_stun], eax
+.dealt:
     movss xmm0, [c_noise_t]
     call noise_add
     call snd_hook_hit
+    test ebx, ebx                       ; (the module said what happened)
+    jnz .told
     lea rdi, [m_hook_t]
     mov esi, 0xFF47B3FF
     xor edx, edx
     call hud_message
+.told:
     mov edi, ACH_HOOK_T
     call ach_unlock
     mov dword [hk_state], HK_RETRACT

@@ -53,7 +53,7 @@ global gd_have, gd_base, gd_mod, gd_fire, gd_caps, gd_bag_mod, gd_bag_fire, gd_k
 global gd_bench, gd_fire_held, gd_roll_n, gd_roll_kind, gd_roll_id, gd_view, gd_tip_col
 global gd_cool, gd_orb_on, gd_orb_x, gd_orb_y, gd_orb_z, gd_tt_state, gd_charge
 global sm_count, ln_type, gd_last_combo, ln_ax, ln_ay, ln_az, ln_bx, ln_by, ln_bz
-global gd_shots
+global gd_shots, gadget_hook_t, knock_t
 global gadget_transmute, fd_line, peg_n, rg_hits, dr_state, dr_x, dr_y, dr_z, gd_bag_base
 
 extern p_vy, p_on_ground, parkour_try
@@ -66,7 +66,8 @@ extern physics_move
 extern bind, cbox, emit_tube, emit_cyl, draw_text, draw_rect
 extern fwrite, cam_x, cam_y, cam_z
 extern font_hud, font_small, tt_w, tt_h
-extern hookshot_fire_at, portal_fire_from
+extern hookshot_fire_at, portal_fire_from, physics_knock, kn_tx, kn_ty, kn_tz
+extern enemy_land, atan2f, t_next, player_in_safe
 
 %define RGBC(r,g,b) (0xFF000000 | ((b)<<16) | ((g)<<8) | (r))
 %define RGB(r,g,b) (0xFF000000 | ((b)<<16) | ((g)<<8) | (r))
@@ -529,20 +530,24 @@ m_charge    db "The safe room's networking magic hums over your gadget: open the
 fmt_trans   db "TRANSMUTED: your %s became %s.",0
 m_trans_none db "You already have every part of that kind.",0
 m_trans_no  db "Transmuting needs a safe room's networking magic -- find one first.",0
-m_heavy     db "T is too heavy to haul -- the grabber just yanks him off balance.",0
-m_rod_t     db "The rod slams into T -- he reels back.",0
+m_heavy     db "The grabber whips T's legs out from under him -- he crashes down towards you!",0
+m_yank      db "GET OVER HERE! The hookshot rips T off his feet and hurls him at you!",0
+m_lasso     db "Lassoed! The line snaps tight round T -- he goes down bound, dragged your way.",0
+m_swap      db "The blink hook swaps you -- you're where he was, and T stumbles where you stood!",0
+m_pin_t     db "The peg pins T's foot to the floor -- he pitches over it!",0
+m_rod_t     db "The rod rams T clean off his feet!",0
 m_rod_fd    db "The rod flattens a bottom feeder.",0
 m_clank     db "*CLANK* -- the sound carries from where the rod hit, not from you.",0
-m_bola_t    db "The bola wraps round T's legs -- he's tangled!",0
+m_bola_t    db "The bola wraps round T's legs -- he topples, bound hand and foot!",0
 m_bola_fd   db "The bola ties up a bottom feeder.",0
 m_snare_set db "The bola misses -- it lies open on the floor as a snare.",0
-m_snare_t   db "T stepped in your snare!",0
+m_snare_t   db "T steps in your snare -- it whips his legs out from under him!",0
 m_snare_fd  db "A bottom feeder stepped in your snare.",0
 fmt_trip_t  db "*TWANG* -- T just tripped your wire on the %s!",0
 fmt_trip_fd db "*twang* -- something small tripped your wire on the %s.",0
 fmt_trip_set db "Tripwire strung, %d m wall to wall. You'll hear it if anything crosses.",0
 m_trip_none db "Nothing within reach to tie the wire to -- aim along a hallway or across a room.",0
-m_cap_t     db "T walks straight through your capture line and snaps it.",0
+m_cap_t     db "T runs into your capture line at chest height -- CLOTHESLINED! (it snaps)",0
 m_cap_fd    db "Your capture line snags a bottom feeder!",0
 m_cap_none  db "Nothing to tie the line to.",0
 m_zip_up    db "The line's strung -- but it runs uphill from here. Ride it from the top, or winch up it with a HOOKSHOT.",0
@@ -553,7 +558,7 @@ m_safe_no   db "The safe room's networking magic scrambles it -- no portals in (
 m_blink_no  db "No room to blink there.",0
 m_ender_no  db "The orb fizzles -- nowhere to stand there.",0
 m_rg_none   db "The window opens -- nothing within reach of it.",0
-m_rg_t      db "A hand shoots out of the wall and slaps T -- he staggers!",0
+m_rg_t      db "A hand shoots out of the wall and shoves T flying!",0
 m_rg_fd     db "The grabber drags a bottom feeder through the window and drops it at your feet!",0
 m_rg_no     db "Nothing there to open a window on.",0
 m_hood_t    db "Smoke wraps round T's head -- he can't see a thing. He can still hear you.",0
@@ -2869,6 +2874,228 @@ stun_t:
     movss [t_stun], xmm0
     ret
 
+; ---- knocking T down (physics.asm physics_knock) ---------------------------------
+; Each gadget that hits T throws him its own way, as a ragdoll: into walls,
+; off balconies, down stairwells -- and he gets up where he lands. A row per
+; kind: the whole body's speed along the throw and up, the top of him's
+; (that's what topples him), seconds down, flags (KN_TIE / KN_PIN).
+%define K_RAM     0                     ; knocker: rammed off his feet, backwards
+%define K_PIN     1                     ; peg: a foot pinned, he pitches over it
+%define K_LEGS    2                     ; grappler: legs yanked out towards you
+%define K_YANK    3                     ; hookshot: GET OVER HERE -- flies to you
+%define K_TRIP    4                     ; tripwire: face-plants the way he walked
+%define K_BOLA    5                     ; bola: legs and arms bound, down he goes
+%define K_CLOTHES 6                     ; capture line: clotheslined, flips back
+%define K_SLAP    7                     ; remote grabber: shoved away from the wall
+%define K_SNARE   8                     ; snare: legs whipped up, bound
+%define K_LASSO   9                     ; zipline gun: lassoed, dragged a bit your way
+%define K_DAZE    10                    ; blink hook: swapped, stumbles
+%define KN_ROW    24
+section .data
+align 4
+kn_table:
+    ;   along   up    top   top up  secs  flags
+    dd  6.5,   2.6,  2.5,  0.0,   1.6,  0             ; RAM
+    dd  0.0,   0.0,  3.4,  0.0,   2.2,  KN_PIN        ; PIN
+    dd -4.8,   0.8,  5.0,  0.4,   1.7,  0             ; LEGS
+    dd -9.0,   4.0,  0.0,  0.0,   2.3,  0             ; YANK
+    dd  1.4,   0.3,  4.6,  0.0,   1.8,  0             ; TRIP
+    dd  0.8,   0.0,  3.0,  0.0,   3.0,  KN_TIE        ; BOLA
+    dd  3.8,   0.6, -7.0,  1.2,   1.9,  0             ; CLOTHES
+    dd  4.5,   1.8,  1.8,  0.0,   1.3,  0             ; SLAP
+    dd  0.0,   3.2,  2.4,  0.0,   3.0,  KN_TIE        ; SNARE
+    dd -2.4,   0.6,  0.0,  0.0,   2.5,  KN_TIE        ; LASSO
+    dd  0.6,   0.0,  1.8,  0.0,   1.2,  0             ; DAZE
+c_kn_stun   dd 0.7                      ; frozen this much past the ragdoll (getting up)
+section .bss
+alignb 4
+kn_dx       resd 1
+kn_dz       resd 1
+section .text
+
+; knock_t(edi = K_ kind, xmm0/xmm1 = the throw's flat direction, unit)
+; -> eax 1 if he went down as a ragdoll (0: a deauth ragdoll was playing:
+; he's just stunned for as long)
+knock_t:
+    PROLOGUE 48
+    imul ebx, edi, KN_ROW
+    lea rbx, [kn_table+rbx]
+    movss [kn_dx], xmm0
+    movss [kn_dz], xmm1
+    ; the top of him
+    movss xmm2, [rbx+8]
+    mulss xmm2, xmm0
+    movss [kn_tx], xmm2
+    mov eax, [rbx+12]
+    mov [kn_ty], eax
+    movss xmm2, [rbx+8]
+    mulss xmm2, xmm1
+    movss [kn_tz], xmm2
+    ; he faces the way he's thrown from
+    movss xmm0, [kn_dx]
+    xorps xmm0, [c_sign_mask]
+    movss xmm1, [kn_dz]
+    xorps xmm1, [c_sign_mask]
+    call atan2f
+    movaps xmm6, xmm0
+    movss xmm3, [rbx+0]
+    mulss xmm3, [kn_dx]
+    movss xmm4, [rbx+4]
+    movss xmm5, [rbx+0]
+    mulss xmm5, [kn_dz]
+    movss xmm7, [rbx+16]
+    movss xmm0, [t_x]
+    movss xmm1, [t_y]
+    movss xmm2, [t_z]
+    mov edi, [rbx+20]
+    call physics_knock
+    mov r12d, eax
+    movss xmm0, [rbx+16]
+    test r12d, r12d
+    jz .stun
+    addss xmm0, [c_kn_stun]
+.stun:
+    call stun_t
+    mov eax, r12d
+    EPILOGUE
+
+; from_you -> xmm0/xmm1 = the flat direction from where the shot came from
+; (you, or the drone: ao) to T
+from_you:
+    sub rsp, 8
+    movss xmm0, [t_x]
+    subss xmm0, [ao_x]
+    movss xmm1, [t_z]
+    subss xmm1, [ao_z]
+    call flat_unit
+    add rsp, 8
+    ret
+
+; t_heading -> xmm0/xmm1 = the flat way T is walking (towards his next
+; node; standing still: away from you)
+t_heading:
+    sub rsp, 8
+    mov edi, [t_next]
+    call node_center
+    subss xmm0, [t_x]
+    subss xmm2, [t_z]
+    movaps xmm1, xmm2
+    movaps xmm2, xmm0
+    mulss xmm2, xmm2
+    movaps xmm3, xmm1
+    mulss xmm3, xmm3
+    addss xmm2, xmm3
+    FLD xmm3, 0.01
+    comiss xmm2, xmm3
+    ja .walking
+    add rsp, 8
+    jmp from_you
+.walking:
+    call flat_unit
+    add rsp, 8
+    ret
+
+; flat_unit(xmm0, xmm1) -> the same direction, length 1 (0,1 if it's none). leaf
+flat_unit:
+    movaps xmm2, xmm0
+    mulss xmm2, xmm0
+    movaps xmm3, xmm1
+    mulss xmm3, xmm1
+    addss xmm2, xmm3
+    sqrtss xmm2, xmm2
+    FLD xmm3, 0.001
+    comiss xmm2, xmm3
+    ja .ok
+    xorps xmm0, xmm0
+    movss xmm1, [c_one]
+    ret
+.ok:
+    divss xmm0, xmm2
+    divss xmm1, xmm2
+    ret
+
+; knock_from_you(edi = kind) / knock_heading(edi = kind)
+knock_from_you:
+    PROLOGUE 16
+    mov ebx, edi
+    call from_you
+    mov edi, ebx
+    call knock_t
+    EPILOGUE
+knock_heading:
+    PROLOGUE 16
+    mov ebx, edi
+    call t_heading
+    mov edi, ebx
+    call knock_t
+    EPILOGUE
+
+; gadget_hook_t -- (hookshot.asm) a HOOK firing type hit T; what it does is
+; the module's -> eax 1 if it dealt with it (0: the plain stagger)
+gadget_hook_t:
+    PROLOGUE 32
+    call aim_from_view
+    mov eax, [hk_mod]
+    cmp eax, GM_ROD
+    je .yank
+    cmp eax, GM_LINE
+    je .lasso
+    cmp eax, GM_PORTAL
+    je .swap
+    xor eax, eax
+    EPILOGUE
+.yank:
+    mov edi, K_YANK
+    call knock_from_you
+    lea rdi, [m_yank]
+    mov esi, COL_GOOD
+    call say
+    mov eax, 1
+    EPILOGUE
+.lasso:
+    mov edi, K_LASSO
+    call knock_from_you
+    lea rdi, [m_lasso]
+    mov esi, COL_GOOD
+    call say
+    mov eax, 1
+    EPILOGUE
+.swap:
+    ; the blink hook on T: you trade places (not out of a safe room -- he
+    ; can't stand where you are)
+    call player_in_safe
+    test eax, eax
+    jnz .no_swap
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov eax, [p_y]
+    mov [rsp+4], eax
+    mov eax, [p_z]
+    mov [rsp+8], eax
+    movss xmm0, [t_x]
+    movss xmm1, [t_y]
+    movss xmm2, [t_z]
+    call place_player
+    test eax, eax
+    jz .no_swap
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    FLD xmm3, 0.9                       ; (enemy_land wants where his middle is)
+    addss xmm1, xmm3
+    movss xmm2, [rsp+8]
+    call enemy_land
+    call arrived
+    mov edi, K_DAZE
+    call knock_from_you
+    lea rdi, [m_swap]
+    mov esi, COL_GOOD
+    call say
+    mov eax, 1
+    EPILOGUE
+.no_swap:
+    xor eax, eax
+    EPILOGUE
+
 ; say(rdi = text, esi = colour)
 say:
     sub rsp, 8
@@ -3257,8 +3484,8 @@ portal_grab:
     movss [rg_ty], xmm0
     mov eax, [t_z]
     mov [rg_tz], eax
-    movss xmm0, [c_stun_slap]
-    call stun_t
+    mov edi, K_SLAP
+    call knock_from_you
     call snd_hook_hit
     lea rdi, [m_rg_t]
     mov esi, COL_GOOD
@@ -3403,8 +3630,8 @@ rod_laser:
     call say
     EPILOGUE
 .t:
-    movss xmm0, [c_stun_rod]
-    call stun_t
+    mov edi, K_RAM
+    call knock_from_you
     call snd_hook_hit
     lea rdi, [m_rod_t]
     mov esi, COL_GOOD
@@ -3450,9 +3677,12 @@ rod_orb:
     call peg_add
     EPILOGUE
 .t:
-    movss xmm0, [c_stun_peg]
-    call stun_t
+    mov edi, K_PIN
+    call knock_from_you
     call snd_hook_hit
+    lea rdi, [m_pin_t]
+    mov esi, COL_GOOD
+    call say
     EPILOGUE
 .fd:
     mov edi, [hr_idx]
@@ -3492,8 +3722,8 @@ rod_grab:
     mov dword [tt_time], 0
     EPILOGUE
 .t:
-    movss xmm0, [c_stun_heavy]
-    call stun_t
+    mov edi, K_LEGS
+    call knock_from_you
     call snd_hook_hit
     mov edi, ACH_HOOK_T
     call ach_unlock
@@ -3772,8 +4002,8 @@ line_orb:
     andps xmm0, [c_abs_mask]
     comiss xmm0, [c_t_h]
     jae .feeders
-    movss xmm0, [c_stun_bola]
-    call stun_t
+    mov edi, K_BOLA
+    call knock_heading
     call snd_hook_hit
     lea rdi, [m_bola_t]
     mov esi, COL_GOOD
@@ -4606,8 +4836,8 @@ lines_update:
     call seg_closest
     comiss xmm0, [c_snap_t]
     jae .cap_feeders
-    movss xmm0, [c_snap_t]
-    call stun_t
+    mov edi, K_CLOTHES
+    call knock_heading
     lea rdi, [m_cap_t]
     mov esi, COL_WARN
     call say
@@ -4694,8 +4924,8 @@ lines_update:
     call seg_closest
     comiss xmm0, [c_trip_d]
     jae .trip_feeders
-    movss xmm0, [c_stun_trip]
-    call stun_t
+    mov edi, K_TRIP
+    call knock_heading
     lea rdi, [fmt_trip_t]
     movss xmm0, [t_y]
     call alarm
@@ -4742,8 +4972,8 @@ lines_update:
     call seg_closest
     comiss xmm0, [c_snare_d]
     jae .snare_feeders
-    movss xmm0, [c_stun_snare]
-    call stun_t
+    mov edi, K_SNARE
+    call knock_heading
     call snd_hook_hit
     lea rdi, [m_snare_t]
     mov esi, COL_GOOD

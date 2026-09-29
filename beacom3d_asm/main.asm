@@ -191,8 +191,8 @@ st_g_peg    db "[selftest] PEG LAUNCHER (gun+rod+orb): +%d platform (expect 1) o
 st_g_smoke  db "[selftest] SMOKE GRENADE (gun+smoke+orb): T could see you=%d, then with the cloud between you=%d (expect 1 0)",10,0
 st_g_hood   db "[selftest] SMOKE HOOD (gun+smoke+grabber): %d cloud on T (expect 1); he walks 3 m and sees you=%d (expect 0)",10,0
 st_g_knock  db "[selftest] KNOCKER (gun+rod+laser): the clank off the far wall sent T to look=%d (expect 1)",10,0
-st_g_bola   db "[selftest] BOLA (gun+line+orb): T tangled for %.1f s (expect 2.5)",10,0
-st_g_trip   db "[selftest] TRIPWIRE (gun+line+laser): strung=%d (expect 1); T walks into it: sprung=%d (expect 1), tangled %.1f s (expect 1.6)",10,0
+st_g_bola   db "[selftest] BOLA (gun+line+orb): T tangled for %.1f s (expect 3.7: 3 s down, bound, then up)",10,0
+st_g_trip   db "[selftest] TRIPWIRE (gun+line+laser): strung=%d (expect 1); T walks into it: sprung=%d (expect 1), tangled %.1f s (expect 2.5: face-plant and up)",10,0
 st_g_knockfd db "[selftest] KNOCKER on a thieving bottom feeder: still carrying=%d (expect 0), captures dropped=%d (expect 1)",10,0
 st_g_parts  db "[selftest] gadget parts: every night hides 2 modules + 2 firing types + the drone frame=%d (expect 1), %d different module pairs over 10 seeds (expect > 2), picking them up assembles a gadget=%d (expect 1)",10,0
 st_g_trans  db "[selftest] transmute: a safe room offers it=%d (expect 1), your only module became another=%d (expect 1), used up (charges left)=%d (expect 0)",10,0
@@ -216,6 +216,7 @@ shot_part_at dd 2.0,-0.9,  2.0,-0.3,  2.0,0.3,  2.0,0.9
             dd 2.9,-1.6,  2.9,1.6
 sh_g_drone  db "shots/53_drone_out.bmp",0
 sh_g_drone2 db "shots/54_drone_home.bmp",0
+sh_knock    db "shots/58_knocker_ragdoll.bmp",0
 sh_hide     db "shots/57_under_a_desk.bmp",0
 section .bss
 sh_prompt   resd 1
@@ -3875,6 +3876,31 @@ shot_mode_run:
     call hide_reset
     mov eax, [sh_prompt]
     mov [hud_prompt], eax
+    ; the knocker: T rammed off his feet, a quarter-second in
+    call kt_setup
+    mov dword [t_stun], 0
+    mov edi, GM_ROD
+    mov esi, GF_LASER
+    call gt_fire
+    mov ebx, 15
+.kn_fly:
+    movss xmm0, [c_dt_shot]
+    call physics_update
+    dec ebx
+    jnz .kn_fly
+    call hud_clear_messages
+    lea rdi, [sh_knock]
+    call shot_now
+    mov ebx, 240
+.kn_land:
+    movss xmm0, [c_dt_shot]
+    call physics_update
+    dec ebx
+    jnz .kn_land
+    mov dword [t_x], __float32__(1000.0)
+    mov dword [t_z], __float32__(1000.0)
+    mov eax, [sh_prompt]
+    mov [hud_prompt], eax
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -4822,6 +4848,443 @@ shot_part:
     FLD xmm0, -0.5
     addss xmm0, [p_y]
     movss [r12+ITEM_Y], xmm0            ; (lower: they bob at eye level otherwise)
+    EPILOGUE
+
+; ---- knockdowns: every gadget that hits T throws him its own way as a
+; ragdoll, and he gets up where he lands (physics_knock, enemy_land)
+extern knock_t, rag_mode, rag_body, body_p0, px, py, pz, t_can_stand_g
+%define K_RAM_T 0                       ; (gadget.asm's K_ kinds)
+%define K_PIN_T 1
+%define K_TRIP_T 4
+section .data
+st_kn_ram   db "[selftest] knockdown KNOCKER: T down as a ragdoll=%d (expect 1), thrown %.1f m away from you (expect > 1.5)",10,0
+st_kn_up    db "[selftest] knockdown KNOCKER: up again=%d (expect 1), standing where he can=%d (expect 1), walking on=%d (expect 1)",10,0
+st_kn_legs  db "[selftest] knockdown GRAPPLER: down=%d (expect 1), his feet came %.1f m towards you (expect > 0.5)",10,0
+st_kn_yank  db "[selftest] knockdown HOOKSHOT (GET OVER HERE): down=%d (expect 1), T lands %.1f m from you (expect < 3.5; he was %.1f m off)",10,0
+st_kn_lasso db "[selftest] knockdown ZIPLINE GUN lasso: down=%d (expect 1), bound feet %.2f m apart (expect < 0.15)",10,0
+st_kn_swap  db "[selftest] knockdown BLINK HOOK swap: you are %.1f m from where T stood (expect < 1.5), T %.1f m from where you stood (expect < 1.5)",10,0
+st_kn_pin   db "[selftest] knockdown PEG: the pinned foot moved %.2f m (expect < 0.05), his head %.1f m (expect > 0.5)",10,0
+st_kn_trip  db "[selftest] knockdown TRIPWIRE: he face-plants %.1f m along the way he walked (expect > 0.5)",10,0
+st_kn_bal   db "[selftest] knockdown off the balcony: storey %d -> %d (expect 1 -> 0), on his feet there=%d (expect 1)",10,0
+st_kn_again db "[selftest] knockdown while down: thrown again=%d (expect 1), on another %.1f m (expect > 1)",10,0
+st_kn_dea   db "[selftest] knockdown during a deauth ragdoll: refused=%d (expect 1), the deauth still ends with him gone=%d (expect 1)",10,0
+section .text
+; kt_run(xmm0 = seconds) -- physics, T, and everything hook_run steps, 60 Hz
+kt_run:
+    PROLOGUE 16
+    FLD xmm1, 60.0
+    mulss xmm0, xmm1
+    cvttss2si ebx, xmm0
+.f:
+    movss xmm0, [c_dt_shot]
+    call physics_update
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    mov dword [t_caught], 0
+    FLD xmm0, 0.0167
+    call hook_run
+    dec ebx
+    jnz .f
+    EPILOGUE
+
+; kt_setup -- you at (26,15) on the ground floor looking east, T 5 m ahead
+; (awake, but blind for the test)
+kt_setup:
+    PROLOGUE 16
+    mov edi, 1
+    mov esi, 29
+    mov edx, 15
+    call find_near_open_at
+    mov edi, eax
+    call gt_t_at
+    mov edi, 1
+    mov esi, 26
+    mov edx, 15
+    FLD xmm0, -1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    call gadget_reset
+    EPILOGUE
+
+; kt_dx -> xmm0 = t_x - p_x (east of you: positive)
+kt_dist:
+    movss xmm0, [t_x]
+    subss xmm0, [p_x]
+    mulss xmm0, xmm0
+    movss xmm1, [t_z]
+    subss xmm1, [p_z]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    ret
+
+knock_tests:
+    PROLOGUE 64
+    mov dword [cfg_building], BLD_REAL
+    mov dword [seed_val], 42
+    call prepare_world
+    call new_game
+    mov eax, [cfg_t_vision]
+    mov [rsp+60], eax
+    mov dword [cfg_t_vision], 0
+    ; ---- KNOCKER, fired for real
+    call kt_setup
+    mov eax, [t_x]
+    mov [rsp+0], eax
+    mov edi, GM_ROD
+    mov esi, GF_LASER
+    call gt_fire
+    xor eax, eax
+    cmp dword [rag_active], 0
+    je .ram_no
+    cmp dword [rag_mode], 1
+    sete al
+.ram_no:
+    mov [rsp+4], eax
+    FLD xmm0, 1.2
+    call kt_run
+    movss xmm0, [t_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_kn_ram]
+    mov esi, [rsp+4]
+    mov eax, 1
+    call printf
+    FLD xmm0, 1.5                       ; down 1.6 s, up 0.6 s later
+    call kt_run
+    xor esi, esi
+    cmp dword [rag_active], 0
+    sete sil
+    mov [rsp+4], esi
+    mov edi, [t_node]
+    call t_can_stand_g
+    mov [rsp+8], eax
+    mov eax, [t_x]
+    mov [rsp+12], eax
+    mov eax, [t_z]
+    mov [rsp+16], eax
+    mov dword [t_state], T_WANDER
+    FLD xmm0, 3.0
+    call kt_run
+    movss xmm0, [t_x]
+    subss xmm0, [rsp+12]
+    andps xmm0, [c_abs_mask]
+    movss xmm1, [t_z]
+    subss xmm1, [rsp+16]
+    andps xmm1, [c_abs_mask]
+    addss xmm0, xmm1
+    xor ecx, ecx
+    FLD xmm1, 0.5
+    comiss xmm0, xmm1
+    seta cl
+    lea rdi, [st_kn_up]
+    mov esi, [rsp+4]
+    mov edx, [rsp+8]
+    xor eax, eax
+    call printf
+    FLD xmm0, 1.0
+    call kt_run
+    ; ---- GRAPPLER: his feet towards you
+    call kt_setup
+    mov edi, GM_ROD
+    mov esi, GF_GRAB
+    call gt_fire
+    xor r12d, r12d                      ; watching for the ragdoll...
+    xor r13d, r13d
+.legs_wait:
+    cmp dword [rag_active], 0
+    jne .legs_down
+    FLD xmm0, 0.0167
+    call kt_run
+    inc r13d
+    cmp r13d, 90
+    jl .legs_wait
+    jmp .legs_out
+.legs_down:
+    mov r12d, 1
+    mov ebx, [rag_body]
+    mov eax, [body_p0+rbx*4]
+    mov ecx, [px+rax*4+20]
+    mov [rsp+0], ecx                    ; a foot's x at the start
+    FLD xmm0, 0.5
+    call kt_run
+    mov ebx, [rag_body]
+    xorps xmm0, xmm0
+    test ebx, ebx
+    js .legs_out
+    mov eax, [body_p0+rbx*4]
+    movss xmm0, [rsp+0]
+    subss xmm0, [px+rax*4+20]           ; west = towards you
+.legs_out:
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_kn_legs]
+    mov esi, r12d
+    mov eax, 1
+    call printf
+    FLD xmm0, 3.0
+    call kt_run
+    ; ---- HOOKSHOT: GET OVER HERE
+    call kt_setup
+    call kt_dist
+    movss [rsp+0], xmm0
+    mov edi, GM_ROD
+    mov esi, GF_HOOK
+    call gt_fire
+    xor r12d, r12d
+    mov r13d, 60
+.yank_wait:
+    FLD xmm0, 0.0167
+    call kt_run
+    cmp dword [rag_active], 0
+    je .yank_n
+    mov r12d, 1
+.yank_n:
+    dec r13d
+    jnz .yank_wait
+    FLD xmm0, 2.0
+    call kt_run
+    call kt_dist
+    cvtss2sd xmm0, xmm0
+    movss xmm1, [rsp+0]
+    cvtss2sd xmm1, xmm1
+    lea rdi, [st_kn_yank]
+    mov esi, r12d
+    mov eax, 2
+    call printf
+    FLD xmm0, 2.0
+    call kt_run
+    ; ---- ZIPLINE GUN on T: lassoed, bound
+    call kt_setup
+    mov edi, GM_LINE
+    mov esi, GF_HOOK
+    call gt_fire
+    xor r12d, r12d
+    mov r13d, 60
+.lasso_wait:
+    FLD xmm0, 0.0167
+    call kt_run
+    cmp dword [rag_active], 0
+    jne .lasso_down
+    dec r13d
+    jnz .lasso_wait
+    xorps xmm0, xmm0
+    jmp .lasso_out
+.lasso_down:
+    mov r12d, 1
+    FLD xmm0, 0.6
+    call kt_run
+    mov ebx, [rag_body]
+    mov eax, [body_p0+rbx*4]
+    movss xmm0, [px+rax*4+20]
+    subss xmm0, [px+rax*4+24]
+    mulss xmm0, xmm0
+    movss xmm1, [pz+rax*4+20]
+    subss xmm1, [pz+rax*4+24]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+.lasso_out:
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_kn_lasso]
+    mov esi, r12d
+    mov eax, 1
+    call printf
+    FLD xmm0, 3.5
+    call kt_run
+    ; ---- BLINK HOOK on T: swapped
+    call kt_setup
+    mov eax, [p_x]
+    mov [rsp+0], eax
+    mov eax, [p_z]
+    mov [rsp+4], eax
+    mov eax, [t_x]
+    mov [rsp+8], eax
+    mov eax, [t_z]
+    mov [rsp+12], eax
+    mov edi, GM_PORTAL
+    mov esi, GF_HOOK
+    call gt_fire
+    FLD xmm0, 1.0
+    call hook_run
+    movss xmm0, [p_x]
+    subss xmm0, [rsp+8]
+    mulss xmm0, xmm0
+    movss xmm1, [p_z]
+    subss xmm1, [rsp+12]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    cvtss2sd xmm0, xmm0
+    movss xmm1, [t_x]
+    subss xmm1, [rsp+0]
+    mulss xmm1, xmm1
+    movss xmm2, [t_z]
+    subss xmm2, [rsp+4]
+    mulss xmm2, xmm2
+    addss xmm1, xmm2
+    sqrtss xmm1, xmm1
+    cvtss2sd xmm1, xmm1
+    lea rdi, [st_kn_swap]
+    mov eax, 2
+    call printf
+    FLD xmm0, 2.5
+    call kt_run
+    ; ---- PEG: knock_t by hand, the pinned foot stays
+    call kt_setup
+    mov edi, K_PIN_T
+    FLD xmm0, 1.0
+    xorps xmm1, xmm1
+    call knock_t
+    FLD xmm0, 0.0167
+    call kt_run
+    mov ebx, [rag_body]
+    mov eax, [body_p0+rbx*4]
+    mov ecx, [px+rax*4+20]
+    mov [rsp+0], ecx
+    mov ecx, [pz+rax*4+20]
+    mov [rsp+4], ecx
+    mov ecx, [px+rax*4]
+    mov [rsp+8], ecx                    ; head x
+    FLD xmm0, 1.0
+    call kt_run
+    mov ebx, [rag_body]
+    mov eax, [body_p0+rbx*4]
+    movss xmm0, [px+rax*4+20]
+    subss xmm0, [rsp+0]
+    mulss xmm0, xmm0
+    movss xmm1, [pz+rax*4+20]
+    subss xmm1, [rsp+4]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    sqrtss xmm0, xmm0
+    cvtss2sd xmm0, xmm0
+    movss xmm1, [px+rax*4]
+    subss xmm1, [rsp+8]
+    andps xmm1, [c_abs_mask]
+    cvtss2sd xmm1, xmm1
+    lea rdi, [st_kn_pin]
+    mov eax, 2
+    call printf
+    FLD xmm0, 2.5
+    call kt_run
+    ; ---- TRIPWIRE: along the way he walks (east, by hand)
+    call kt_setup
+    mov eax, [t_x]
+    mov [rsp+0], eax
+    mov edi, K_TRIP_T
+    FLD xmm0, 1.0
+    xorps xmm1, xmm1
+    call knock_t
+    FLD xmm0, 1.5
+    call kt_run
+    movss xmm0, [t_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_kn_trip]
+    mov eax, 1
+    call printf
+    FLD xmm0, 2.0
+    call kt_run
+    ; ---- off the balcony into the pit (the knocker's throw, by hand)
+    mov edi, 1
+    mov esi, 37
+    mov edx, 19
+    call cell_index
+    mov edi, eax
+    call gt_t_at
+    mov dword [t_x], __float32__(74.4)
+    mov dword [t_z], __float32__(39.15)
+    mov dword [t_y], __float32__(3.2)
+    mov edi, 1
+    mov esi, 39
+    mov edx, 19
+    FLD xmm0, 1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    movss xmm0, [t_y]
+    call floor_of_height
+    mov [rsp+0], eax
+    mov edi, K_RAM_T
+    FLD xmm0, -1.0
+    xorps xmm1, xmm1
+    call knock_t
+    FLD xmm0, 2.6
+    call kt_run
+    movss xmm0, [t_y]
+    call floor_of_height
+    mov [rsp+4], eax
+    mov edi, [t_node]
+    call t_can_stand_g
+    mov ecx, eax
+    lea rdi, [st_kn_bal]
+    mov esi, [rsp+0]
+    mov edx, [rsp+4]
+    xor eax, eax
+    call printf
+    FLD xmm0, 1.0
+    call kt_run
+    ; ---- hit again while he's down
+    call kt_setup
+    mov edi, K_RAM_T
+    FLD xmm0, 1.0
+    xorps xmm1, xmm1
+    call knock_t
+    FLD xmm0, 0.8
+    call kt_run
+    mov eax, [t_x]
+    mov [rsp+0], eax
+    mov edi, K_RAM_T
+    FLD xmm0, 1.0
+    xorps xmm1, xmm1
+    call knock_t
+    mov [rsp+4], eax
+    FLD xmm0, 1.2
+    call kt_run
+    movss xmm0, [t_x]
+    subss xmm0, [rsp+0]
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_kn_again]
+    mov esi, [rsp+4]
+    mov eax, 1
+    call printf
+    FLD xmm0, 3.0
+    call kt_run
+    ; ---- a deauth ragdoll wins
+    call kt_setup
+    movss xmm0, [t_x]
+    movss xmm1, [t_y]
+    movss xmm2, [t_z]
+    movss xmm3, [c_one]
+    xorps xmm4, xmm4
+    xorps xmm5, xmm5
+    call physics_ragdoll
+    mov eax, [t_x]
+    mov [rsp+0], eax
+    mov edi, K_RAM_T
+    FLD xmm0, 1.0
+    xorps xmm1, xmm1
+    call knock_t
+    xor esi, esi
+    test eax, eax
+    sete sil
+    mov [rsp+4], esi
+    FLD xmm0, 3.5
+    call kt_run
+    movss xmm0, [t_x]
+    subss xmm0, [rsp+0]
+    andps xmm0, [c_abs_mask]
+    xor edx, edx
+    FLD xmm1, 5.0                       ; (he reappears somewhere far away)
+    comiss xmm0, xmm1
+    seta dl
+    movss xmm0, [t_z]
+    lea rdi, [st_kn_dea]
+    mov esi, [rsp+4]
+    xor eax, eax
+    call printf
+    mov eax, [rsp+60]
+    mov [cfg_t_vision], eax
+    mov dword [t_caught], 0
     EPILOGUE
 
 ; ---- hiding under desks (hide.asm), in the real Beacom
@@ -8957,6 +9420,7 @@ selftest_all:
     call line_sweep_tests               ; every LINE gadget, from 240 spots and angles
     call loadout_tests                  ; what you bring into the night
     call hide_tests                     ; hiding under desks
+    call knock_tests                    ; T thrown as a ragdoll by the gadgets
     call drone_tests
     call oob_tests
     call dew_tests

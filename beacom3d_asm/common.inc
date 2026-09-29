@@ -132,6 +132,8 @@ section .rodata
 %define DR_PARK   2          ; ...hovering there
 %define DR_BACK   3          ; ...flying home
 %define DR_DOWN   4          ; ...swatted down by T: rebooting on the floor
+%define KN_TIE    1          ; physics_knock: legs and arms bound (a bola)
+%define KN_PIN    2          ; ...a foot pinned to the floor (a peg)
 %define NPROMPTS  26         ; hud.asm's interaction prompts
 %define PR_HIDE   24         ; ...hide under a desk, then climb out (25)
 %define PR_PART   14         ; ...from here: each module, firing type, frame
