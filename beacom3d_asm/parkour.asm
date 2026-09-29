@@ -33,6 +33,7 @@ c_rise_max  dd 1.95                 ; the highest ledge you can pull up to
 c_vault_max dd 1.2                  ; the highest thing you can vault
 c_probe     dd 0.45, 0.7, 0.95      ; how far ahead to look for the edge
 c_over      dd 0.3                  ; mantle: end this far past the edge
+c_land_at   dd 0.3, 0.55, 0.0       ; ...or here, trying each in turn (0 = the edge)
 c_land      dd 1.3                  ; vault: land this far past the edge
 c_radius    dd 0.32
 c_thin      dd 0.22
@@ -241,23 +242,27 @@ parkour_try:
     movss xmm0, [c_noise_v]
     jmp .start
 .mantle:
-    ; up, then over the edge (just to the edge if there's no room further in)
+    ; up, then over the edge: the first of c_over, a bit further, or the
+    ; edge itself where all of you fits (crouched) -- checked at your real
+    ; width, or you'd finish the move half inside the wall beside the ledge
     mov dword [pk_kind], PK_MANTLE
+    xor r12d, r12d
+.spot:
+    cmp r12d, 3
+    jge .no
     movss xmm0, [rsp+4]
-    addss xmm0, [c_over]
+    addss xmm0, [c_land_at+r12*4]
     call ahead
     movss [rsp+16], xmm0
     movss [rsp+20], xmm1
     movss xmm2, [rsp+0]
-    movss xmm3, [c_thin]
+    movss xmm3, [c_radius]
     movss xmm4, [c_crouch_b]
     call collides
     test eax, eax
     jz .far_ok
-    mov eax, [rsp+8]
-    mov [rsp+16], eax
-    mov eax, [rsp+12]
-    mov [rsp+20], eax
+    inc r12d
+    jmp .spot
 .far_ok:
     mov eax, [rsp+16]
     mov [mv_e+0], eax

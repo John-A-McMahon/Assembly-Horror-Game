@@ -151,6 +151,17 @@ c_knee      dd 0.35
 c_hand_y    dd 0.35                     ; lines leave your hand this far below your eyes
 c_zip_top   dd 2.7                      ; a zipline's top end, above your feet
 c_zip_low   dd 2.3                      ; its low end at least this high off the floor
+c_zip_hang  dd 2.15                     ; a rider's feet below it (traverse.asm c_hang)
+c_zip_body_r dd 0.34                    ; ...and body: a hair wider than you
+c_zip_body_h dd 1.7
+c_ten       dd 10.0
+c_peg_me_r  dd 0.34                     ; peg_add: your half-width (and a hair)
+c_peg_me_lo dd 0.25                     ; ...the part of you collides() counts
+c_peg_me_hi dd 1.7
+c_seg_end   dd 0.15                     ; seg_clear: left out before B
+c_seg_step  dd 0.05                     ; ...and its resolution (thin sloped slabs)
+c_ride_step dd 0.25                     ; ride_clear: body checks this far apart
+c_ride_r    dd 0.30
 c_ceil_gap  dd 0.25
 c_downhill  dd 0.3
 c_line_life dd 30.0
@@ -535,6 +546,8 @@ m_cap_fd    db "Your capture line snags a bottom feeder!",0
 m_cap_none  db "Nothing to tie the line to.",0
 m_zip_up    db "The line's strung -- but it runs uphill from here. Ride it from the top, or winch up it with a HOOKSHOT.",0
 m_zip_bad   db "The line would cut through a wall -- no zipline.",0
+m_zip_close db "Too close -- a zipline needs a few metres to run.",0
+m_zip_room  db "No room to ride that line -- you'd be dragged through a wall.",0
 m_safe_no   db "The safe room's networking magic scrambles it -- no portals in (or into) safe rooms.",0
 m_blink_no  db "No room to blink there.",0
 m_ender_no  db "The orb fizzles -- nowhere to stand there.",0
@@ -546,6 +559,7 @@ m_hood_t    db "Smoke wraps round T's head -- he can't see a thing. He can still
 m_grab_fd   db "The grabber latches on to a bottom feeder -- it drops what it was carrying.",0
 m_grab_home db "The bottom feeder lands at your feet, dazed.",0
 m_peg_no    db "The rod can't dig in there.",0
+m_peg_you   db "Too close -- the peg would go through you. Step back.",0
 file_name   db "beacom_gadgets.cfg",0
 mode_w      db "w",0
 mode_r      db "r",0
@@ -3543,6 +3557,134 @@ wire_reach:
     movss xmm0, [c_trip_max]
     EPILOGUE
 
+; seg_clear(xmm0..2 = A, xmm3..5 = B) -> eax 1 if nothing a hook would bite
+; lies between them (solid_point: walls, slabs outside a shaft, desks,
+; crates -- more than line_of_sight_3d looks at), checked every c_seg_step; the
+; last c_seg_end before B is left out (B is usually on what was hit)
+seg_clear:
+    PROLOGUE 48
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    subss xmm3, xmm0
+    subss xmm4, xmm1
+    subss xmm5, xmm2
+    movss [rsp+12], xmm3                ; B - A
+    movss [rsp+16], xmm4
+    movss [rsp+20], xmm5
+    mulss xmm3, xmm3
+    mulss xmm4, xmm4
+    mulss xmm5, xmm5
+    addss xmm3, xmm4
+    addss xmm3, xmm5
+    sqrtss xmm3, xmm3
+    movss [rsp+24], xmm3                ; length
+    subss xmm3, [c_seg_end]
+    movss [rsp+28], xmm3                ; stop here
+    mov dword [rsp+32], 0               ; distance along
+    mov eax, [rsp+4]
+    mov [rsp+36], eax                   ; previous y
+.s:
+    movss xmm0, [rsp+32]
+    addss xmm0, [c_seg_step]
+    comiss xmm0, [rsp+28]
+    jae .clear
+    movss [rsp+32], xmm0
+    divss xmm0, [rsp+24]                ; t
+    movss xmm1, [rsp+16]
+    mulss xmm1, xmm0
+    addss xmm1, [rsp+4]
+    movss [rsp+40], xmm1
+    movss xmm2, [rsp+20]
+    mulss xmm2, xmm0
+    addss xmm2, [rsp+8]
+    mulss xmm0, [rsp+12]
+    addss xmm0, [rsp+0]
+    movss xmm3, [rsp+36]
+    call solid_point
+    test eax, eax
+    jnz .blocked
+    mov eax, [rsp+40]
+    mov [rsp+36], eax
+    jmp .s
+.clear:
+    mov eax, 1
+    EPILOGUE
+.blocked:
+    xor eax, eax
+    EPILOGUE
+
+; ride_clear(xmm0..2 = A, xmm3..5 = B) -> eax 1 if a body hanging from a
+; cable A-B (feet c_zip_hang under it) could ride its whole length: every
+; c_ride_step it fits (collides), and between steps its feet cross no slab
+; outside a shaft (slab_cross)
+ride_clear:
+    PROLOGUE 64
+    movss [rsp+0], xmm0
+    movss [rsp+4], xmm1
+    movss [rsp+8], xmm2
+    subss xmm3, xmm0
+    subss xmm4, xmm1
+    subss xmm5, xmm2
+    movss [rsp+12], xmm3                ; B - A
+    movss [rsp+16], xmm4
+    movss [rsp+20], xmm5
+    mulss xmm3, xmm3
+    mulss xmm4, xmm4
+    mulss xmm5, xmm5
+    addss xmm3, xmm4
+    addss xmm3, xmm5
+    sqrtss xmm3, xmm3
+    movss [rsp+24], xmm3                ; length
+    mov dword [rsp+28], 0               ; distance along
+    movss xmm0, [rsp+4]
+    subss xmm0, [c_zip_hang]
+    movss [rsp+32], xmm0                ; previous feet
+.s:
+    movss xmm0, [rsp+28]
+    addss xmm0, [c_ride_step]
+    minss xmm0, [rsp+24]
+    movss [rsp+28], xmm0
+    divss xmm0, [rsp+24]                ; t
+    movss xmm1, [rsp+16]
+    mulss xmm1, xmm0
+    addss xmm1, [rsp+4]
+    subss xmm1, [c_zip_hang]
+    movss [rsp+36], xmm1                ; feet
+    movss xmm2, [rsp+20]
+    mulss xmm2, xmm0
+    addss xmm2, [rsp+8]
+    movss [rsp+44], xmm2                ; z
+    mulss xmm0, [rsp+12]
+    addss xmm0, [rsp+0]
+    movss [rsp+40], xmm0                ; x
+    movss xmm1, [rsp+44]
+    movss xmm2, [rsp+36]
+    movss xmm3, [c_ride_r]
+    movss xmm4, [c_zip_body_h]
+    call collides
+    test eax, eax
+    jnz .blocked
+    movss xmm0, [rsp+40]
+    movss xmm1, [rsp+44]
+    movss xmm2, [rsp+32]
+    movss xmm3, [rsp+36]
+    movss xmm4, [c_ride_r]
+    movss xmm5, [c_zip_body_h]
+    call slab_cross
+    test eax, eax
+    jnz .blocked
+    mov eax, [rsp+36]
+    mov [rsp+32], eax
+    movss xmm0, [rsp+28]
+    comiss xmm0, [rsp+24]
+    jb .s
+    mov eax, 1
+    EPILOGUE
+.blocked:
+    xor eax, eax
+    EPILOGUE
+
 ; ORB: the bola -- tangles the nearest creature where it lands; a miss lies
 ; open on the floor as a snare
 line_orb:
@@ -3657,6 +3799,56 @@ line_hook:
     mov [rsp+12], eax
     mov eax, [hr_z]
     mov [rsp+20], eax
+    ; ...and far enough out of what it bit that you fit, hanging from it at
+    ; that end: step it back toward you until your body does (the hook bit
+    ; the wall's surface -- ride to there and you'd end up half inside it)
+    movss xmm0, [rsp+0]
+    subss xmm0, [rsp+12]
+    movss xmm1, [rsp+8]
+    subss xmm1, [rsp+20]                ; far end -> you, flat
+    movaps xmm2, xmm0
+    mulss xmm2, xmm2
+    movaps xmm3, xmm1
+    mulss xmm3, xmm1
+    addss xmm2, xmm3
+    sqrtss xmm2, xmm2
+    movaps xmm3, xmm2
+    subss xmm3, [c_one]
+    mulss xmm3, [c_ten]
+    cvttss2si eax, xmm3                 ; steps it may take, leaving 1 m of cable
+    cmp eax, 40
+    jle .steps
+    mov eax, 40
+.steps:
+    test eax, eax
+    jle .too_close
+    mov [rsp+32], eax
+    movss xmm3, [c_step]
+    divss xmm3, xmm2
+    mulss xmm0, xmm3
+    mulss xmm1, xmm3
+    movss [rsp+24], xmm0                ; one step
+    movss [rsp+28], xmm1
+.fit:
+    movss xmm0, [rsp+12]
+    movss xmm1, [rsp+20]
+    movss xmm2, [rsp+16]
+    subss xmm2, [c_zip_hang]
+    movss xmm3, [c_zip_body_r]
+    movss xmm4, [c_zip_body_h]
+    call collides
+    test eax, eax
+    jz .fits
+    dec dword [rsp+32]
+    jz .blocked
+    movss xmm0, [rsp+12]
+    addss xmm0, [rsp+24]
+    movss [rsp+12], xmm0
+    movss xmm0, [rsp+20]
+    addss xmm0, [rsp+28]
+    movss [rsp+20], xmm0
+    jmp .fit
+.fits:
     ; ...and not through a wall
     movss xmm0, [rsp+0]
     movss xmm1, [rsp+4]
@@ -3664,9 +3856,20 @@ line_hook:
     movss xmm3, [rsp+12]
     movss xmm4, [rsp+16]
     movss xmm5, [rsp+20]
-    call line_of_sight_3d
+    call seg_clear
     test eax, eax
     jz .blocked
+    ; ...and whoever rides it has room: their body, hanging from it all the
+    ; way (a thin cable clears a corner a body doesn't)
+    movss xmm0, [rsp+0]
+    movss xmm1, [rsp+4]
+    movss xmm2, [rsp+8]
+    movss xmm3, [rsp+12]
+    movss xmm4, [rsp+16]
+    movss xmm5, [rsp+20]
+    call ride_clear
+    test eax, eax
+    jz .no_room
     ; the high end is A
     movss xmm0, [rsp+4]
     subss xmm0, [rsp+16]
@@ -3722,6 +3925,16 @@ line_hook:
     lea rdi, [m_zip_bad]
     mov esi, COL_WARN
     call say
+    jmp .done
+.too_close:
+    lea rdi, [m_zip_close]
+    mov esi, COL_WARN
+    call say
+    jmp .done
+.no_room:
+    lea rdi, [m_zip_room]
+    mov esi, COL_WARN
+    call say
 .done:
     xor eax, eax
     EPILOGUE
@@ -3741,6 +3954,37 @@ line_grab:
     mov [nl_ay], eax
     mov eax, [hd_z]
     mov [nl_az], eax
+    ; from your hand -- unless a corner or the floor is between it and where
+    ; the aim hit (the aim itself is clear): then from the aim's origin
+    FLD xmm6, 0.2                       ; (a step back out of the surface)
+    movss xmm3, [ad_x]
+    mulss xmm3, xmm6
+    movss xmm4, [hr_x]
+    subss xmm4, xmm3
+    movaps xmm3, xmm4
+    movss xmm4, [ad_y]
+    mulss xmm4, xmm6
+    movss xmm5, [hr_y]
+    subss xmm5, xmm4
+    movaps xmm4, xmm5
+    movss xmm5, [ad_z]
+    mulss xmm5, xmm6
+    movss xmm7, [hr_z]
+    subss xmm7, xmm5
+    movaps xmm5, xmm7
+    movss xmm0, [hd_x]
+    movss xmm1, [hd_y]
+    movss xmm2, [hd_z]
+    call seg_clear
+    test eax, eax
+    jnz .from_hand
+    mov eax, [ao_x]
+    mov [nl_ax], eax
+    mov eax, [ao_y]
+    mov [nl_ay], eax
+    mov eax, [ao_z]
+    mov [nl_az], eax
+.from_hand:
     mov eax, [hr_x]
     mov [nl_bx], eax
     mov eax, [hr_y]
@@ -4889,6 +5133,39 @@ peg_add:
     maxss xmm1, xmm2
     movss [rsp+20], xmm0
     movss [rsp+24], xmm1
+    ; not through you: a ledge out of the wall right in front of you would
+    ; grow into your body (your footprint grown by your half-width, and the
+    ; slab against the part of you collides() counts)
+    movss xmm0, [p_x]
+    movss xmm1, [rsp+12]
+    subss xmm1, [c_peg_me_r]
+    comiss xmm0, xmm1
+    jbe .room
+    movss xmm1, [rsp+16]
+    addss xmm1, [c_peg_me_r]
+    comiss xmm0, xmm1
+    jae .room
+    movss xmm0, [p_z]
+    movss xmm1, [rsp+20]
+    subss xmm1, [c_peg_me_r]
+    comiss xmm0, xmm1
+    jbe .room
+    movss xmm1, [rsp+24]
+    addss xmm1, [c_peg_me_r]
+    comiss xmm0, xmm1
+    jae .room
+    movss xmm0, [rsp+4]                 ; its top...
+    movss xmm1, [p_y]
+    addss xmm1, [c_peg_me_lo]
+    comiss xmm0, xmm1
+    jbe .room                           ; ...under your knees: you'd stand on it
+    movss xmm0, [rsp+4]
+    subss xmm0, [rsp+8]                 ; its bottom...
+    movss xmm1, [p_y]
+    addss xmm1, [c_peg_me_hi]
+    comiss xmm0, xmm1
+    jb .in_you                          ; ...under your head: it's in you
+.room:
     ; which platform slot
     mov eax, [peg_n]
     cmp eax, MAXPEG
@@ -4927,6 +5204,12 @@ peg_add:
     mov [plat_thick+rcx*4], eax
     mov dword [plat_style+rcx*4], PS_GADGET
     call snd_hook_hit
+    EPILOGUE
+.in_you:
+    call snd_hook_miss
+    lea rdi, [m_peg_you]
+    mov esi, COL_INFO
+    call say
     EPILOGUE
 .fail:
     call snd_hook_miss

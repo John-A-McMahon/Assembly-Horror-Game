@@ -328,9 +328,14 @@ What the gun makes (the bench keeps a catalog of the ones you've found):
 | | LASER | ORB | HOOK | GRABBER |
 | --- | --- | --- | --- | --- |
 | **PORTAL** | **portal gun**: blue/orange wall portals | **ender orb**: you're wherever it comes to rest | **blink hook**: straight to where it bit | **remote grabber**: a window opens on any surface in sight and a hand reaches 6 m out of it for the nearest thing |
-| **ROD** | **knocker**: staggers T, flattens feeders (a thief drops its capture); off a wall, the *clank carries from there* -- T goes to look | **peg launcher**: rods dig in -- a ledge out of a wall, a 1 m post out of a floor. You can climb them, T can't | **hookshot**: hauls you there; Space flings you; on *any* zipline hold fire to **winch**, even uphill, on stamina | **grappler**: hauls items, feeders and boxes to you. T's too heavy -- he just staggers |
-| **LINE** | **tripwire**: knee-high, wall to wall along your aim; trips whatever crosses it and tells you where | **bola**: tangles T (2.5 s) or a feeder where it lands; a miss becomes a snare on the floor | **zipline gun**: a cable from over your head to where it bites. Gravity rides it: downhill is easy, uphill you stop and slide back (winch it with a hookshot) | **capture line**: snags feeders and items it passes; they slide down it to the low end. T walks through and snaps it |
+| **ROD** | **knocker**: staggers T, flattens feeders (a thief drops its capture); off a wall, the *clank carries from there* -- T goes to look | **peg launcher**: rods dig in -- a ledge out of a wall, a 1 m post out of a floor (never through you: step back from the wall first). You can climb them, T can't | **hookshot**: hauls you there; Space flings you; on *any* zipline hold fire to **winch**, even uphill, on stamina | **grappler**: hauls items, feeders and boxes to you. T's too heavy -- he just staggers |
+| **LINE** | **tripwire**: knee-high, wall to wall along your aim; trips whatever crosses it and tells you where | **bola**: tangles T (2.5 s) or a feeder where it lands; a miss becomes a snare on the floor | **zipline gun**: a cable from over your head to where it bites. Gravity rides it: downhill is easy, uphill you stop and slide back (winch it with a hookshot). It needs a few metres, and room for you to hang from it the whole way -- it won't string one that would drag you through a corner or a floor, and it stops short of the wall it bit | **capture line**: snags feeders and items it passes; they slide down it to the low end. T walks through and snaps it |
 | **SMOKE** | **smoke wall** along the beam | **smoke grenade** | **smoke trail**: hauls you out, leaving smoke where you were | **smoke hood**: smoke that follows what it grabbed -- a hooded T only has his ears |
+
+Every gadget is swept by the self-test: all 16 from 60 spots and angles
+in the real Beacom must leave you standing somewhere sane (not in a wall,
+not stuck mid-move, not under a floor), and the four LINE gadgets from 240
+must never string anything through the building.
 
 **The drone.** Every module and firing type works on the drone frame too,
 so there are 32 gadgets, not 16. At your shoulder the drone is just a gun.

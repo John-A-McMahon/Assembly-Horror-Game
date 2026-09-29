@@ -4693,6 +4693,492 @@ shot_part:
     movss [r12+ITEM_Y], xmm0            ; (lower: they bob at eye level otherwise)
     EPILOGUE
 
+; ---- line sweep: every LINE gadget fired from many spots and angles in the
+; real Beacom. Nothing it strings may run through the building, and riding
+; your own zipline must leave you standing somewhere sane.
+%define LS_TRIALS 240                   ; 30 spots x 4 headings x 2 pitches
+%define LS_ZIP     0                    ; counters (ls_cnt)
+%define LS_ZIPBAD  1
+%define LS_RIDES   2
+%define LS_RWALL   3
+%define LS_STUCK   4
+%define LS_EWALL   5
+%define LS_FELL    6
+%define LS_TRIP    7
+%define LS_TRIPBAD 8
+%define LS_CAP     9
+%define LS_CAPBAD  10
+%define LS_SNARE   11
+%define LS_SNBAD   12
+%define LN_ZIP_T     1                  ; (gadget.asm LN_ types)
+%define LN_CAPTURE_T 2
+%define LN_TRIP_T    3
+%define LN_SNARE_T   4
+section .data
+st_ls_zip1  db "[selftest] line sweep, ZIPLINE GUN: %d of %d shots strung a line, %d through the building (expect 0)",10,0
+st_ls_zip2  db "[selftest] line sweep, ZIPLINE GUN rides: %d; in a wall mid-ride %d, still on the line after 10 s %d, left inside a wall %d, below the floor %d (expect 0 0 0 0)",10,0
+st_ls_trip  db "[selftest] line sweep, TRIPWIRE: %d of %d strung, %d through the building (expect 0)",10,0
+st_ls_cap   db "[selftest] line sweep, CAPTURE LINE: %d of %d strung, %d through the building (expect 0)",10,0
+st_ls_snare db "[selftest] line sweep, BOLA: %d of %d left a snare, %d not lying on a floor (expect 0)",10,0
+st_gs_mod   db "[selftest] gadget sweep, %s: bad endings laser %d, orb %d, hook %d, grabber %d (expect 0 0 0 0)",10,0
+st_gs_tot   db "[selftest] gadget sweep: %d shots; you left inside a wall %d, stuck mid-move %d, below the floor %d (expect 0 0 0)",10,0
+gs_name0    db "PORTAL",0
+gs_name1    db "ROD   ",0
+gs_name2    db "LINE  ",0
+gs_name3    db "SMOKE ",0
+align 8
+gs_names    dq gs_name0, gs_name1, gs_name2, gs_name3
+section .bss
+ls_cnt      resd 16
+gs_bad      resd 16                     ; per module x firing type
+gs_why      resd 4                      ; wall, stuck, floor
+section .text
+
+; ls_find(edi = LN_ type) -> eax = the first line of that type, -1 none
+ls_find:
+    xor eax, eax
+.l:
+    cmp [ln_type+rax*4], edi
+    je .out
+    inc eax
+    cmp eax, 8
+    jl .l
+    mov eax, -1
+.out:
+    ret
+
+; ls_seg_bad(edi = line) -> eax 1 if it runs through something solid
+; (sampled every 1/50 of its length, the ends left out; a slab it crosses
+; outside a shaft counts)
+ls_seg_bad:
+    PROLOGUE 32
+    mov ebx, edi
+    mov r12d, 1
+    mov eax, [ln_ay+rbx*4]
+    mov [rsp+0], eax                    ; previous sample's y
+.s:
+    cmp r12d, 50
+    jge .ok
+    cvtsi2ss xmm6, r12d
+    FLD xmm7, 0.02
+    mulss xmm6, xmm7
+    movss xmm0, [ln_bx+rbx*4]
+    subss xmm0, [ln_ax+rbx*4]
+    mulss xmm0, xmm6
+    addss xmm0, [ln_ax+rbx*4]
+    movss xmm1, [ln_by+rbx*4]
+    subss xmm1, [ln_ay+rbx*4]
+    mulss xmm1, xmm6
+    addss xmm1, [ln_ay+rbx*4]
+    movss [rsp+4], xmm1
+    movss xmm2, [ln_bz+rbx*4]
+    subss xmm2, [ln_az+rbx*4]
+    mulss xmm2, xmm6
+    addss xmm2, [ln_az+rbx*4]
+    movss [rsp+8], xmm0
+    movss [rsp+12], xmm2
+    movss xmm3, [rsp+0]
+    call solid_point
+    movss xmm0, [rsp+8]
+    movss xmm2, [rsp+12]
+    test eax, eax
+    jnz .solid
+    mov eax, [rsp+4]
+    mov [rsp+0], eax
+    inc r12d
+    jmp .s
+.ok:
+    xor eax, eax
+    EPILOGUE
+.solid:
+    ; inside it, not just touching its surface: 3 cm up and down too
+    movss [rsp+8], xmm0
+    movss [rsp+12], xmm2
+    movss xmm1, [rsp+4]
+    FLD xmm4, 0.03
+    addss xmm1, xmm4
+    movss xmm3, [rsp+0]
+    call solid_point
+    test eax, eax
+    jz .touch
+    movss xmm0, [rsp+8]
+    movss xmm2, [rsp+12]
+    movss xmm1, [rsp+4]
+    FLD xmm4, -0.03
+    addss xmm1, xmm4
+    movss xmm3, [rsp+0]
+    call solid_point
+    test eax, eax
+    jnz .bad
+.touch:
+    mov eax, [rsp+4]
+    mov [rsp+0], eax
+    inc r12d
+    jmp .s
+.bad:
+    mov eax, 1
+    EPILOGUE
+
+; ls_body_bad -> eax 1 if your body is inside a wall (a hair thinner than
+; you, so touching one doesn't count). Against a step you'd walk up anyway
+; (a bleacher riser: you fit a step higher) isn't inside anything.
+ls_body_bad:
+    sub rsp, 8
+    movss xmm0, [p_x]
+    movss xmm1, [p_z]
+    movss xmm2, [p_y]
+    FLD xmm3, 0.28
+    FLD xmm4, 1.7
+    call collides
+    test eax, eax
+    jz .out
+    movss xmm0, [p_x]
+    movss xmm1, [p_z]
+    movss xmm2, [p_y]
+    FLD xmm3, 0.45
+    addss xmm2, xmm3
+    FLD xmm3, 0.28
+    FLD xmm4, 1.7
+    call collides
+.out:
+    add rsp, 8
+    ret
+
+; gadget_sweep -- every module x firing type from 60 spots and angles (the
+; line sweep's first 60): after 6 s, wherever it took you, you're standing
+; somewhere sane -- not inside a wall, not stuck mid-move, not under a floor
+gadget_sweep:
+    PROLOGUE 48
+    lea rdi, [gs_bad]
+    xor esi, esi
+    mov edx, 80
+    call memset
+    xor r12d, r12d                      ; combo = module*4 + firing type
+.combo:
+    cmp r12d, 16
+    jge .report
+    xor r13d, r13d                      ; trial
+.trial:
+    cmp r13d, 60
+    jge .next_combo
+    ; the same spots and angles as line_sweep_tests
+    mov eax, r13d
+    shr eax, 3
+    imul eax, eax, 97
+    xor edx, edx
+    div dword [open_count]
+    mov eax, [open_cells+rdx*4]
+    xor edx, edx
+    mov ecx, MAP_W
+    div ecx
+    mov [rsp+0], edx
+    xor edx, edx
+    mov ecx, MAP_H
+    div ecx
+    mov [rsp+4], edx
+    mov [rsp+8], eax
+    mov eax, r13d
+    and eax, 3
+    cvtsi2ss xmm0, eax
+    FLD xmm1, 1.5708
+    mulss xmm0, xmm1
+    FLD xmm1, 0.3
+    addss xmm0, xmm1
+    movss [rsp+12], xmm0
+    xorps xmm1, xmm1
+    test r13d, 4
+    jz .pitch
+    FLD xmm1, 0.3
+.pitch:
+    movss [rsp+16], xmm1
+    call gadget_reset
+    call portal_reset
+    mov edi, [rsp+8]
+    mov esi, [rsp+0]
+    mov edx, [rsp+4]
+    movss xmm0, [rsp+12]
+    movss xmm1, [rsp+16]
+    call gt_spawn
+    mov edi, r12d
+    shr edi, 2
+    mov esi, r12d
+    and esi, 3
+    call gt_fire
+    FLD xmm0, 6.0
+    call hook_run
+    xor r14d, r14d                      ; anything wrong
+    call ls_body_bad
+    test eax, eax
+    jz .w
+    inc dword [gs_why+0]
+    mov r14d, 1
+.w:
+    cmp dword [p_mode], 0
+    je .m
+    cmp dword [p_mode], 2               ; (riding a zipline is fine: it's long)
+    je .m
+    inc dword [gs_why+4]
+    mov r14d, 1
+.m:
+    movss xmm0, [p_x]
+    movss xmm1, [p_z]
+    movss xmm2, [p_y]
+    FLD xmm3, 0.5
+    addss xmm2, xmm3
+    FLD xmm3, 0.6
+    call ground_height
+    FLD xmm1, 0.3
+    subss xmm0, xmm1
+    comiss xmm0, [p_y]
+    jbe .f
+    inc dword [gs_why+8]
+    mov r14d, 1
+.f:
+    add [gs_bad+r12*4], r14d
+    inc r13d
+    jmp .trial
+.next_combo:
+    inc r12d
+    jmp .combo
+.report:
+    xor ebx, ebx
+.rm:
+    lea rdi, [st_gs_mod]
+    mov rsi, [gs_names+rbx*8]
+    mov eax, ebx
+    shl eax, 4
+    mov edx, [gs_bad+rax]
+    mov ecx, [gs_bad+rax+4]
+    mov r8d, [gs_bad+rax+8]
+    mov r9d, [gs_bad+rax+12]
+    xor eax, eax
+    call printf
+    inc ebx
+    cmp ebx, 4
+    jl .rm
+    lea rdi, [st_gs_tot]
+    mov esi, 16*60
+    mov edx, [gs_why+0]
+    mov ecx, [gs_why+4]
+    mov r8d, [gs_why+8]
+    xor eax, eax
+    call printf
+    call portal_reset
+    EPILOGUE
+
+; ls_inc(edi = counter)
+%macro LS_INC 1
+    inc dword [ls_cnt+(%1)*4]
+%endmacro
+
+line_sweep_tests:
+    PROLOGUE 64
+    mov dword [cfg_building], BLD_REAL
+    call prepare_world
+    call new_game
+    call gt_t_away
+    lea rdi, [ls_cnt]
+    xor esi, esi
+    mov edx, 64
+    call memset
+    xor r12d, r12d                      ; trial
+.trial:
+    cmp r12d, LS_TRIALS
+    jge .report
+    ; the spot: every 97th open cell; four headings, two pitches
+    mov eax, r12d
+    shr eax, 3
+    imul eax, eax, 97
+    xor edx, edx
+    div dword [open_count]
+    mov eax, [open_cells+rdx*4]
+    xor edx, edx
+    mov ecx, MAP_W
+    div ecx
+    mov [rsp+0], edx                    ; x
+    xor edx, edx
+    mov ecx, MAP_H
+    div ecx
+    mov [rsp+4], edx                    ; y
+    mov [rsp+8], eax                    ; storey
+    mov eax, r12d
+    and eax, 3
+    cvtsi2ss xmm0, eax
+    FLD xmm1, 1.5708
+    mulss xmm0, xmm1
+    FLD xmm1, 0.3
+    addss xmm0, xmm1
+    movss [rsp+12], xmm0                ; yaw
+    xorps xmm1, xmm1
+    test r12d, 4
+    jz .pitch
+    FLD xmm1, 0.3
+.pitch:
+    movss [rsp+16], xmm1
+    xor r13d, r13d                      ; firing type
+.g:
+    cmp r13d, 4
+    jge .next_trial
+    call gadget_reset
+    mov edi, [rsp+8]
+    mov esi, [rsp+0]
+    mov edx, [rsp+4]
+    movss xmm0, [rsp+12]
+    movss xmm1, [rsp+16]
+    call gt_spawn
+    mov edi, GM_LINE
+    mov esi, r13d
+    call gt_fire
+    cmp r13d, GF_LASER
+    je .trip
+    cmp r13d, GF_ORB
+    je .bola
+    cmp r13d, GF_HOOK
+    je .zip
+    ; ---- capture line (strung at once)
+    mov edi, LN_CAPTURE_T
+    call ls_find
+    test eax, eax
+    js .next_g
+    LS_INC LS_CAP
+    mov edi, eax
+    call ls_seg_bad
+    add [ls_cnt+LS_CAPBAD*4], eax
+    jmp .next_g
+.trip:
+    mov edi, LN_TRIP_T
+    call ls_find
+    test eax, eax
+    js .next_g
+    LS_INC LS_TRIP
+    mov edi, eax
+    call ls_seg_bad
+    add [ls_cnt+LS_TRIPBAD*4], eax
+    jmp .next_g
+.bola:
+    FLD xmm0, 4.0                       ; flies, bounces, goes off
+    call hook_run
+    mov edi, LN_SNARE_T
+    call ls_find
+    test eax, eax
+    js .next_g
+    LS_INC LS_SNARE
+    mov ebx, eax
+    ; lying on a floor: not inside anything, and the floor right under it
+    movss xmm0, [ln_ax+rbx*4]
+    movss xmm1, [ln_ay+rbx*4]
+    FLD xmm2, 0.05
+    addss xmm1, xmm2
+    movss xmm2, [ln_az+rbx*4]
+    movaps xmm3, xmm1
+    call solid_point
+    test eax, eax
+    jnz .snare_bad
+    movss xmm0, [ln_ax+rbx*4]
+    movss xmm1, [ln_az+rbx*4]
+    movss xmm2, [ln_ay+rbx*4]
+    FLD xmm3, 0.3
+    call ground_height
+    subss xmm0, [ln_ay+rbx*4]
+    andps xmm0, [c_abs_mask]
+    FLD xmm1, 0.2
+    comiss xmm0, xmm1
+    jbe .next_g
+.snare_bad:
+    LS_INC LS_SNBAD
+    jmp .next_g
+.zip:
+    FLD xmm0, 1.0                       ; the hook flies and bites
+    call hook_run
+    mov edi, LN_ZIP_T
+    call ls_find
+    test eax, eax
+    js .next_g
+    LS_INC LS_ZIP
+    mov edi, eax
+    call ls_seg_bad
+    add [ls_cnt+LS_ZIPBAD*4], eax
+    cmp dword [p_mode], 2
+    jne .next_g
+    LS_INC LS_RIDES
+    ; ride it: up to 10 s
+    mov r14d, 100
+    xor r15d, r15d                      ; in a wall at some point
+.ride:
+    call ls_body_bad
+    or r15d, eax
+    cmp dword [p_mode], 2
+    jne .off
+    FLD xmm0, 0.1
+    call hook_run
+    dec r14d
+    jnz .ride
+    LS_INC LS_STUCK
+.off:
+    add [ls_cnt+LS_RWALL*4], r15d
+    FLD xmm0, 2.0                       ; land and settle
+    call hook_run
+    call ls_body_bad
+    add [ls_cnt+LS_EWALL*4], eax
+    movss xmm0, [p_x]
+    movss xmm1, [p_z]
+    movss xmm2, [p_y]
+    FLD xmm3, 0.5
+    addss xmm2, xmm3
+    FLD xmm3, 0.6
+    call ground_height
+    FLD xmm1, 0.3
+    subss xmm0, xmm1
+    comiss xmm0, [p_y]
+    jbe .next_g
+    LS_INC LS_FELL
+.next_g:
+    inc r13d
+    jmp .g
+.next_trial:
+    inc r12d
+    jmp .trial
+.report:
+    lea rdi, [st_ls_zip1]
+    mov esi, [ls_cnt+LS_ZIP*4]
+    mov edx, LS_TRIALS
+    mov ecx, [ls_cnt+LS_ZIPBAD*4]
+    xor eax, eax
+    call printf
+    lea rdi, [st_ls_zip2]
+    mov esi, [ls_cnt+LS_RIDES*4]
+    mov edx, [ls_cnt+LS_RWALL*4]
+    mov ecx, [ls_cnt+LS_STUCK*4]
+    mov r8d, [ls_cnt+LS_EWALL*4]
+    mov r9d, [ls_cnt+LS_FELL*4]
+    xor eax, eax
+    call printf
+    lea rdi, [st_ls_trip]
+    mov esi, [ls_cnt+LS_TRIP*4]
+    mov edx, LS_TRIALS
+    mov ecx, [ls_cnt+LS_TRIPBAD*4]
+    xor eax, eax
+    call printf
+    lea rdi, [st_ls_cap]
+    mov esi, [ls_cnt+LS_CAP*4]
+    mov edx, LS_TRIALS
+    mov ecx, [ls_cnt+LS_CAPBAD*4]
+    xor eax, eax
+    call printf
+    lea rdi, [st_ls_snare]
+    mov esi, [ls_cnt+LS_SNARE*4]
+    mov edx, LS_TRIALS
+    mov ecx, [ls_cnt+LS_SNBAD*4]
+    xor eax, eax
+    call printf
+    call gadget_sweep
+    call gadget_reset
+    lea rdi, [ach_flag]
+    xor esi, esi
+    mov edx, NACH*4
+    call memset
+    EPILOGUE
+
 ; gt_last_item -> rax = the item add_item just made
 gt_last_item:
     mov eax, [item_count]
@@ -7806,6 +8292,7 @@ selftest_all:
     call real_tests                     ; the real Beacom first...
     call hook_tests
     call gadget_tests
+    call line_sweep_tests               ; every LINE gadget, from 240 spots and angles
     call drone_tests
     call oob_tests
     call dew_tests
