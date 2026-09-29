@@ -1743,6 +1743,13 @@ hud_draw:
     mov esi, [scr_h]
     call menu_draw
 .no_pause:
+    ; the report card at the end of a night (report.asm), over everything
+    cmp dword [rc_show], 0
+    je .no_card
+    mov edi, [scr_w]
+    mov esi, [scr_h]
+    call report_draw
+.no_card:
     movss xmm0, [c_one]
     movss xmm1, [c_one]
     movss xmm2, [c_one]

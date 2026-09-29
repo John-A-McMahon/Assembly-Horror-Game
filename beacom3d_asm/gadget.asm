@@ -53,6 +53,7 @@ global gd_have, gd_base, gd_mod, gd_fire, gd_caps, gd_bag_mod, gd_bag_fire, gd_k
 global gd_bench, gd_fire_held, gd_roll_n, gd_roll_kind, gd_roll_id, gd_view, gd_tip_col
 global gd_cool, gd_orb_on, gd_orb_x, gd_orb_y, gd_orb_z, gd_tt_state, gd_charge
 global sm_count, ln_type, gd_last_combo, ln_ax, ln_ay, ln_az, ln_bx, ln_by, ln_bz
+global gd_shots
 global gadget_transmute, fd_line, peg_n, rg_hits, dr_state, dr_x, dr_y, dr_z, gd_bag_base
 
 extern p_vy, p_on_ground, parkour_try
@@ -609,6 +610,7 @@ gd_bag_mod  resd 1
 gd_bag_fire resd 1
 gd_known    resd 1                      ; the catalog: bit per combination, ever
 gd_bench    resd 1                      ; the bench is open
+gd_shots    resd 1                      ; shots fired tonight (report.asm)
 gd_col      resd 1                      ; its column: 0 base, 1 module, 2 firing
 gd_fire_held resd 1                     ; fire button held (winching)
 gd_cool     resd 1
@@ -1379,6 +1381,7 @@ gadget_reset:
     mov [gd_fire_held], eax
     mov [gd_told], eax
     mov [gd_clock], eax
+    mov [gd_shots], eax
     mov [sm_count], eax
     mov [hi_n], eax
     mov [rg_t], eax
@@ -1475,10 +1478,48 @@ gadget_new_run:
     ; ...and the drone frame, somewhere (take it and you leave the gun)
     mov eax, [gd_roll_n]
     cmp eax, MAXROLL
-    jge .done
+    jge .loadout
     mov dword [gd_roll_kind+rax*4], IT_MODULE
     mov dword [gd_roll_id+rax*4], PART_BASE|GB_DRONE
     inc dword [gd_roll_n]
+.loadout:
+    ; your loadout (cfg_bring_*: 0 nothing, 1+i that part): in hand from the
+    ; start, and not hidden in the building again tonight (no random numbers
+    ; used: an empty loadout leaves every seed's night exactly as it was)
+    mov eax, [cfg_bring_mod]
+    dec eax
+    js .no_mod
+    cmp eax, NMODS
+    jae .no_mod
+    mov [gd_mod], eax
+    mov ecx, eax
+    mov edx, 1
+    shl edx, cl
+    mov [gd_bag_mod], edx
+    mov edi, IT_MODULE
+    mov esi, eax
+    call unroll
+.no_mod:
+    mov eax, [cfg_bring_fire]
+    dec eax
+    js .no_fire
+    cmp eax, NFIRES
+    jae .no_fire
+    mov [gd_fire], eax
+    mov ecx, eax
+    mov edx, 1
+    shl edx, cl
+    mov [gd_bag_fire], edx
+    mov edi, IT_FIRING
+    mov esi, eax
+    call unroll
+.no_fire:
+    mov eax, [cfg_bring_mod]
+    or eax, [cfg_bring_fire]
+    jz .done
+    mov edi, [gd_mod]
+    mov esi, [gd_fire]
+    call gadget_select                  ; (in the catalog if it's a whole gadget)
 .done:
     call refresh
     EPILOGUE
@@ -1528,6 +1569,31 @@ gadget_new_run:
     add rsp, 8
     ret
 
+; unroll(edi = kind, esi = which) -- that part isn't hidden tonight after all
+unroll:
+    xor ecx, ecx
+.u:
+    cmp ecx, [gd_roll_n]
+    jge .u_done
+    cmp [gd_roll_kind+rcx*4], edi
+    jne .u_next
+    cmp [gd_roll_id+rcx*4], esi
+    jne .u_next
+    ; the last one takes its place
+    mov eax, [gd_roll_n]
+    dec eax
+    mov [gd_roll_n], eax
+    mov edx, [gd_roll_kind+rax*4]
+    mov [gd_roll_kind+rcx*4], edx
+    mov edx, [gd_roll_id+rax*4]
+    mov [gd_roll_id+rcx*4], edx
+    jmp .u
+.u_next:
+    inc ecx
+    jmp .u
+.u_done:
+    ret
+
 ; gadget_fire(edi = 0 primary / 1 secondary) -> eax 1 if the gadget took the
 ; click (0: no gadget -- main.asm tries your deauth packets)
 gadget_fire:
@@ -1569,6 +1635,7 @@ gadget_fire:
     mov eax, [combo_cd+rax*4]
     mov [gd_cool], eax
     mov [hr_button], ebx
+    inc dword [gd_shots]                ; (the report card)
     call aim_from_view
     ; the shot's heard where it's fired from: you, or the drone
     call drone_away

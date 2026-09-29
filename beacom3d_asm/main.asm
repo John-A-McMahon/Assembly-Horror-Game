@@ -169,6 +169,8 @@ env_leak db "BEACOM_LEAKTEST",0
 st_leak db "[leaktest] after %d builds of the 10-storey building: the real Beacom draws at %.1f fps",10,0
 env_nocus db "BEACOM_NOCUSTOM",0
 env_novsync db "BEACOM_NOVSYNC",0
+align 4
+c_card_wait dd 0.8                      ; the report card ignores input this long
 env_gendump db "BEACOM_GENDUMP",0
 st_zip_fmt  db "[selftest] zipline: grabbed=%d, ended on floor %d at x=%.1f y=%.2f (cable ends x=111)",10,0
 st_path_fmt db "[selftest] path basement(3,3) -> 2nd floor(5,3): found=%d, %d cells",10,0
@@ -214,6 +216,7 @@ shot_part_at dd 2.0,-0.9,  2.0,-0.3,  2.0,0.3,  2.0,0.9
             dd 2.9,-1.6,  2.9,1.6
 sh_g_drone  db "shots/53_drone_out.bmp",0
 sh_g_drone2 db "shots/54_drone_home.bmp",0
+sh_report   db "shots/56_report_card.bmp",0
 sh_g_prompt db "shots/55_pickup_prompt.bmp",0
 st_g_inhand db "[selftest] gadget parts all in hand: modules %d, firing types %d (expect 15 15), holding combination %d (expect 6 = HOOKSHOT)",10,0
 st_caught   db "[selftest] T reached the player after %.1f simulated seconds -- PASS",10,0
@@ -863,6 +866,7 @@ new_game:
     call hookshot_reset
     call gadget_reset
     call ach_new_run
+    call report_reset                   ; (the report card's own counts)
     mov dword [crouch_latch], 0
     xor edi, edi
     call snd_mute                       ; (volume setting)
@@ -2825,6 +2829,8 @@ game_tick:
     je .alive
     mov dword [game_state], GS_LOST
 .alive:
+    movss xmm0, [rsp+0]
+    call report_tick
     call update_prompt
     call hud_update_explored
     call ach_tick
@@ -2957,7 +2963,60 @@ play_round:
 .not_won:
     xor edi, edi
     call mouse_capture
+    mov edi, [game_state]
+    call report_screen
     mov eax, [game_state]
+    EPILOGUE
+
+; report_screen(edi = how the night ended) -- the report card (report.asm)
+; over the last frame of the night, until Enter, Space, Esc or a click
+; (ignored for the first moment, so a key you were holding doesn't skip it)
+report_screen:
+    PROLOGUE 16
+    cmp edi, GS_WON
+    je .show
+    cmp edi, GS_LOST
+    je .show
+    cmp edi, GS_SECRET
+    jne .out
+.show:
+    call report_finish
+    mov dword [rc_show], 1
+    mov dword [rsp+0], 0                ; seconds on screen
+    call frame_dt
+.loop:
+    call frame_dt
+    movss [rsp+4], xmm0
+    addss xmm0, [rsp+0]
+    movss [rsp+0], xmm0
+    movss xmm0, [rsp+4]
+    call present
+.poll:
+    lea rdi, [event]
+    call SDL_PollEvent
+    test eax, eax
+    jz .loop
+    mov eax, [event]
+    cmp eax, SDL_QUIT_EV
+    je .done
+    movss xmm0, [rsp+0]
+    comiss xmm0, [c_card_wait]
+    jb .poll
+    cmp eax, SDL_MOUSEBUTTONDOWN
+    je .done
+    cmp eax, SDL_KEYDOWN
+    jne .poll
+    mov ecx, [event+16]                 ; scancode
+    cmp ecx, 40                         ; Enter
+    je .done
+    cmp ecx, 44                         ; Space
+    je .done
+    cmp ecx, 41                         ; Esc
+    je .done
+    jmp .poll
+.done:
+    mov dword [rc_show], 0
+.out:
     EPILOGUE
 
 ; end_screen(edi=state) -- lolcat art + stats in the terminal
@@ -3744,6 +3803,27 @@ shot_mode_run:
     mov dword [gd_base], GB_GUN
     mov dword [dr_state], DR_HOME
     mov dword [gd_view], 0
+    ; the report card: a won night, seen twice, one deauth, a loadout
+    mov dword [inventory], 3
+    mov dword [elapsed_time], __float32__(412.0)
+    mov dword [run_spotted], 2
+    mov dword [run_deauths], 1
+    mov dword [run_moves], 7
+    mov dword [gd_shots], 14
+    mov dword [rc_closest], __float32__(2.3)
+    mov dword [rc_loud], __float32__(0.64)
+    mov dword [rc_walked], __float32__(538.0)
+    mov dword [rc_safe_t], __float32__(41.0)
+    mov dword [cfg_bring_mod], 2
+    mov edi, GS_WON
+    call report_finish
+    mov dword [cfg_bring_mod], 0
+    mov dword [rc_show], 1
+    call hud_clear_messages
+    lea rdi, [sh_report]
+    call shot_now
+    mov dword [rc_show], 0
+    mov dword [inventory], 0
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -4691,6 +4771,226 @@ shot_part:
     FLD xmm0, -0.5
     addss xmm0, [p_y]
     movss [r12+ITEM_Y], xmm0            ; (lower: they bob at eye level otherwise)
+    EPILOGUE
+
+; ---- loadout: what you bring is in hand, isn't hidden again, and bringing
+; nothing leaves the seed's night exactly as it was
+section .data
+st_lo_hand  db "[selftest] loadout LINE + HOOK: in hand module=%d firing=%d (expect 2 2), zipline gun assembled=%d (expect 1)",10,0
+st_lo_roll  db "[selftest] loadout: hidden tonight %d parts (expect %d), a LINE module or HOOK among them=%d (expect 0)",10,0
+st_lo_same  db "[selftest] loadout: the night's first item at the same spot with and without one=%d (expect 1); bringing nothing: module=%d firing=%d (expect -1 -1)",10,0
+section .text
+loadout_tests:
+    PROLOGUE 32
+    mov dword [cfg_building], BLD_REAL
+    mov dword [seed_val], 42
+    call prepare_world
+    call new_game
+    mov eax, [gd_roll_n]
+    mov [rsp+0], eax                    ; parts hidden, bringing nothing
+    mov eax, [items+ITEM_X]
+    mov [rsp+4], eax
+    mov eax, [items+ITEM_Z]
+    mov [rsp+8], eax
+    mov eax, [gd_mod]
+    mov [rsp+12], eax
+    mov eax, [gd_fire]
+    mov [rsp+16], eax
+    ; how many of LINE / HOOK the seed hid tonight
+    mov dword [lo_had], 0
+    xor ebx, ebx
+.h:
+    cmp ebx, [gd_roll_n]
+    jge .h_done
+    cmp dword [gd_roll_kind+rbx*4], IT_MODULE
+    jne .hf
+    cmp dword [gd_roll_id+rbx*4], GM_LINE
+    jne .hn
+    inc dword [lo_had]
+    jmp .hn
+.hf:
+    cmp dword [gd_roll_id+rbx*4], GF_HOOK
+    jne .hn
+    inc dword [lo_had]
+.hn:
+    inc ebx
+    jmp .h
+.h_done:
+    mov dword [cfg_bring_mod], 1+GM_LINE
+    mov dword [cfg_bring_fire], 1+GF_HOOK
+    call new_game
+    lea rdi, [st_lo_hand]
+    mov esi, [gd_mod]
+    mov edx, [gd_fire]
+    xor ecx, ecx
+    test dword [gd_caps], CAP_LINE
+    setnz cl
+    xor eax, eax
+    call printf
+    ; LINE / HOOK still in tonight's hidden parts?
+    xor r12d, r12d
+    xor ebx, ebx
+.r:
+    cmp ebx, [gd_roll_n]
+    jge .r_done
+    cmp dword [gd_roll_kind+rbx*4], IT_MODULE
+    jne .rf
+    cmp dword [gd_roll_id+rbx*4], GM_LINE
+    jne .rn
+    inc r12d
+    jmp .rn
+.rf:
+    cmp dword [gd_roll_id+rbx*4], GF_HOOK
+    jne .rn
+    inc r12d
+.rn:
+    inc ebx
+    jmp .r
+.r_done:
+    ; (the seed hides LINE and HOOK or not: the count drops by what it had)
+    lea rdi, [st_lo_roll]
+    mov esi, [gd_roll_n]
+    mov edx, [rsp+0]
+    sub edx, [lo_had]
+    mov ecx, r12d
+    xor eax, eax
+    call printf
+    xor esi, esi
+    mov eax, [items+ITEM_X]
+    cmp eax, [rsp+4]
+    jne .diff
+    mov eax, [items+ITEM_Z]
+    cmp eax, [rsp+8]
+    jne .diff
+    mov esi, 1
+.diff:
+    lea rdi, [st_lo_same]
+    mov edx, [rsp+12]
+    mov ecx, [rsp+16]
+    xor eax, eax
+    call printf
+    mov dword [cfg_bring_mod], 0
+    mov dword [cfg_bring_fire], 0
+    EPILOGUE
+
+; ---- the report card: the score's arithmetic, the grades, what report_tick
+; keeps
+section .data
+st_rc_s     db "[selftest] report card: perfect 5-minute win=%d grade %c (expect 2200 S); seen twice + a deauth in 8 min=%d grade %c (expect 1595 B)",10,0
+st_rc_l     db "[selftest] report card: the same with 2 parts brought=%d (expect 1116); caught holding 1, seen 3 times=%d grade %c (expect 50 F)",10,0
+st_rc_t     db "[selftest] report card tick: closest call %.1f (expect 2.5), loudest %.2f (expect 0.70), walked %.1f m (expect 1.0: the 10 m jump is a teleport)",10,0
+st_rc_card  db "[selftest] report card: lines made=%d (expect 15), shown=%d (expect 0)",10,0
+grade_chars db "SABCDF"
+section .bss
+lo_had      resd 1
+section .text
+report_tests:
+    PROLOGUE 48
+    mov dword [cfg_bring_mod], 0
+    mov dword [cfg_bring_fire], 0
+    mov dword [inventory], 3
+    mov dword [elapsed_time], __float32__(300.0)
+    mov dword [run_spotted], 0
+    mov dword [run_deauths], 0
+    mov edi, GS_WON
+    call report_score
+    mov [rsp+0], eax
+    mov eax, [rc_grade]
+    mov [rsp+4], eax
+    mov dword [run_spotted], 2
+    mov dword [run_deauths], 1
+    mov dword [elapsed_time], __float32__(480.0)
+    mov edi, GS_WON
+    call report_score
+    mov [rsp+8], eax
+    mov eax, [rc_grade]
+    mov [rsp+12], eax
+    lea rdi, [st_rc_s]
+    mov esi, [rsp+0]
+    mov eax, [rsp+4]
+    movzx edx, byte [grade_chars+rax]
+    mov ecx, [rsp+8]
+    mov eax, [rsp+12]
+    movzx r8d, byte [grade_chars+rax]
+    xor eax, eax
+    call printf
+    mov dword [cfg_bring_mod], 1
+    mov dword [cfg_bring_fire], 1
+    mov edi, GS_WON
+    call report_score
+    mov [rsp+0], eax
+    mov dword [cfg_bring_mod], 0
+    mov dword [cfg_bring_fire], 0
+    mov dword [inventory], 1
+    mov dword [run_spotted], 3
+    mov dword [run_deauths], 0
+    mov edi, GS_LOST
+    call report_score
+    mov [rsp+4], eax
+    lea rdi, [st_rc_l]
+    mov esi, [rsp+0]
+    mov edx, [rsp+4]
+    mov eax, [rc_grade]
+    movzx ecx, byte [grade_chars+rax]
+    xor eax, eax
+    call printf
+    ; report_tick
+    call report_reset
+    mov dword [t_sees], 1
+    mov dword [t_dist], __float32__(4.0)
+    mov dword [noise_level], __float32__(0.7)
+    FLD xmm0, 0.016
+    call report_tick
+    mov dword [t_dist], __float32__(2.5)
+    mov dword [noise_level], __float32__(0.2)
+    movss xmm0, [p_x]
+    addss xmm0, [c_one]
+    movss [p_x], xmm0
+    FLD xmm0, 0.016
+    call report_tick
+    mov dword [t_sees], 0
+    mov dword [t_dist], __float32__(0.5)
+    movss xmm0, [p_x]
+    FLD xmm1, 10.0
+    addss xmm0, xmm1
+    movss [p_x], xmm0
+    FLD xmm0, 0.016
+    call report_tick
+    lea rdi, [st_rc_t]
+    movss xmm0, [rc_closest]
+    cvtss2sd xmm0, xmm0
+    movss xmm1, [rc_loud]
+    cvtss2sd xmm1, xmm1
+    movss xmm2, [rc_walked]
+    cvtss2sd xmm2, xmm2
+    mov eax, 3
+    call printf
+    ; the card itself
+    mov edi, GS_WON
+    call report_finish
+    xor esi, esi
+    xor ebx, ebx
+.c:
+    cmp dword [rc_tex+rbx*4], 0
+    je .cn
+    inc esi
+.cn:
+    inc ebx
+    cmp ebx, 15
+    jl .c
+    lea rdi, [st_rc_card]
+    mov edx, [rc_show]
+    xor eax, eax
+    call printf
+    ; leave nothing behind for later tests
+    mov dword [inventory], 0
+    mov dword [run_spotted], 0
+    mov dword [run_deauths], 0
+    mov dword [elapsed_time], 0
+    lea rdi, [rc_best]
+    xor esi, esi
+    mov edx, 16
+    call memset
     EPILOGUE
 
 ; ---- line sweep: every LINE gadget fired from many spots and angles in the
@@ -8289,10 +8589,12 @@ selftest_all:
     mov dword [seed_val], 42
     call assets_tests                   ; the baked art (assets/)
     call chunk_tests                    ; the world's display lists, cut into chunks
+    call report_tests                   ; the report card's arithmetic
     call real_tests                     ; the real Beacom first...
     call hook_tests
     call gadget_tests
     call line_sweep_tests               ; every LINE gadget, from 240 spots and angles
+    call loadout_tests                  ; what you bring into the night
     call drone_tests
     call oob_tests
     call dew_tests
@@ -8725,6 +9027,7 @@ main:
     jne .no_cfg
     call settings_load
     call ach_load                       ; (and save them from now on)
+    call report_load                    ; (your best scores)
     call gadget_load                    ; (the gadget catalog, too)
 .no_cfg:
     call world_init

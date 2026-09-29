@@ -449,6 +449,11 @@ extern cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_l
 extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_stamina
 extern cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
+extern cfg_bring_mod, cfg_bring_fire
+%ifndef MODULE_REPORT
+extern report_reset, report_tick, report_finish, report_draw, report_score, report_load
+extern rc_show, rc_score, rc_grade, rc_best, rc_closest, rc_loud, rc_walked, rc_safe_t, rc_new_best, rc_tex
+%endif
 extern cfg_gparts, cfg_gcount, cfg_dew, cfg_feeders, cfg_nemesis, cfg_floors, cfg_width, cfg_depth
 %endif
 
@@ -494,6 +499,7 @@ extern gadget_wheel, gadget_hook_attach, gadget_draw, gadget_draw_glow, gadget_h
 extern gadget_part_model, gadget_init, gadget_load, gadget_select, gadget_give_all
 extern gadget_draw_smoke, smoke_blocks, gadget_line, gadget_smoke, gadget_count_known
 extern gd_have, gd_base, gd_mod, gd_fire, gd_caps, gd_bag_mod, gd_bag_fire, gd_known
+extern gd_shots
 extern gd_bench, gd_fire_held, gd_roll_n, gd_roll_kind, gd_roll_id, gd_view, gd_tip_col
 extern gd_cool, gd_orb_on, gd_orb_x, gd_orb_y, gd_orb_z, gd_tt_state, gd_charge
 extern sm_count, ln_type, gd_last_combo, ln_ax, ln_ay, ln_az, ln_bx, ln_by, ln_bz

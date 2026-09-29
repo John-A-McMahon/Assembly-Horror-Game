@@ -25,6 +25,7 @@ global cfg_building, cfg_t_speed, cfg_t_hear, cfg_t_vision, cfg_t_angry, cfg_t_l
 global cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_stamina
 global cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 global cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
+global cfg_bring_mod, cfg_bring_fire
 global cfg_gparts, cfg_gcount, cfg_dew, cfg_feeders, cfg_nemesis, cfg_floors, cfg_width, cfg_depth
 
 extern invert_y, show_fps, shadows_on, shadows_ok, render_scale
@@ -72,6 +73,8 @@ cfg_deauths     dd 3
 cfg_start_map   dd 0
 cfg_gparts      dd 0            ; gadget parts: 0 a few hidden, 1 all in hand, 2 none
 cfg_gcount      dd 3            ; modules and firing types hidden (of each kind)
+cfg_bring_mod   dd 0            ; loadout: 0 nothing, 1+i start with module i
+cfg_bring_fire  dd 0            ; ...and firing type i (each costs 15% of the score)
 cfg_dew         dd 4            ; cans of Diet Mountain Dew
 cfg_feeders     dd 2            ; bottom feeders
 cfg_nemesis     dd 1            ; T learns how you escape him (per night)
@@ -95,6 +98,9 @@ cfg_volume      dd 100
 cfg_grain       dd 50           ; film grain over the whole picture
 
 ; ---- labels -----------------------------------------------------------------
+h_load      db "LOADOUT   (what you bring into the night: each part costs 15% of the score) *",0
+l_bring_mod db "Bring a module *",0
+l_bring_fire db "Bring a firing type *",0
 h_run       db "CUSTOM RUN   (rows marked * apply when you pick RESTART above)",0
 l_building  db "Building *",0
 l_floors    db "Custom size: storeys *",0
@@ -173,6 +179,8 @@ a_newseed   db "> RESTART WITH A NEW SEED",0
 a_quit      db "> QUIT TO THE TERMINAL",0
 
 ; ---- keys in the settings file ------------------------------------------------
+k_bring_mod db "bring_module",0
+k_bring_fire db "bring_firing",0
 k_building  db "building",0
 k_floors    db "floors",0
 k_width     db "width",0
@@ -213,6 +221,15 @@ k_fps       db "fps_counter",0
 k_grain     db "film_grain",0
 
 ; ---- choice names ---------------------------------------------------------------
+s_bring_no  db "NOTHING (full score)",0
+s_bring_pm  db "PORTAL module -- bends space",0
+s_bring_rm  db "ROD module -- rams, pegs, hauls",0
+s_bring_lm  db "LINE module -- ziplines, tripwires",0
+s_bring_sm  db "SMOKE module -- hides you",0
+s_bring_lf  db "LASER -- straight and instant",0
+s_bring_of  db "ORB -- lobbed, bounces",0
+s_bring_hf  db "HOOK -- moves you",0
+s_bring_gf  db "GRABBER -- moves things",0
 s_off       db "OFF",0
 s_on        db "ON",0
 s_classic   db "THE REAL BEACOM (researched)",0
@@ -234,6 +251,8 @@ s_full      db "FULL",0
 s_half      db "1/2 (fast)",0
 s_third     db "1/3 (fastest)",0
 align 8
+n_bring_mod dq s_bring_no, s_bring_pm, s_bring_rm, s_bring_lm, s_bring_sm
+n_bring_fire dq s_bring_no, s_bring_lf, s_bring_of, s_bring_hf, s_bring_gf
 n_offon     dq s_off, s_on
 n_ach       dq s_locked, s_unlocked
 n_building  dq s_classic, s_generated, s_original, s_custom
@@ -248,6 +267,9 @@ rows:
     ROW a_restart,   0,           0,              T_ACTION, 1, 0, 0, 0
     ROW a_newseed,   0,           0,              T_ACTION, 2, 0, 0, 0
     ROW a_quit,      0,           0,              T_ACTION, 3, 0, 0, 0
+    ROW h_load,      0,           0,              T_HEADER, 0, 0, 0, 0
+    ROW l_bring_mod, k_bring_mod, cfg_bring_mod,  T_CHOICE, 0, 4, 1, n_bring_mod
+    ROW l_bring_fire, k_bring_fire, cfg_bring_fire, T_CHOICE, 0, 4, 1, n_bring_fire
     ROW h_run,       0,           0,              T_HEADER, 0, 0, 0, 0
     ROW l_building,  k_building,  cfg_building,   T_CHOICE, 0, 3, 1, n_building
     ROW l_floors,    k_floors,    cfg_floors,     T_INT,    2, 10, 1, 0

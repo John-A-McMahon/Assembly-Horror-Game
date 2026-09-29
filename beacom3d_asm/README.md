@@ -172,6 +172,11 @@ the smallest building; ~50 in generated ones), so no seed spawn-camps you.
 
 Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
 
+* **Loadout** — bring a **module** and/or a **firing type** into the night:
+  it's in your hand from the first second (bring LINE + HOOK and you start
+  with the zipline gun), and that part isn't hidden in the building tonight.
+  Each part you bring costs 15% of the night's score -- travel light and
+  score more. Bringing nothing leaves the seed's night exactly as it was.
 * **Custom run** — building (**the real Beacom** researched from DSU's own descriptions, **generated from the seed**, **generated at any size** -- 2 to 10 storeys, up to 89 x 47 cells each -- or the original game map),
   generated layout (**maze / classic / open**),
   T's speed / hearing / vision, whether he speeds up with each capture,
@@ -188,6 +193,30 @@ Esc opens a menu with every knob in the game, saved to `beacom_settings.cfg`:
 * **Restart this run**, **restart with a new seed**, quit
 
 Rows marked * apply when you restart.
+
+### The report card
+
+Every night ends with a report card over its last frame (Enter, Space, Esc
+or a click to go on): the grade and score, your best on that kind of
+building (`beacom_records.cfg`), and how the night went -- time, captures,
+how often T spotted you, the **closest call** (the nearest he got while he
+could see you), the **loudest moment** (the noise meter's peak), deauths,
+gadget shots, mantles and vaults, how far you walked and how long you hid
+in safe rooms, your loadout, and the sum the score came from:
+
+| | |
+| --- | --- |
+| each capture you hold | +200 |
+| bringing them to B | +1000 |
+| a win: each second under 10 minutes | +1 |
+| a win T never saw | +300 |
+| each time T spotted you | -50 |
+| each deauth fired | -25 |
+| each part in your loadout | x0.85 |
+
+Grades: **S** 2200+, **A** 1800+, **B** 1400+, **C** 1000+, **D** 500+, **F** below.
+A perfect night -- all three, unseen, in five minutes, bringing nothing -- is
+exactly an S.
 
 ### Achievements
 
@@ -524,6 +553,7 @@ follow you down into the atrium. He still can't climb ladders.
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
+| `report.asm` | the report card: per-night stats (closest call, loudest moment, distance, safe-room time), the score and grade, best scores in `beacom_records.cfg`, the card drawn over the last frame |
 | `achievements.asm` | the 25 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |
 | `hands.asm` | your hands and arms: the sculpted hands, hoodie sleeves, flashlight and gadget from `assets/` (or the built-in primitive ones if those files are missing), the gadget's glow in its module's colour, the view-model lighting |
