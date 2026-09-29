@@ -62,7 +62,7 @@ extern glLoadMatrixf, glColorMask, glPolygonOffset, glDrawBuffer, glReadBuffer
 extern portal_views, portal_draw_rims, draw_viewmodel, media_tex
 global set_normal_map, set_skin, amb_col, u_amb
 global render_rebuild_world, set_material, set_emit, model_end, u_model, u_fpos, u_fdir, u_flash, u_son
-global cbox, emit_tube, emit_cyl
+global cbox, emit_tube, emit_cyl, chunk_tests
 extern phys_nb, px, py, pz, body_type, body_p0, body_active, rag_active, prop_tex
 %define GL_RENDERER 0x1F01
 %define SHADOW_SIZE 1024
@@ -113,6 +113,14 @@ extern p_eye_y, p_roll, player_floor, t_moving
 %define M_GLASS   15          ; see-through walls, drawn last with blending
 %define NMAT      16
 %define NLIT      13          ; materials 0..12 go through the shader
+; each storey's lists are cut into CHUNK x CHUNK cell squares, so squares
+; lost in the fog aren't drawn at all (call_world); the last "chunk" of a
+; storey holds what isn't tied to one cell (ramps, bridges, crates)
+%define CHUNK     12
+%define NCX       ((MAP_W+CHUNK-1)/CHUNK)
+%define NCZ       ((MAP_H+CHUNK-1)/CHUNK)
+%define NCHS      (NCX*NCZ+1)
+%define NLISTS    (NF*NCHS*NMAT)
 
 %define MAX_FIX   4000
 %define NPOOL     6
@@ -378,6 +386,10 @@ c_far       dq 45.0                  ; exp2 fog is fully opaque by ~40 units
 fovtan_cur  dq 0.7265425            ; tan(fov/2) -- 72 degree vertical FOV by default
 c_half_deg  dd 0.00872664626        ; pi / 360: degrees -> half-angle radians
 c_fog       dd 0.055
+c_chunk_m   dd 24.0                 ; CHUNK cells in metres
+c_cull2     dd 3136.0               ; 56^2: exp2 fog leaves 1/10000 of a colour there
+st_chunks   db "[selftest] world chunks: %d vertices in one piece, %d in chunks, storeys that differ=%d (expect equal, 0)",10,0
+st_cull     db "[selftest] chunk culling: from far away drew=%d (expect %d, the extras); from a corner drew %d of %d lists (expect fewer)",10,0
 c_amb_r     dd 0.043
 c_amb_g     dd 0.050
 c_amb_b     dd 0.062
@@ -413,6 +425,14 @@ c_step_d    dd 1.0
 
 section .bss
 vis_hi      resd 1                      ; the highest storey drawn this pass
+ch_x0       resd 1                      ; build_material: the cells it covers,
+ch_x1       resd 1                      ; [x0, x1) x [y0, y1)...
+ch_y0       resd 1
+ch_y1       resd 1
+ch_extras   resd 1                      ; ...or 1: the storey's platforms instead
+vert_n      resd 1                      ; glVertex3f calls by the emitters (list_verts)
+cw_drawn    resd 1                      ; lists call_world drew (self-test)
+list_verts  resd NLISTS                 ; vertices in each display list (0: skip it)
 alignb 8
 gl2_ptrs:
 p_glCreateShader       resq 1
@@ -574,6 +594,7 @@ emit_box:
     movss xmm2, [bz1]
 .cz:
     call glVertex3f
+    inc dword [vert_n]
     inc r14d
     jmp .corner
 .next:
@@ -722,6 +743,7 @@ emit_cyl:
     movss xmm1, [rsp+48]
     movss xmm2, [rsp+52]
     call glVertex3f
+    inc dword [vert_n]
     inc r13d
     jmp .v
 .next:
@@ -812,6 +834,7 @@ emit_limb:
     addss xmm0, xmm6
 .emit:
     call glVertex3f
+    inc dword [vert_n]
     inc r12d
     jmp .corner
 .next_side:
@@ -868,6 +891,7 @@ emit_ring:
     movss xmm1, [rsp+4]
     movss xmm2, [rsp+28]
     call glVertex3f
+    inc dword [vert_n]
     inc r12d
     jmp .v
 .next:
@@ -1377,10 +1401,9 @@ shadow_pass:
 .mat:
     cmp r13d, NLIT
     jge .fl_next
-    imul edi, r12d, NMAT
-    add edi, r13d
-    add edi, [list_base]
-    call glCallList
+    mov edi, r12d
+    mov esi, r13d
+    call call_world
     inc r13d
     jmp .mat
 .fl_next:
@@ -1647,6 +1670,7 @@ emit_tube:
     movss xmm2, [rsp+rax+8]
     addss xmm2, [rsp+104+r15]
     call glVertex3f
+    inc dword [vert_n]
     inc r14d
     jmp .v
 .next:
@@ -1996,7 +2020,9 @@ nchar:
 
 ; -----------------------------------------------------------------------------
 ; build_material(r15d = material, rbx = storey) -- emits the geometry of one
-; material on one storey (called while compiling that display list)
+; material on one storey, for the cells ch_x0..ch_x1 x ch_y0..ch_y1 (one
+; chunk), plus the storey's platforms when ch_extras is set (called while
+; compiling that display list)
 ; -----------------------------------------------------------------------------
 build_material:
     PROLOGUE 64
@@ -2006,13 +2032,13 @@ build_material:
     jne .not_glass
     GLF4 glColor4f, 0.62, 0.80, 0.88, 0.20   ; faintly blue-green, mostly clear
 .not_glass:
-    xor r14d, r14d                      ; y
+    mov r14d, [ch_y0]                   ; y
 .y:
-    cmp r14d, MAP_H
+    cmp r14d, [ch_y1]
     jge .done
-    xor r13d, r13d                      ; x
+    mov r13d, [ch_x0]                   ; x
 .x:
-    cmp r13d, MAP_W
+    cmp r13d, [ch_x1]
     jge .ny
     mov edi, r12d
     mov esi, r13d
@@ -2254,6 +2280,8 @@ build_material:
     jmp .y
 .done:
     ; ramps and bridges (world.asm) are bare concrete, crates are wood
+    cmp dword [ch_extras], 0
+    je .out
     cmp dword [rsp+32], M_FLOOR_B
     jne .not_conc
     mov edi, PS_CONCRETE
@@ -2422,6 +2450,7 @@ plat_v:
 .top:
     movss xmm2, [pc_z+rbx*4]
     call glVertex3f
+    inc dword [vert_n]
     EPILOGUE
 
 ; emit_stair_cell -- two steps; the step top follows the ramp so each step's
@@ -3270,8 +3299,8 @@ render_init:
     call glFogfv
     GLF4 glClearColor, 0.0, 0.0, 0.0, 1.0
 
-    ; ---- display lists: NF * NMAT
-    mov edi, NF*NMAT
+    ; ---- display lists: NF * NCHS * NMAT
+    mov edi, NLISTS
     call glGenLists
     mov [list_base], eax
     call build_world
@@ -3286,43 +3315,82 @@ render_rebuild_world:
     ; fresh display lists: recompiling the old ones lets some drivers keep
     ; the previous building's geometry around (a big one slows everything)
     mov edi, [list_base]
-    mov esi, NF*NMAT
+    mov esi, NLISTS
     call glDeleteLists
-    mov edi, NF*NMAT
+    mov edi, NLISTS
     call glGenLists
     mov [list_base], eax
     call find_media_wall
     call build_world
     EPILOGUE
 
-; build_world -- compile every storey's display lists and find the fixtures
+; build_world -- compile every storey's display lists (chunk by chunk, see
+; CHUNK) and find the fixtures
 build_world:
     PROLOGUE 16
     xor ebx, ebx                        ; storey
 .lf:
     cmp ebx, NF
     jge .lists_done
+    xor r14d, r14d                      ; chunk
+.lc:
+    cmp r14d, NCHS
+    jge .lnf
+    ; its cells: chunk = cz*NCX + cx; the last one is the extras
+    xor eax, eax
+    mov [ch_x0], eax
+    mov [ch_x1], eax
+    mov [ch_y0], eax
+    mov [ch_y1], eax
+    mov dword [ch_extras], 1
+    cmp r14d, NCHS-1
+    je .range_done
+    mov dword [ch_extras], 0
+    mov eax, r14d
+    xor edx, edx
+    mov ecx, NCX
+    div ecx                             ; eax = cz, edx = cx
+    imul edx, edx, CHUNK
+    mov [ch_x0], edx
+    add edx, CHUNK
+    mov ecx, MAP_W
+    cmp edx, ecx
+    cmovg edx, ecx
+    mov [ch_x1], edx
+    imul eax, eax, CHUNK
+    mov [ch_y0], eax
+    add eax, CHUNK
+    mov ecx, MAP_H
+    cmp eax, ecx
+    cmovg eax, ecx
+    mov [ch_y1], eax
+.range_done:
     xor r15d, r15d                      ; material
 .lm:
     cmp r15d, NMAT
-    jge .lnf
-    imul edi, ebx, NMAT
-    add edi, r15d
+    jge .lnc
+    imul r13d, ebx, NCHS                ; r13 = list index
+    add r13d, r14d
+    imul r13d, r13d, NMAT
+    add r13d, r15d
+    mov edi, r13d
     add edi, [list_base]
     mov esi, GL_COMPILE
     call glNewList
     GLF3 glColor3f, 1.0, 1.0, 1.0
     mov edi, GL_QUADS
     call glBegin
-    push rbx
-    push r15
+    mov dword [vert_n], 0
     call build_material
-    pop r15
-    pop rbx
+    mov eax, [vert_n]
+    mov [list_verts+r13*4], eax
     call glEnd
     call glEndList
     inc r15d
     jmp .lm
+.lnc:
+    inc r14d
+    jmp .lc
 .lnf:
     inc ebx
     jmp .lf
@@ -3336,6 +3404,208 @@ build_world:
     rep stosd
     mov dword [pool_timer], 0
     EPILOGUE
+
+; call_world(edi = storey, esi = material) -- draw that storey's lists of one
+; material: every chunk with geometry whose square comes within c_cull2 of
+; the camera (cam_x/cam_z: your eyes, or the far side of a portal), and the
+; extras. Counts what it drew in cw_drawn.
+call_world:
+    PROLOGUE 16
+    imul r12d, edi, NCHS*NMAT
+    add r12d, esi                       ; r12 = list index of chunk 0
+    xor ebx, ebx                        ; chunk
+.c:
+    cmp ebx, NCHS
+    jge .done
+    imul r13d, ebx, NMAT
+    add r13d, r12d
+    cmp dword [list_verts+r13*4], 0
+    je .next
+    cmp ebx, NCHS-1
+    je .draw                            ; the extras: always
+    ; distance^2 from the camera to the chunk's square (0 inside it)
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, NCX
+    div ecx                             ; eax = cz, edx = cx
+    cvtsi2ss xmm0, edx
+    mulss xmm0, [c_chunk_m]
+    subss xmm0, [cam_x]                 ; a = x0 - cam
+    movaps xmm1, xmm0
+    xorps xmm1, [c_sign_mask]
+    subss xmm1, [c_chunk_m]             ; cam - x1 = -a - size
+    maxss xmm0, xmm1
+    maxss xmm0, [c_zero]
+    mulss xmm0, xmm0
+    cvtsi2ss xmm2, eax
+    mulss xmm2, [c_chunk_m]
+    subss xmm2, [cam_z]
+    movaps xmm1, xmm2
+    xorps xmm1, [c_sign_mask]
+    subss xmm1, [c_chunk_m]
+    maxss xmm2, xmm1
+    maxss xmm2, [c_zero]
+    mulss xmm2, xmm2
+    addss xmm0, xmm2
+    comiss xmm0, [c_cull2]
+    ja .next
+.draw:
+    inc dword [cw_drawn]
+    mov edi, r13d
+    add edi, [list_base]
+    call glCallList
+.next:
+    inc ebx
+    jmp .c
+.done:
+    EPILOGUE
+
+; chunk_tests -- the chunked world lists: every storey rebuilt in one piece
+; (into a scratch list) has exactly the vertices of its chunks, and
+; call_world skips the chunks far from the camera
+chunk_tests:
+    PROLOGUE 48
+    mov edi, 1
+    call glGenLists
+    mov [rsp+0], eax                    ; scratch list
+    mov dword [rsp+4], 0                ; one piece, all storeys
+    mov dword [rsp+8], 0                ; chunks, all storeys
+    mov dword [rsp+12], 0               ; storeys that differ
+    xor eax, eax
+    mov [ch_x0], eax
+    mov [ch_y0], eax
+    mov dword [ch_x1], MAP_W
+    mov dword [ch_y1], MAP_H
+    mov dword [ch_extras], 1
+    xor ebx, ebx                        ; storey
+.f:
+    cmp ebx, NF
+    jge .f_done
+    xor r13d, r13d                      ; this storey in one piece
+    xor r15d, r15d                      ; material
+.m:
+    cmp r15d, NMAT
+    jge .m_done
+    mov edi, [rsp+0]
+    mov esi, GL_COMPILE
+    call glNewList
+    mov edi, GL_QUADS
+    call glBegin
+    mov dword [vert_n], 0
+    call build_material
+    add r13d, [vert_n]
+    call glEnd
+    call glEndList
+    inc r15d
+    jmp .m
+.m_done:
+    ; ...and its chunks
+    xor r14d, r14d
+    imul ecx, ebx, NCHS*NMAT
+    xor edx, edx
+.sum:
+    cmp edx, NCHS*NMAT
+    jge .sum_done
+    lea eax, [ecx+edx]
+    add r14d, [list_verts+rax*4]
+    inc edx
+    jmp .sum
+.sum_done:
+    add [rsp+4], r13d
+    add [rsp+8], r14d
+    cmp r13d, r14d
+    je .same
+    inc dword [rsp+12]
+.same:
+    inc ebx
+    jmp .f
+.f_done:
+    mov edi, [rsp+0]
+    mov esi, 1
+    call glDeleteLists
+    lea rdi, [st_chunks]
+    mov esi, [rsp+4]
+    mov edx, [rsp+8]
+    mov ecx, [rsp+12]
+    xor eax, eax
+    call printf
+
+    ; culling: lists with geometry, and the extras among them
+    mov dword [rsp+16], 0               ; with geometry
+    mov dword [rsp+20], 0               ; extras with geometry
+    xor ecx, ecx
+.cnt:
+    cmp ecx, NLISTS
+    jge .cnt_done
+    cmp dword [list_verts+rcx*4], 0
+    je .cnt_next
+    inc dword [rsp+16]
+    mov eax, ecx
+    xor edx, edx
+    mov r8d, NMAT
+    div r8d                             ; eax = storey*NCHS + chunk
+    xor edx, edx
+    mov r8d, NCHS
+    div r8d                             ; edx = chunk
+    cmp edx, NCHS-1
+    jne .cnt_next
+    inc dword [rsp+20]
+.cnt_next:
+    inc ecx
+    jmp .cnt
+.cnt_done:
+    mov eax, [cam_x]
+    mov [rsp+24], eax
+    mov eax, [cam_z]
+    mov [rsp+28], eax
+    mov dword [cam_x], __float32__(100000.0)
+    mov dword [cam_z], __float32__(100000.0)
+    call .all
+    mov [rsp+32], eax
+    mov dword [cam_x], __float32__(1.0)
+    mov dword [cam_z], __float32__(1.0)
+    call .all
+    mov [rsp+36], eax
+    mov eax, [rsp+24]
+    mov [cam_x], eax
+    mov eax, [rsp+28]
+    mov [cam_z], eax
+    lea rdi, [st_cull]
+    mov esi, [rsp+32]
+    mov edx, [rsp+20]
+    mov ecx, [rsp+36]
+    mov r8d, [rsp+16]
+    xor eax, eax
+    call printf
+    EPILOGUE
+; .all -> eax = lists call_world draws over every storey and material
+.all:
+    push rbx
+    push r12
+    sub rsp, 8
+    mov dword [cw_drawn], 0
+    xor ebx, ebx
+.all_f:
+    cmp ebx, NF
+    jge .all_done
+    xor r12d, r12d
+.all_m:
+    cmp r12d, NMAT
+    jge .all_nf
+    mov edi, ebx
+    mov esi, r12d
+    call call_world
+    inc r12d
+    jmp .all_m
+.all_nf:
+    inc ebx
+    jmp .all_f
+.all_done:
+    mov eax, [cw_drawn]
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
 
 ; =============================================================================
 ; per-frame lighting
@@ -4525,6 +4795,16 @@ draw_fixtures:
     jg .n
     cmp eax, -VIS_FLOORS
     jl .n
+    ; lost in the fog (as call_world's chunks)
+    movss xmm0, [fx_x+rbx*4]
+    subss xmm0, [cam_x]
+    mulss xmm0, xmm0
+    movss xmm1, [fx_z+rbx*4]
+    subss xmm1, [cam_z]
+    mulss xmm1, xmm1
+    addss xmm0, xmm1
+    comiss xmm0, [c_cull2]
+    ja .n
     movss xmm3, [fx_level+rbx*4]
     maxss xmm3, [c_fix_dead]
     movss xmm0, [fx_r+rbx*4]
@@ -4663,10 +4943,9 @@ draw_scene:
 .bump:
     movss xmm1, [mat_spec+r13*4]
     call set_material
-    imul edi, r12d, NMAT
-    add edi, r13d
-    add edi, [list_base]
-    call glCallList
+    mov edi, r12d
+    mov esi, r13d
+    call call_world
     inc r13d
     jmp .mat
 .fl_next:
@@ -4738,10 +5017,9 @@ draw_scene:
     jge .ul_next
     mov edi, [white_tex]
     call bind
-    imul edi, r12d, NMAT
-    add edi, M_SCREEN
-    add edi, [list_base]
-    call glCallList
+    mov edi, r12d
+    mov esi, M_SCREEN
+    call call_world
     mov edi, [led_tex]
     call bind
     movss xmm0, [rsp+8]
@@ -4753,10 +5031,9 @@ draw_scene:
     movaps xmm2, xmm0
     movss xmm3, [c_one]
     call glColor4f
-    imul edi, r12d, NMAT
-    add edi, M_LED
-    add edi, [list_base]
-    call glCallList
+    mov edi, r12d
+    mov esi, M_LED
+    call call_world
     GLF4 glColor4f, 1.0, 1.0, 1.0, 1.0
 .ul_next:
     inc r12d
@@ -4849,10 +5126,9 @@ draw_glass:
 .f:
     cmp ebx, NF
     jge .done
-    imul edi, ebx, NMAT
-    add edi, M_GLASS
-    add edi, [list_base]
-    call glCallList
+    mov edi, ebx
+    mov esi, M_GLASS
+    call call_world
     inc ebx
     jmp .f
 .done:

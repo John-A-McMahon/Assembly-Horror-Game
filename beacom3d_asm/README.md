@@ -155,7 +155,8 @@ tools/dbuild.sh win      # Windows beacom3d.exe
 | F3 / F4 / F5 | FPS counter / render resolution (1/1, 1/2, 1/3) / flashlight shadows |
 
 Environment overrides: `BEACOM_SCALE=1..3`, `BEACOM_SHADOWS=0|1`,
-`BEACOM_MSAA=0|2|4|8`, `BEACOM_MOUSE=edge|relative`. When OpenGL runs in
+`BEACOM_MSAA=0|2|4|8`, `BEACOM_MOUSE=edge|relative`, `BEACOM_NOVSYNC=1`
+(no vsync: lets the self-test benchmark measure past the refresh rate). When OpenGL runs in
 software (e.g. Docker), the game drops to half resolution and turns shadows,
 bump mapping and antialiasing off automatically.
 
@@ -244,9 +245,12 @@ every storey reachable and no two alike. The three captures are spread from
 the bottom storey to the top, so a tall building is a long night.
 
 The map (M) scales to the building, [ and ] page through all its storeys,
-and only the storeys within 3 of yours are drawn. (A ten-storey 89 x 47
-building currently draws at about 48 fps on the test laptop, against 60 for
-the real Beacom.)
+and only the storeys within 3 of yours are drawn. Each storey is also cut
+into 12 x 12-cell chunks, and chunks (and ceiling lights) more than 56 m
+away, where the fog has swallowed them, are skipped: every screenshot is
+byte-identical to drawing everything. (Test laptop, vsync off: a ten-storey
+89 x 47 building went from about 70 to 92-104 fps with this; the real
+Beacom draws at about 110.)
 
 ### The real Beacom
 
@@ -526,7 +530,7 @@ follow you down into the atrium. He still can't climb ladders.
 | `hookshot.asm` | the HOOK firing type: traces the throw, latches on, asks the module (the rod pulls you in: fling, auto-mantle), stuns T |
 | `player.asm` | first-person controller: mouselook, movement, gravity, stairs, stamina, flashlight battery |
 | `ai.asm` | T: BFS over the 3D nav graph, 3D sight, occluded hearing, wander / investigate / chase |
-| `render.asm` | GLSL lighting shader (normal maps, skin and cloth lighting), display lists built from the maps, fixtures and light pool, T, items, signs, jumpscare |
+| `render.asm` | GLSL lighting shader (normal maps, skin and cloth lighting), display lists built from the maps (per storey x chunk x material; `call_world` skips chunks lost in the fog), fixtures and light pool, T, items, signs, jumpscare |
 | `textures.asm` | the textures painted procedurally in assembly (the fallbacks for `assets/`, and everything else); T's face from `../T_Sprite.jpeg`; SDL_ttf text |
 | `hud.asm` | HUD, message log, vignettes, film grain, pause screen, explored map |
 | `audio.asm` | software synthesizer in the SDL audio callback: ambience, T's panned hum, footsteps, heartbeat, stingers |

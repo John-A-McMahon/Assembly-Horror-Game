@@ -28,7 +28,7 @@ extern gen_stairs, gen_atriums, nav_player, nav_t_mask
 extern build_deauth, director_reset, t_build, bld_on, t_goal, dir_calm, dir_relax, t_camp
 extern t_por_on, build_break, enemy_portal_follow, bld_ay, bld_by, bld_ax, bld_bx, bld_az, bld_bz
 extern bld_cd, build_hit_point, t_node, p_eye
-extern portal_reset, portal_fire, portal_check_teleport, world_select, render_rebuild_world
+extern portal_reset, portal_fire, portal_check_teleport, world_select, render_rebuild_world, chunk_tests
 extern add_box, snd_fanfare, map_floor, dump_shadow_map, glFinish, p_eye_y, getenv, SDL_SetHint, hud_fps, render_cycle_scale, render_toggle_shadows
 
 
@@ -168,6 +168,7 @@ st_sweep_fmt2 db "[selftest] seed sweep: duplicate layouts %d, open cells per bu
 env_leak db "BEACOM_LEAKTEST",0
 st_leak db "[leaktest] after %d builds of the 10-storey building: the real Beacom draws at %.1f fps",10,0
 env_nocus db "BEACOM_NOCUSTOM",0
+env_novsync db "BEACOM_NOVSYNC",0
 env_gendump db "BEACOM_GENDUMP",0
 st_zip_fmt  db "[selftest] zipline: grabbed=%d, ended on floor %d at x=%.1f y=%.2f (cable ends x=111)",10,0
 st_path_fmt db "[selftest] path basement(3,3) -> 2nd floor(5,3): found=%d, %d cells",10,0
@@ -7801,6 +7802,7 @@ selftest_all:
     PROLOGUE 32
     mov dword [seed_val], 42
     call assets_tests                   ; the baked art (assets/)
+    call chunk_tests                    ; the world's display lists, cut into chunks
     call real_tests                     ; the real Beacom first...
     call hook_tests
     call gadget_tests
@@ -8219,7 +8221,12 @@ main:
     mov rdi, rax
     call SDL_GL_CreateContext
     mov [glctx], rax
-    mov edi, 1
+    ; vsync on, unless BEACOM_NOVSYNC is set (benchmarks past the refresh rate)
+    lea rdi, [env_novsync]
+    call getenv
+    xor edi, edi
+    test rax, rax
+    setz dil
     call SDL_GL_SetSwapInterval
     mov dword [win_w], 1280
     mov dword [win_h], 720
