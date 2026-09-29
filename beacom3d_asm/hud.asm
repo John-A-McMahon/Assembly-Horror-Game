@@ -74,6 +74,8 @@ s_pr20      db "[E] take the HOOK firing type",0
 s_pr21      db "[E] take the GRABBER firing type",0
 s_pr22      db "[E] take the GUN frame",0
 s_pr23      db "[E] take the DRONE frame",0
+s_pr24      db "[E] hide under the desk",0
+s_pr25      db "[E] climb out from under the desk",0
 s_grod      db "CARRYING: THE PACKET OF GROD (you are not worthy -- find Tyler)",0
 s_dew       db "DIET DEW: UNLIMITED STAMINA",0
 s_mapfull   db "MAP  --  [ ] change floor",0
@@ -94,7 +96,7 @@ lc_floors   dq lc_floor0, lc_floor1, lc_floor2, lc_floor3, lc_floor4, lc_floor5
             dq lc_floor6, lc_floor7, lc_floor8, lc_floor9
 prompt_strs dq s_pr0, s_pr1, s_pr2, s_pr3, s_pr4, s_pr5, s_pr6, s_pr7, s_pr8, s_pr9, s_pr10
             dq s_pr11, s_pr12, s_pr13, s_pr14, s_pr15, s_pr16, s_pr17, s_pr18
-            dq s_pr19, s_pr20, s_pr21, s_pr22, s_pr23
+            dq s_pr19, s_pr20, s_pr21, s_pr22, s_pr23, s_pr24, s_pr25
 
 c_msg_life   dd 7.5
 c_lore_life  dd 15.5

@@ -35,6 +35,7 @@ global t_x, t_y, t_z, t_state, t_stun, t_sees, t_speed_bonus, t_caught, t_dist, 
 global t_anim_phase, t_moving, path_len, t_hear_d, seen, stamp
 global far_spawn_node, spawn_dist, spawn_maxd
 
+extern hd_on
 extern on_t_spotted                     ; main.asm: "T HAS SEEN YOU. RUN."
 
 %define MAX_NB 16                       ; most neighbours one node can have
@@ -1315,6 +1316,8 @@ enemy_update:
     ; hatch -- not just "on the same storey"
     mov dword [t_sees], 0
     cmp dword [rsp+28], 0               ; in a safe room: invisible
+    jne .perceived
+    cmp dword [hd_on], 0                ; under a desk: invisible (hide.asm)
     jne .perceived
     movss xmm1, [c_sight_flash]
     cmp dword [p_flash_on], 0

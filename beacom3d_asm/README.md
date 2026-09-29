@@ -319,6 +319,23 @@ Sources:
 The original game's map is still there: *Building* -> **THE ORIGINAL GAME MAP**
 (generated buildings keep its atrium, server room and library as landmarks).
 
+### Hiding under desks
+
+Face a desk and press **E** ("[E] hide under the desk"): you squeeze under
+it. You can't move, you see the room from under the desk top, and T can't
+see you. **E** again and you climb back out where you went in.
+
+* If T **saw you** duck under, he knows where you are: he comes to the desk
+  and drags you out.
+* If he didn't, he only finds you by **looking**. The first time he comes
+  within about 3 m of your desk he looks under it -- once per visit; he has
+  to walk 5 m off before he'll look again. The chance he finds you:
+  15%, **+15% for every time you've already hidden tonight** (he learns),
+  **+25% with your flashlight on**, **+40% if you're making noise**, at most 80%.
+
+Hiding is a way to wait T out, not a place to live: every desk you use makes
+the next one riskier.
+
 ### Parkour
 
 Desks, crates and cardboard boxes are solid now, and you can climb them.
@@ -553,6 +570,7 @@ follow you down into the atrium. He still can't climb ladders.
 | `world.asm` | loads `maps/*.txt`, character classes, stair ramps, platforms/ramps, ground height, collision, 3D line of sight, sound occlusion, the 3D nav graph (node XYZ table + walk/drop/ladder links) |
 | `settings.asm` | all settings, the pause menu, `beacom_settings.cfg` |
 | `worldgen.asm` | the seeded building generator (maze / classic / open layouts) |
+| `hide.asm` | hiding under desks: `hide_try` / `hide_leave` (E), p_mode 5, T's sight skipped while `hd_on`, `hide_update`: does T find you (saw you go in / one look per visit, chance grows per hide, light, noise) |
 | `report.asm` | the report card: per-night stats (closest call, loudest moment, distance, safe-room time), the score and grade, best scores in `beacom_records.cfg`, the card drawn over the last frame |
 | `achievements.asm` | the 25 achievements: rules, unlock banner, `beacom_achievements.cfg` |
 | `parkour.asm` | mantling and vaulting; `player_ground` (the building plus boxes you can stand on) |

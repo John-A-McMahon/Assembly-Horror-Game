@@ -717,6 +717,8 @@ traverse_update:
     je .parkour
     cmp eax, 4                          ; hauled by the hookshot (hookshot.asm)
     je .hooked
+    cmp eax, 5                          ; under a desk (hide.asm)
+    je .hooked
     xor eax, eax
     mov [trav_roll], eax
     mov [trav_shake], eax

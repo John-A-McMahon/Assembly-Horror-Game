@@ -216,6 +216,11 @@ shot_part_at dd 2.0,-0.9,  2.0,-0.3,  2.0,0.3,  2.0,0.9
             dd 2.9,-1.6,  2.9,1.6
 sh_g_drone  db "shots/53_drone_out.bmp",0
 sh_g_drone2 db "shots/54_drone_home.bmp",0
+sh_hide     db "shots/57_under_a_desk.bmp",0
+section .bss
+sh_prompt   resd 1
+sh_clock    resd 1
+section .data
 sh_report   db "shots/56_report_card.bmp",0
 sh_g_prompt db "shots/55_pickup_prompt.bmp",0
 st_g_inhand db "[selftest] gadget parts all in hand: modules %d, firing types %d (expect 15 15), holding combination %d (expect 6 = HOOKSHOT)",10,0
@@ -867,6 +872,7 @@ new_game:
     call gadget_reset
     call ach_new_run
     call report_reset                   ; (the report card's own counts)
+    call hide_reset
     mov dword [crouch_latch], 0
     xor edi, edi
     call snd_mute                       ; (volume setting)
@@ -1162,6 +1168,9 @@ near_b:
 ; interact -- E: pick up the nearest item, or talk to B
 interact:
     PROLOGUE 16
+    call hide_leave                     ; under a desk: E climbs out
+    test eax, eax
+    jnz .hid_out
     call near_tyler
     test eax, eax
     jz .no_tyler
@@ -1191,7 +1200,7 @@ interact:
     jnz .done
     call near_b
     test eax, eax
-    jz .done
+    jz .hide_desk
     cmp dword [inventory], 3
     jl .talk
     mov dword [game_state], GS_WON
@@ -1216,7 +1225,11 @@ interact:
     call msg
     mov eax, [c_b_talk_cd]
     mov [b_cooldown], eax
+    jmp .done
+.hide_desk:
+    call hide_try                       ; a desk to get under? (hide.asm)
 .done:
+.hid_out:
     EPILOGUE
 
 ; take_item(rdi = item) -- pick it up (E, or a gadget that fetched it for you)
@@ -2528,6 +2541,9 @@ update_weather:
 ; which interaction prompt to show
 update_prompt:
     PROLOGUE 16
+    mov dword [hud_prompt], PR_HIDE+1   ; under a desk: only one thing to do
+    cmp dword [hd_on], 0
+    jne .done
     mov eax, [trav_prompt]              ; ladder / zipline (items win below)
     mov [hud_prompt], eax
     call near_tyler                     ; Tyler: hand him the packet / his title
@@ -2573,11 +2589,19 @@ update_prompt:
     jne .done
     call near_b
     test eax, eax
-    jz .done
+    jz .desk
     mov dword [hud_prompt], 8
     cmp dword [inventory], 3
     jl .done
     mov dword [hud_prompt], 9
+    jmp .done
+.desk:
+    cmp dword [hud_prompt], 0           ; (a ladder or zipline prompt wins)
+    jge .done
+    call hide_can
+    test eax, eax
+    jz .done
+    mov dword [hud_prompt], PR_HIDE
 .done:
     EPILOGUE
 
@@ -2831,6 +2855,8 @@ game_tick:
 .alive:
     movss xmm0, [rsp+0]
     call report_tick
+    movss xmm0, [rsp+0]
+    call hide_update                    ; under a desk: does T find you?
     call update_prompt
     call hud_update_explored
     call ach_tick
@@ -3804,6 +3830,9 @@ shot_mode_run:
     mov dword [dr_state], DR_HOME
     mov dword [gd_view], 0
     ; the report card: a won night, seen twice, one deauth, a loadout
+    ; (the clock is put back after: the lights flicker by it)
+    mov eax, [elapsed_time]
+    mov [sh_clock], eax
     mov dword [inventory], 3
     mov dword [elapsed_time], __float32__(412.0)
     mov dword [run_spotted], 2
@@ -3824,6 +3853,28 @@ shot_mode_run:
     call shot_now
     mov dword [rc_show], 0
     mov dword [inventory], 0
+    mov eax, [sh_clock]
+    mov [elapsed_time], eax
+    ; under a desk: from the ground-floor desk the hide test uses (the
+    ; prompt on screen is put back after: later shots show it)
+    mov eax, [hud_prompt]
+    mov [sh_prompt], eax
+    mov edi, 1
+    mov esi, 26
+    mov edx, 4
+    FLD xmm0, 1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    call interact
+    FLD xmm0, 1.0
+    call hook_run
+    call update_prompt
+    lea rdi, [sh_hide]
+    call shot_now
+    call hide_leave
+    call hide_reset
+    mov eax, [sh_prompt]
+    mov [hud_prompt], eax
 .ach_toast:
     ; an achievement popping
     call hud_clear_messages
@@ -4771,6 +4822,316 @@ shot_part:
     FLD xmm0, -0.5
     addss xmm0, [p_y]
     movss [r12+ITEM_Y], xmm0            ; (lower: they bob at eye level otherwise)
+    EPILOGUE
+
+; ---- hiding under desks (hide.asm), in the real Beacom
+section .data
+st_hd_in    db "[selftest] hide: desk at (%d,%d): prompt=%d (expect 24), under it=%d mode=%d (expect 1 5)",10,0
+st_hd_in2   db "[selftest] hide: under the desk the prompt=%d (expect 25), eyes %.2f above the floor (expect 0.45)",10,0
+st_hd_see   db "[selftest] hide: T 4 m off sees you standing=%d (expect 1); under the desk=%d (expect 0)",10,0
+st_hd_out   db "[selftest] hide: E again: out=%d mode=%d (expect 1 0), back where you went in=%d (expect 1)",10,0
+st_hd_seen  db "[selftest] hide: T saw you go under: he found you=%d (expect 1) in %.1f s (expect < 20)",10,0
+st_hd_roll  db "[selftest] hide: T at your desk, unseen, first hide: found %d of 400 quiet (expect ~60), %d of 400 noisy (expect ~220)",10,0
+st_hd_light db "[selftest] hide: first hide, flashlight left on: found %d of 400 (expect ~160)",10,0
+st_hd_learn db "[selftest] hide: third hide tonight: found %d of 400 quiet (expect ~180); one look per visit: found on a second look=%d (expect 0); walked off 6 m: will look again=%d (expect 1)",10,0
+section .text
+; ht_step(xmm0 = seconds) -- T and the hiding rules, 60 Hz (no player input)
+ht_step:
+    PROLOGUE 16
+    FLD xmm1, 60.0
+    mulss xmm0, xmm1
+    cvttss2si ebx, xmm0
+.f:
+    movss xmm0, [c_dt_shot]
+    call enemy_update
+    movss xmm0, [c_dt_shot]
+    call hide_update
+    cmp dword [t_caught], 0
+    jne .out
+    dec ebx
+    jnz .f
+.out:
+    EPILOGUE
+
+; ht_rolls(edi = hides tonight, xmm0 = noise) -> eax = times found of 400:
+; T stands 2 m from your desk, unseen, and looks
+ht_rolls:
+    PROLOGUE 32
+    movss [rsp+0], xmm0
+    mov [rsp+4], edi
+    xor r12d, r12d
+    xor ebx, ebx
+.r:
+    mov eax, [rsp+4]
+    mov [hd_count], eax
+    mov dword [hd_seen], 0
+    mov dword [hd_checked], 0
+    mov dword [hd_found], 0
+    mov dword [t_caught], 0
+    mov dword [t_stun], 0
+    mov eax, [rsp+0]
+    mov [noise_level], eax
+    movss xmm0, [hd_cx]
+    addss xmm0, [c_two]
+    movss [t_x], xmm0
+    mov eax, [hd_cz]
+    mov [t_z], eax
+    mov eax, [p_y]
+    mov [t_y], eax
+    FLD xmm0, 0.016
+    call hide_update
+    add r12d, [hd_found]
+    inc ebx
+    cmp ebx, 400
+    jl .r
+    mov dword [t_caught], 0
+    mov dword [noise_level], 0
+    mov eax, r12d
+    EPILOGUE
+
+hide_tests:
+    PROLOGUE 64
+    mov dword [cfg_building], BLD_REAL
+    mov dword [seed_val], 42
+    call prepare_world
+    call new_game
+    call gt_t_away
+    ; a desk on the ground floor with three open cells east of it (you, and
+    ; T further off)
+    mov r12d, 1                         ; y
+.fy:
+    cmp r12d, MAP_H-2
+    jge .none
+    mov r13d, 1                         ; x
+.fx:
+    cmp r13d, MAP_W-6
+    jge .ny
+    mov edi, 1
+    mov esi, r13d
+    mov edx, r12d
+    call cell_at
+    cmp eax, 'd'
+    jne .nx
+    xor r14d, r14d
+.open:
+    inc r14d
+    cmp r14d, 3
+    jg .found
+    mov edi, 1
+    lea esi, [r13d+r14d]
+    mov edx, r12d
+    call cell_at
+    cmp eax, ' '
+    jne .nx
+    jmp .open
+.nx:
+    inc r13d
+    jmp .fx
+.ny:
+    inc r12d
+    jmp .fy
+.none:
+    xor r13d, r13d
+    xor r12d, r12d
+.found:
+    mov [rsp+0], r13d                   ; desk x
+    mov [rsp+4], r12d                   ; desk y
+    ; stand east of it, facing west (yaw pi/2 looks along -x)
+    mov edi, 1
+    lea esi, [r13d+1]
+    mov edx, r12d
+    FLD xmm0, 1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov dword [p_flash_on], 1
+    call update_prompt
+    mov eax, [hud_prompt]
+    mov [rsp+8], eax
+    mov eax, [p_x]
+    mov [rsp+40], eax
+    mov eax, [p_z]
+    mov [rsp+44], eax
+    ; T 4 m east, awake (one frame: he barely moves): does he see you standing?
+    mov edi, 1
+    mov esi, [rsp+0]
+    add esi, 3
+    mov edx, [rsp+4]
+    call cell_index
+    mov edi, eax
+    call gt_t_at
+    mov dword [t_stun], 0               ; (awake: a stunned T looks at nothing)
+    FLD xmm0, 0.016
+    call enemy_update
+    mov eax, [t_sees]
+    mov [rsp+48], eax
+    mov dword [t_sees], 0               ; (he didn't see you go under: that's later)
+    ; under the desk
+    call interact
+    mov eax, [hd_on]
+    mov [rsp+12], eax
+    mov eax, [p_mode]
+    mov [rsp+16], eax
+    call update_prompt
+    mov eax, [hud_prompt]
+    mov [rsp+20], eax
+    FLD xmm0, 1.0
+    call hook_run
+    movss xmm0, [p_eye_y]
+    subss xmm0, [p_y]
+    movss [rsp+24], xmm0
+    FLD xmm0, 0.016
+    call enemy_update
+    mov eax, [t_sees]
+    mov [rsp+52], eax
+    lea rdi, [st_hd_in]
+    mov esi, [rsp+0]
+    mov edx, [rsp+4]
+    mov ecx, [rsp+8]
+    mov r8d, [rsp+12]
+    mov r9d, [rsp+16]
+    xor eax, eax
+    call printf
+    lea rdi, [st_hd_in2]
+    mov esi, [rsp+20]
+    movss xmm0, [rsp+24]
+    cvtss2sd xmm0, xmm0
+    mov eax, 1
+    call printf
+    lea rdi, [st_hd_see]
+    mov esi, [rsp+48]
+    mov edx, [rsp+52]
+    xor eax, eax
+    call printf
+    ; E again
+    call interact
+    xor esi, esi
+    cmp dword [hd_on], 0
+    sete sil
+    mov edx, [p_mode]
+    xor ecx, ecx
+    mov eax, [p_x]
+    cmp eax, [rsp+40]
+    jne .not_back
+    mov eax, [p_z]
+    cmp eax, [rsp+44]
+    jne .not_back
+    mov ecx, 1
+.not_back:
+    lea rdi, [st_hd_out]
+    xor eax, eax
+    call printf
+    ; ---- he saw you go under: T 6 m off, awake, and he'll be told where
+    mov edi, 1
+    mov esi, [rsp+0]
+    inc esi
+    mov edx, [rsp+4]
+    FLD xmm0, 1.5708
+    xorps xmm1, xmm1
+    call gt_spawn
+    mov edi, 1
+    mov esi, [rsp+0]
+    add esi, 3
+    mov edx, [rsp+4]
+    call cell_index
+    mov edi, eax
+    call gt_t_at
+    mov dword [t_caught], 0
+    mov dword [t_sees], 1
+    call interact
+    xor r14d, r14d                      ; tenths of a second
+.hunt:
+    FLD xmm0, 0.1
+    call ht_step
+    inc r14d
+    cmp dword [t_caught], 0
+    jne .hunted
+    cmp r14d, 200
+    jl .hunt
+.hunted:
+    cvtsi2ss xmm0, r14d
+    FLD xmm1, 0.1
+    mulss xmm0, xmm1
+    cvtss2sd xmm0, xmm0
+    lea rdi, [st_hd_seen]
+    mov esi, [hd_found]
+    mov eax, 1
+    call printf
+    mov dword [t_caught], 0
+    ; ---- unseen: the rolls (T put next to the desk by hand), in the dark
+    mov dword [p_flash_on], 0
+    mov edi, 1
+    xorps xmm0, xmm0
+    call ht_rolls
+    mov [rsp+28], eax
+    mov edi, 1
+    FLD xmm0, 0.5
+    call ht_rolls
+    mov [rsp+32], eax
+    lea rdi, [st_hd_roll]
+    mov esi, [rsp+28]
+    mov edx, [rsp+32]
+    xor eax, eax
+    call printf
+    mov edi, 3
+    xorps xmm0, xmm0
+    call ht_rolls
+    mov [rsp+28], eax
+    mov dword [p_flash_on], 1
+    mov edi, 1
+    xorps xmm0, xmm0
+    call ht_rolls
+    mov [rsp+36], eax
+    mov dword [p_flash_on], 0
+    lea rdi, [st_hd_light]
+    mov esi, [rsp+36]
+    xor eax, eax
+    call printf
+    ; one look per visit: after a look that missed, he stays -- no more looks
+    mov r13d, 1                         ; (1 if no miss came up in 50 tries)
+    xor ebx, ebx
+.miss:
+    mov dword [hd_count], 1
+    mov dword [hd_checked], 0
+    mov dword [hd_found], 0
+    mov dword [t_caught], 0
+    FLD xmm0, 0.016
+    call hide_update                    ; (T still 2 m off)
+    cmp dword [hd_found], 0
+    je .missed
+    inc ebx
+    cmp ebx, 50
+    jl .miss
+    jmp .again
+.missed:
+    xor r13d, r13d
+    mov ebx, 30
+.stay:
+    FLD xmm0, 0.016
+    call hide_update
+    or r13d, [hd_found]
+    dec ebx
+    jnz .stay
+.again:
+    ; he walks 6 m off: next time he comes he'll look again
+    movss xmm0, [hd_cx]
+    FLD xmm1, 6.0
+    addss xmm0, xmm1
+    movss [t_x], xmm0
+    FLD xmm0, 0.016
+    call hide_update
+    xor ecx, ecx
+    cmp dword [hd_checked], 0
+    sete cl
+    lea rdi, [st_hd_learn]
+    mov esi, [rsp+28]
+    mov edx, r13d
+    xor eax, eax
+    call printf
+    ; tidy up
+    call hide_leave
+    call hide_reset
+    mov dword [t_caught], 0
+    mov dword [noise_level], 0
     EPILOGUE
 
 ; ---- loadout: what you bring is in hand, isn't hidden again, and bringing
@@ -8595,6 +8956,7 @@ selftest_all:
     call gadget_tests
     call line_sweep_tests               ; every LINE gadget, from 240 spots and angles
     call loadout_tests                  ; what you bring into the night
+    call hide_tests                     ; hiding under desks
     call drone_tests
     call oob_tests
     call dew_tests

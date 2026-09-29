@@ -40,6 +40,7 @@ c_sprint     dd 6.0
 c_crouch_spd dd 1.7
 c_eye        dd 1.62          ; standing eye height
 c_eye_crouch dd 0.95
+c_eye_hide   dd 0.45          ; under a desk
 c_body       dd 1.7
 c_body_crouch dd 1.1
 c_gravity    dd 19.0
@@ -720,6 +721,10 @@ player_update:
     je .eye1
     movss xmm1, [c_eye_crouch]
 .eye1:
+    cmp dword [p_mode], 5               ; under a desk (hide.asm)
+    jne .eye2
+    movss xmm1, [c_eye_hide]
+.eye2:
     subss xmm1, [p_eye]
     movss xmm2, [rsp+0]
     mulss xmm2, [c_eye_lerp]

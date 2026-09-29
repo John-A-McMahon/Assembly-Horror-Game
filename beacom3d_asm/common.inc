@@ -132,7 +132,8 @@ section .rodata
 %define DR_PARK   2          ; ...hovering there
 %define DR_BACK   3          ; ...flying home
 %define DR_DOWN   4          ; ...swatted down by T: rebooting on the floor
-%define NPROMPTS  24         ; hud.asm's interaction prompts
+%define NPROMPTS  26         ; hud.asm's interaction prompts
+%define PR_HIDE   24         ; ...hide under a desk, then climb out (25)
 %define PR_PART   14         ; ...from here: each module, firing type, frame
 %define PART_BASE 0x100      ; an IT_MODULE item whose ITEM_CHARGES has this bit
                              ; is a gadget BASE (the frame: ITEM_CHARGES & 0xFF)
@@ -450,6 +451,10 @@ extern cfg_t_drops, cfg_safe, cfg_deauths, cfg_start_map, cfg_stamina
 extern cfg_battery, cfg_walk, cfg_jump, cfg_zip, cfg_sens, cfg_crouch_toggle, cfg_fov
 extern cfg_bob, cfg_shake, cfg_bright, cfg_hands, cfg_heart, cfg_volume, cfg_grain, cfg_layout
 extern cfg_bring_mod, cfg_bring_fire
+%ifndef MODULE_HIDE
+extern hide_reset, hide_try, hide_leave, hide_update, hide_can, hd_on, hd_seen
+extern hd_count, hd_checked, hd_found, hd_cx, hd_cz
+%endif
 %ifndef MODULE_REPORT
 extern report_reset, report_tick, report_finish, report_draw, report_score, report_load
 extern rc_show, rc_score, rc_grade, rc_best, rc_closest, rc_loud, rc_walked, rc_safe_t, rc_new_best, rc_tex
